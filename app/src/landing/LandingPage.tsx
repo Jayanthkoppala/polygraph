@@ -68,9 +68,13 @@ export function LandingPage() {
   );
 }
 
+/** positioning.md S0: nav ≤48px tall, one job — stay out of the way.
+ * py-2 + a py-1 button lands the bar at ~46px; the ~16px this recovered is
+ * part of what keeps the hero's refusal kicker above the 800px fold in the
+ * broken-fleet state (measured, see landing-hero report). */
 function TopNav() {
   return (
-    <nav aria-label="Primary" className="flex items-center gap-4 border-b border-[#272727] bg-[#000000] px-6 py-4">
+    <nav aria-label="Primary" className="flex items-center gap-4 border-b border-[#272727] bg-[#000000] px-6 py-2">
       <span className="font-mono text-sm font-semibold tracking-wide text-[#EDEDED]">POLYGRAPH</span>
       <div className="ml-auto flex items-center gap-4">
         <a href="/login" className="text-sm text-[#9B9B9B] hover:text-[#EDEDED]">
@@ -78,7 +82,7 @@ function TopNav() {
         </a>
         <a
           href="/signup"
-          className="rounded-lg border border-[#272727] px-3 py-1.5 text-sm font-semibold text-[#EDEDED] hover:bg-[#181818]"
+          className="rounded-lg border border-[#272727] px-3 py-1 text-sm font-semibold text-[#EDEDED] hover:bg-[#181818]"
         >
           Start
         </a>

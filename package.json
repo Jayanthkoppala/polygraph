@@ -46,6 +46,8 @@
     "test:watch": "vitest",
     "test:all": "npm run test && npm --prefix app run test",
     "dev": "tsx src/index.ts",
+    "demo": "tsx src/index.ts demo",
+    "serve": "tsx src/index.ts serve",
     "progress": "node scripts/progress.mjs",
     "prepublishOnly": "npm run build:all"
   },

@@ -12,3 +12,8 @@ dist/
 /fixture/state.json
 *.tgz
 .vercel
+
+# internal working artifacts — not shipped
+docs/design/critique-shots/
+docs/design/copy.md
+docs/design/positioning.md

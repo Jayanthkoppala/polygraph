@@ -9,10 +9,13 @@
  *
  * TWO COLUMNS (controller ruling: vertical space is the scarce resource at
  * 800px; width is abundant). Left ≈40% words: headline pair, sub, the
- * three how-it-works lines, CTA row, honesty microline. Right ≈60%: the
- * live sandbox panel. Measured at 1512x800 after the rebuild: the break
- * buttons sit fully inside the first viewport (see the task report for
- * numbers), which the old stacked layout only barely managed.
+ * three how-it-works lines, CTA row, honesty microline. Right ≈60%: ONE
+ * living stack — the sandbox fleet, the pipeline flow diagram directly
+ * beneath it driven by the same engine instance, and the refusal kicker.
+ * "The flow diagram IS the sandbox" (controller): a break button re-runs
+ * the same diagram and it takes a different branch, so the whole arc —
+ * what this is, how it works, proof, what to click — sits in the first
+ * viewport at 1512x800 (measured; see the task report for numbers).
  *
  * HEADLINE SIZE, measured not assumed (this pairs with the class tripwire
  * in ../landing-system.test.tsx — re-measure before changing either half):
@@ -36,16 +39,20 @@
  *
  * Owned here by re-homing rulings (positioning.md §3 deleted-sections
  * block): the refusal kicker — the dissolved TaglineReveal's sentence —
- * renders beneath the pipeline flow, where "Repair refused" lights up when
+ * renders beneath the in-column flow, where "Refuse repair" lights up when
  * a visitor serves the wrong product. The self-host line + copy command
  * left the hero entirely for FinalCTA.tsx's S5 band (`#run-it-yourself`),
- * which the secondary CTA anchors to. Not done here, flagged for the
- * controller: moving `PipelineFlowchart` INSIDE the sandbox panel (both
- * files are other agents'), and the panel's mini ledger strip.
+ * which the secondary CTA anchors to. The flow is composed from the
+ * existing `PipelineFlowchart` (already wired to the engine, event-only
+ * motion, real check results) rather than rebuilt; physically nesting it
+ * inside SandboxPanel.tsx is a two-line move left for whoever owns that
+ * file next — naming-fix had uncommitted edits in it at the time.
  *
- * `pt-8` — the hero's offset from the nav, which is NOT a section boundary
+ * `pt-4` — the hero's offset from the nav, which is NOT a section boundary
  * and so is deliberately off the page's 96px section rhythm (the
- * landing-system rhythm test documents this exception).
+ * landing-system rhythm test documents this exception). It tightened from
+ * pt-8 when the flow moved into the first viewport: measured at 1512x800,
+ * those 16px are what keep the refusal kicker above the fold.
  */
 import { useReducedMotion } from 'motion/react';
 import { BlurFade } from '@/components/ui/blur-fade';
@@ -70,7 +77,7 @@ export function Hero({ sandbox }: { sandbox: UseSandboxEngineResult }) {
   const reducedMotion = useReducedMotion();
 
   return (
-    <section className="relative overflow-hidden bg-[#000000] px-6 pb-24 pt-8">
+    <section className="relative overflow-hidden bg-[#000000] px-6 pb-24 pt-4">
       {/* MU dot-pattern behind the heading block (ui-system.md §4: "SVG dots
           on a flat ground rather than a gradient background", 4% opacity,
           radial mask). Bounded to the top 384px rather than the whole
@@ -85,7 +92,62 @@ export function Hero({ sandbox }: { sandbox: UseSandboxEngineResult }) {
         <DotPattern width={24} height={24} cx={1.5} cy={1.5} cr={1.5} className="text-[#FFFFFF] opacity-[0.04]" />
       </div>
 
-      <div className="relative mx-auto grid max-w-7xl grid-cols-1 gap-8 md:grid-cols-[2fr_3fr] md:items-center">
+      {/* Ambient backdrop (controller ruling + assets, 2026-08-20):
+          app/public/hero-ambient.mp4 — matte-black 3D data rows passing a
+          glass verification plane. A BACKDROP, never the proof: the live
+          flow above it is real and reacts; this only adds depth. Silent
+          file, muted+playsInline for iOS autoplay, poster paints first so
+          it cannot delay first paint, absolutely positioned below the dot
+          pattern so it adds zero layout height. The looping video is a
+          §1.9 idle-motion exception granted explicitly by the controller;
+          under prefers-reduced-motion it does not play at all — the still
+          poster renders instead. opacity 0.15 is the contrast budget:
+          composited over #000 in gamma space, even a pure-white video
+          pixel lands at #262626, which keeps --text-muted (#9B9B9B) at
+          5.4:1 — measured against the real frames in-browser, see the
+          task report. */}
+      {reducedMotion ? (
+        <img
+          src="/hero-ambient-poster.jpg"
+          alt=""
+          aria-hidden
+          className="pointer-events-none absolute inset-0 -z-20 h-full w-full object-cover opacity-[0.15]"
+        />
+      ) : (
+        <video
+          aria-hidden
+          muted
+          loop
+          autoPlay
+          playsInline
+          preload="metadata"
+          tabIndex={-1}
+          poster="/hero-ambient-poster.jpg"
+          src="/hero-ambient.mp4"
+          // React sets the `muted` PROPERTY but never writes the attribute,
+          // and some autoplay policies (iOS Safari; Chrome when the tab was
+          // hidden at mount) check the attribute / need an explicit nudge.
+          // Decorative element — a rejected play() just leaves the poster.
+          ref={(el) => {
+            if (!el) return;
+            el.muted = true;
+            el.setAttribute('muted', '');
+            // jsdom's play() returns undefined instead of a promise.
+            try {
+              el.play()?.catch(() => {});
+            } catch {
+              /* decorative — poster stands in */
+            }
+          }}
+          className="pointer-events-none absolute inset-0 -z-20 h-full w-full object-cover opacity-[0.15]"
+        />
+      )}
+
+      {/* minmax(0,…) on both tracks: fr tracks default to a min-content
+          minimum, which is exactly the mechanism behind the 2349px grid
+          blowout the width tripwire guards against — clamp it so no child
+          can widen the page. */}
+      <div className="relative mx-auto grid max-w-7xl grid-cols-1 gap-8 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] md:items-center">
         <div className="flex flex-col items-start text-left">
           {reducedMotion ? (
             <h1 className={`text-balance ${HEADLINE_CLASS}`}>
@@ -169,35 +231,34 @@ export function Hero({ sandbox }: { sandbox: UseSandboxEngineResult }) {
           </Entrance>
         </div>
 
-        <div id="sandbox" className="relative">
+        {/* THE FLOW IS THE SANDBOX (controller ruling, 2026-08-20): the
+            right column is one living stack — the fleet, the pipeline
+            diagram directly beneath it driven by the SAME engine instance,
+            and the refusal kicker under both. A break button re-runs the
+            diagram and it visibly takes a different branch, so the flow is
+            explained, proved, and inside the first viewport at 1512x800
+            (measured; see the task report). PipelineFlowchart no longer
+            renders as a standalone below-the-fold block anywhere.
+            The -mt-8 wrapper collapses against the component's own mt-8 to
+            a net 0 gap without editing the component's file — the flow's
+            internal title margin provides the visual breathing room. */}
+        <div id="sandbox" className="relative flex min-w-0 flex-col">
           <SandboxPanel sandbox={sandbox} />
+          <div className="-mt-8">
+            <PipelineFlowchart sandbox={sandbox} />
+          </div>
+
+          {/* The refusal kicker — the dissolved TaglineReveal's sentence
+              (copy.md S1, verbatim), placed directly beneath the flow,
+              where "Refuse repair" lights up when a visitor serves the
+              wrong product: the words and the picture assert the same
+              thing at the same moment. Static on purpose — it is the one
+              claim on screen that should never move. */}
+          <p className="mt-2 text-balance text-center text-xl font-semibold text-[#EDEDED]">
+            Polygraph does not heal scrapers. It decides when healing is safe.
+          </p>
         </div>
       </div>
-
-      {/* The pipeline, end to end, under the fold on purpose: nothing above
-          the fold may compete with the sandbox moment (ux-spec §0.2), and a
-          diagram that lights up in response to the break buttons has to sit
-          where the eye lands right after clicking them. positioning.md
-          wants this INSIDE the sandbox panel eventually — that move touches
-          two other agents' files and is flagged, not done. */}
-      <PipelineFlowchart sandbox={sandbox} />
-
-      {/* The refusal kicker — the dissolved TaglineReveal's sentence,
-          re-homed here by the controller ruling (positioning.md §3
-          deleted-sections block; copy.md S1 kicker, verbatim). It sits
-          beneath the flow diagram, where "Repair refused" renders when a
-          visitor serves the wrong product, so the words and the picture
-          assert the same thing at the same moment. */}
-      <Entrance
-        reduced={reducedMotion}
-        inView
-        className="relative mx-auto mt-16 max-w-[680px] text-center"
-      >
-        <p className="text-balance text-3xl font-semibold text-[#EDEDED]">
-          Polygraph does not heal scrapers. It decides when healing is safe.
-        </p>
-      </Entrance>
-
     </section>
   );
 }

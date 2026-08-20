@@ -74,11 +74,12 @@ describe('landing section rhythm (ui-system.md §1.6: "Section padding, landing 
 
   it('the hero is the one documented exception, and only on the edge that faces the nav', () => {
     const hero = readFileSync(path.join(SECTIONS_DIR, 'Hero.tsx'), 'utf8');
-    // `pt-8` is the hero's offset from the top nav — not a section-to-section
-    // boundary — and it is what puts the sandbox fleet AND its break button
-    // inside an 805px viewport (ux-spec.md §0.1/§0.2). The bottom edge, which
+    // `pt-4` is the hero's offset from the top nav — not a section-to-section
+    // boundary. Measured at 1512x800 with the flow-in-viewport hero
+    // (2026-08-20): at pt-8 the refusal kicker's bottom edge landed at
+    // 813px, 13px below the fold; pt-4 recovers it. The bottom edge, which
     // IS a section boundary, stays on the 96px rhythm.
-    expect(hero).toMatch(/pb-24 pt-8/);
+    expect(hero).toMatch(/pb-24 pt-4/);
   });
 });
 
@@ -217,7 +218,10 @@ describe('Hero — the copy control acknowledges the click (§1.9: a click IS an
     // column split) and RE-MEASURE in a browser — do not re-guess.
     expect(hero).toMatch(/md:text-4xl/);
     expect(hero).toMatch(/max-w-7xl/);
-    expect(hero).toMatch(/md:grid-cols-\[2fr_3fr\]/);
+    // minmax(0,…) is load-bearing, not styling: bare fr tracks carry a
+    // min-content minimum, the exact mechanism behind the 2349px grid
+    // blowout this file's width discipline exists to prevent.
+    expect(hero).toMatch(/md:grid-cols-\[minmax\(0,2fr\)_minmax\(0,3fr\)\]/);
     expect(hero).not.toMatch(/md:text-5xl|md:text-6xl/);
   });
 });

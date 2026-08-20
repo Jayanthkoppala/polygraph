@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="600" viewBox="0 0 1240 600" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">
+<rect width="1240" height="600" fill="#000000"/>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#22C55E"/></marker></defs>
+<rect x="40" y="210" width="190" height="110" rx="10" fill="none" stroke="#15803D" stroke-width="1.5"/>
+<text x="135.0" y="252" font-size="15" fill="#22C55E" text-anchor="middle" font-weight="bold" letter-spacing="1">YOUR SCRAPERS</text>
+<text x="135.0" y="278" font-size="12" fill="#15803D" text-anchor="middle" font-weight="normal" letter-spacing="0">Bright Data</text>
+<text x="135.0" y="296" font-size="12" fill="#15803D" text-anchor="middle" font-weight="normal" letter-spacing="0">collectors</text>
+<line x1="238" y1="265.0" x2="290" y2="265.0" stroke="#22C55E" stroke-width="1.6" marker-end="url(#a)"/>
+<text x="265.0" y="251.0" font-size="13" fill="#22C55E" text-anchor="middle" font-weight="bold" letter-spacing="0">200 OK</text>
+<text x="265.0" y="291.0" font-size="12" fill="#15803D" text-anchor="middle" font-weight="normal" letter-spacing="0">+ JSON</text>
+<rect x="300" y="70" width="400" height="400" rx="14" fill="none" stroke="#22C55E" stroke-width="2"/>
+<text x="500.0" y="110" font-size="20" fill="#22C55E" text-anchor="middle" font-weight="bold" letter-spacing="2">POLYGRAPH</text>
+<text x="500.0" y="134" font-size="12" fill="#15803D" text-anchor="middle" font-weight="normal" letter-spacing="0">re-reads the data itself</text>
+<line x1="330" y1="152" x2="670" y2="152" stroke="#15803D" stroke-width="1"/>
+<rect x="326" y="174" width="348" height="62" rx="8" fill="none" stroke="#15803D" stroke-width="1"/>
+<text x="344" y="200" font-size="14" fill="#22C55E" text-anchor="start" font-weight="bold" letter-spacing="0">Shape</text>
+<text x="344" y="220" font-size="11.5" fill="#86EFAC" text-anchor="start" font-weight="normal" letter-spacing="0">every field still there?</text>
+<rect x="326" y="248" width="348" height="62" rx="8" fill="none" stroke="#15803D" stroke-width="1"/>
+<text x="344" y="274" font-size="14" fill="#22C55E" text-anchor="start" font-weight="bold" letter-spacing="0">Consistency</text>
+<text x="344" y="294" font-size="11.5" fill="#86EFAC" text-anchor="start" font-weight="normal" letter-spacing="0">do the rows agree?</text>
+<rect x="326" y="322" width="348" height="62" rx="8" fill="none" stroke="#15803D" stroke-width="1"/>
+<text x="344" y="348" font-size="14" fill="#22C55E" text-anchor="start" font-weight="bold" letter-spacing="0">Identity</text>
+<text x="344" y="368" font-size="11.5" fill="#86EFAC" text-anchor="start" font-weight="normal" letter-spacing="0">is this the thing we asked for?</text>
+<rect x="326" y="396" width="348" height="62" rx="8" fill="none" stroke="#15803D" stroke-width="1"/>
+<text x="344" y="422" font-size="14" fill="#22C55E" text-anchor="start" font-weight="bold" letter-spacing="0">Canary</text>
+<text x="344" y="442" font-size="11.5" fill="#86EFAC" text-anchor="start" font-weight="normal" letter-spacing="0">does a known page still work?</text>
+<rect x="800" y="78" width="220" height="66" rx="10" fill="none" stroke="#22C55E" stroke-width="2"/>
+<text x="820" y="106" font-size="15" fill="#22C55E" text-anchor="start" font-weight="bold" letter-spacing="1">RELEASE</text>
+<text x="820" y="127" font-size="11.5" fill="#86EFAC" text-anchor="start" font-weight="normal" letter-spacing="0">the data held up</text>
+<line x1="708" y1="270.0" x2="790" y2="111.0" stroke="#22C55E" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="800" y="178" width="220" height="66" rx="10" fill="none" stroke="#15803D" stroke-width="1.5"/>
+<text x="820" y="206" font-size="15" fill="#22C55E" text-anchor="start" font-weight="bold" letter-spacing="1">HOLD</text>
+<text x="820" y="227" font-size="11.5" fill="#86EFAC" text-anchor="start" font-weight="normal" letter-spacing="0">something is off</text>
+<line x1="708" y1="270.0" x2="790" y2="211.0" stroke="#22C55E" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="800" y="278" width="220" height="66" rx="10" fill="none" stroke="#15803D" stroke-width="1.5"/>
+<text x="820" y="306" font-size="15" fill="#22C55E" text-anchor="start" font-weight="bold" letter-spacing="1">REPAIR</text>
+<text x="820" y="327" font-size="11.5" fill="#86EFAC" text-anchor="start" font-weight="normal" letter-spacing="0">here is the exact fix</text>
+<line x1="708" y1="270.0" x2="790" y2="311.0" stroke="#22C55E" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="800" y="378" width="220" height="66" rx="10" fill="none" stroke="#15803D" stroke-width="1.5"/>
+<text x="820" y="406" font-size="15" fill="#22C55E" text-anchor="start" font-weight="bold" letter-spacing="1">REFUSE</text>
+<text x="820" y="427" font-size="11.5" fill="#86EFAC" text-anchor="start" font-weight="normal" letter-spacing="0">a repair would lie</text>
+<line x1="708" y1="270.0" x2="790" y2="411.0" stroke="#22C55E" stroke-width="1.6" marker-end="url(#a)"/>
+<text x="1038" y="408" font-size="11.5" fill="#22C55E" text-anchor="start" font-weight="normal" letter-spacing="0">← the one</text>
+<text x="1038" y="425" font-size="11.5" fill="#22C55E" text-anchor="start" font-weight="normal" letter-spacing="0">nobody else does</text>
+<rect x="40" y="510" width="1160" height="62" rx="10" fill="none" stroke="#22C55E" stroke-width="1.5"/>
+<text x="64" y="548" font-size="15" fill="#22C55E" text-anchor="start" font-weight="bold" letter-spacing="1">LEDGER</text>
+<text x="150" y="548" font-size="12.5" fill="#86EFAC" text-anchor="start" font-weight="normal" letter-spacing="0">every decision, hash-chained to the one before it — change a row and the chain snaps</text>
+<line x1="910.0" y1="452" x2="910.0" y2="500" stroke="#22C55E" stroke-width="1.6" marker-end="url(#a)"/>
+</svg>
