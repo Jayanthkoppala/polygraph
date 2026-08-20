@@ -236,6 +236,39 @@ describe('Ledger — tenant scoping (Task 1: polygraph-v2-hosted-plan)', () => {
     db.close();
   });
 
+  it(
+    'two tenants, byte-identical event payload content, produce DIFFERENT event_hash values purely ' +
+      'because their genesis differs — literal proof tenant_id is NOT part of the hashed payload',
+    () => {
+      const db = new Database(':memory:');
+      const genesisA = 'a'.repeat(64);
+      const genesisB = 'b'.repeat(64);
+      const ledgerA = new Ledger(db, { tenantId: 'tenant-a', genesisHash: genesisA });
+      const ledgerB = new Ledger(db, { tenantId: 'tenant-b', genesisHash: genesisB });
+
+      // Exact same content appended to both — only tenantId/genesisHash differ.
+      const identicalPayload = baseEvent({ run_id: 'same-run-id' });
+      const rowA = ledgerA.append(identicalPayload);
+      const rowB = ledgerB.append(identicalPayload);
+
+      expect(rowA.event_hash).not.toBe(rowB.event_hash);
+
+      // Reconstruct each hash independently from ONLY prev_hash (= that
+      // tenant's genesis) + the canonical payload, deliberately never
+      // touching tenant_id (canonicalHashFor below strips it, same as the
+      // production hashEvent()). If tenant_id were actually part of the
+      // hashed payload, this reconstruction — which excludes it — would
+      // NOT match the real stored event_hash. It matches, byte for byte.
+      expect(rowA.event_hash).toBe(canonicalHashFor(genesisA, rowA as unknown as Record<string, unknown>));
+      expect(rowB.event_hash).toBe(canonicalHashFor(genesisB, rowB as unknown as Record<string, unknown>));
+
+      expect(ledgerA.verify()).toEqual({ ok: true, checked: 1 });
+      expect(ledgerB.verify()).toEqual({ ok: true, checked: 1 });
+
+      db.close();
+    }
+  );
+
   it('each tenant chains off its OWN last event, independent of another tenant\'s appends in between', () => {
     const db = new Database(':memory:');
     const ledgerA = new Ledger(db, { tenantId: 'tenant-a' });
