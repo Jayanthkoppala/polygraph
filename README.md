@@ -257,17 +257,57 @@ npm run build && cd .. && node dist/index.js serve
 **Deploying:** see the Deploy section below. Nothing described there has actually been
 deployed by this repo's own commits — see Current limits.
 
+## What running this against the real platform turned up
+
+Two things in this repo are worth reading before the code, because both are checkable
+rather than asserted:
+
+- **[`CLAUDE.md`'s collector pin](CLAUDE.md#collector-id-pin)** — the real Scraper
+  Studio collector IDs this project was built and tested against, with how each was
+  created, what its production schema is, the commands to run and heal it, and the
+  single API call that confirms the pin is still accurate. One ID we were handed does
+  not resolve on this account; it is listed as unresolved rather than quietly dropped.
+
+- **[`docs/FINDING-heal-promotion.md`](docs/FINDING-heal-promotion.md)** — running
+  Bright Data's own self-healing API against a live collector, the job reported
+  `status: "done"` with the approval step completed, and the fix did not reach
+  production: the collector's production schema was unchanged and a production run did
+  not return the requested field. The draft-then-promote behaviour is documented, and
+  the promotion step ("Save to Production") appears only as a Scraper Studio IDE
+  button — we found no endpoint for it across the documented `/dca/*` surface. The
+  practical consequence is that an unattended heal loop has no terminal state today:
+  it can trigger the AI, clear the approval gate, receive a success envelope, and
+  still leave the broken scraper running.
+
+  The document is deliberate about the line between observation and inference. It does
+  not claim a defect — the behaviour may well be intended — and it lists what it does
+  not claim as explicitly as what it does. Every step is reproducible; the commands
+  are at the end.
+
+  This is also the sharpest statement of the project's own premise. Polygraph exists
+  because "the job succeeded" and "the data is correct" are different claims. Here the
+  same split showed up one layer higher: the *repair* reported success and the repair
+  had not happened. `src/heal.ts` now snapshots the production schema before and after
+  a heal and refuses to record `RECOVERY_VERIFIED` when they are identical, even if
+  the re-grade itself passes.
+
 ## Judges' checklist
 
-**Create-and-run flow, with a Collector ID as proof.** Our Bright Data account's AI
-collector-generation feature is 403-gated, so any real Scraper Studio collectors backing
-this project were hand-built directly in the Scraper Studio IDE rather than
-AI-generated — said plainly rather than worked around. No production collector ID has
-been pinned yet in this repo (`CLAUDE.md`'s pin section is still a placeholder);
-`fleet.example.yaml` shows the exact schema a real collector plugs into (`brightdata` /
-`unlocker` / `local` adapters), and the demo's seeded `fleet.yaml` points two collectors
-at real, live `books.toscrape.com` pages via the `unlocker` adapter for fleet-scale
-realism.
+**Create-and-run flow, with a Collector ID as proof.** `c_mt1dsu9fdtdtx3uhf` — Hacker
+News top stories (`title`, `url`, `points`, `author`, `comment_count`), built by
+`bdata scraper create` against `https://news.ycombinator.com` and run live. It is
+pinned with its full provenance, its schema, and the exact commands to re-run it in
+[`CLAUDE.md`](CLAUDE.md#collector-id-pin), and you can confirm it resolves yourself
+with one `GET /dca/collectors_list` call (the command is in that section).
+
+This account's AI collector-generation feature was 403-gated for most of this build —
+`gates/t2/create*.json` holds six consecutive `"error": "Automation not allowed"`
+responses — and the gate lifted late, on 2026-08-20. Collectors created before that
+were hand-built in the Scraper Studio IDE. Said plainly rather than worked around.
+Separately, `fleet.example.yaml` shows the schema a real collector plugs into
+(`brightdata` / `unlocker` / `local` adapters), and the demo's seeded `fleet.yaml`
+points two collectors at live `books.toscrape.com` pages via the `unlocker` adapter
+for fleet-scale realism.
 
 **Self-healing demonstration.** Gated, and honestly so: the prompt composer
 (`policy.ts`'s `composeHealPrompt`), the heal controller's full trigger → poll →
@@ -332,10 +372,11 @@ Said plainly, because honest limits are part of this project's pitch:
 
 - **A heal promoting to production is a manual step — Bright Data's API has no
   "Save to Production" call.** Heal has now run live (2026-08-20, `gates/t2live/`): an
-  `--auto-approve` heal reported `status: "done"` after ~173s with `user_approval` in
+  `--auto-approve` heal reported `status: "done"` in ~105s with `user_approval` in
   `completed_steps`, proving `resume_automation_job` genuinely clears the diff-approval
   gate. But the fix never reached production — a `GET /dca/collectors_list` read and a
-  live production trigger both confirmed the requested field never showed up.
+  live production trigger both confirmed the requested field never showed up. Full
+  writeup, with reproduction steps: **[`docs/FINDING-heal-promotion.md`](docs/FINDING-heal-promotion.md)**.
   `resume_automation_job` approving a diff is not the same as Bright Data's "Save to
   Production" step, which the docs describe only as a Scraper Studio IDE button with no
   API or CLI equivalent anywhere in the `/dca/*` surface (confirmed by grepping the full
