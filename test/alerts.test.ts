@@ -461,3 +461,40 @@ describe('AlertNotifier — debounce persistence across instances (real file, no
     reader2.close();
   });
 });
+
+describe('AlertNotifier — tenant scoping (Task 1: polygraph-v2-hosted-plan)', () => {
+  it("defaults to tenantId 'local' when no options are passed — pre-tenancy call sites keep working unchanged", async () => {
+    const db = new Database(':memory:');
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200));
+    const notifier = new AlertNotifier(db, { fetchImpl, now: () => '2026-08-20T00:00:00.000Z' });
+
+    await notifier.notify(WEBHOOK, ctx());
+    const row = db.prepare('SELECT tenant_id FROM alert_state WHERE collector = ?').get('acme-catalog') as {
+      tenant_id: string;
+    };
+    expect(row.tenant_id).toBe('local');
+    db.close();
+  });
+
+  it("one tenant's alert history (state + debounce) is fully invisible to another tenant sharing the same collector name and verdict", async () => {
+    const db = new Database(':memory:');
+    const fetchA = vi.fn().mockResolvedValue(jsonResponse(200));
+    const fetchB = vi.fn().mockResolvedValue(jsonResponse(200));
+    const notifierA = new AlertNotifier(db, { fetchImpl: fetchA, tenantId: 'tenant-a', now: () => '2026-08-20T00:00:00.000Z' });
+    const notifierB = new AlertNotifier(db, { fetchImpl: fetchB, tenantId: 'tenant-b', now: () => '2026-08-20T00:00:05.000Z' });
+
+    // Tenant A alerts and gets debounced on a repeat within 10 minutes.
+    await notifierA.notify(WEBHOOK, ctx({ collector: 'shared-collector', verdict: 'FAILED_CONTRACT' }));
+    expect(fetchA).toHaveBeenCalledTimes(1);
+    await notifierA.notify(WEBHOOK, ctx({ collector: 'shared-collector', verdict: 'FAILED_CONTRACT' }));
+    expect(fetchA).toHaveBeenCalledTimes(1); // steady-state repeat, no re-alert
+
+    // Tenant B, same collector name, same verdict, same physical tables —
+    // must alert on its OWN first transition, completely unaffected by A's
+    // debounce/state rows.
+    await notifierB.notify(WEBHOOK, ctx({ collector: 'shared-collector', verdict: 'FAILED_CONTRACT' }));
+    expect(fetchB).toHaveBeenCalledTimes(1);
+
+    db.close();
+  });
+});

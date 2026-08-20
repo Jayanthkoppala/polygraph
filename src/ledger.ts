@@ -3,8 +3,29 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-/** prev_hash of the first event in a chain: 64 zeros. */
+/** prev_hash of the first event in a chain: 64 zeros. Also the genesis for
+ * every tenant that migrated from a pre-tenancy single-tenant database (see
+ * tenant-architecture.md §3/§8, R7) — new hosted tenants get a derived
+ * per-tenant genesis instead (src/tenancy/genesis.ts's `tenantGenesis`). */
 export const GENESIS_HASH = '0'.repeat(64);
+
+/** The tenant id every existing call site implicitly used before tenancy
+ * existed. Duplicated here (rather than imported from src/tenancy/genesis.ts)
+ * so this module stays free of any src/tenancy/ dependency — see
+ * tenant-architecture.md §7 rule 3: the CLI must never load the tenancy
+ * module, and ledger.ts is loaded by every CLI command. */
+const LOCAL_TENANT_ID = 'local';
+
+export interface LedgerOptions {
+  /** Defaults to 'local'. The CLI never passes this, so `new Ledger(path)`
+   * behaves exactly as it always has and every pre-tenancy call site and
+   * test keeps working unchanged. */
+  tenantId?: string;
+  /** Defaults to GENESIS_HASH ('0'.repeat(64)) so a migrated local chain's
+   * first row still links off the value it was originally hashed against.
+   * Hosted tenants pass their own tenants.genesis_hash. */
+  genesisHash?: string;
+}
 
 export interface LedgerEventInput {
   ts: string;
@@ -35,6 +56,11 @@ export interface LedgerEventRow {
   output_hash: string | null;
   prev_hash: string;
   event_hash: string;
+  /** Routing/isolation column, NOT part of the hashed payload (see
+   * `normalizePayload`) — added by tenant-architecture.md §3 without
+   * changing a single existing `event_hash`. Always present on rows read
+   * back from the DB; 'local' for every pre-tenancy event. */
+  tenant_id: string;
 }
 
 export interface VerifyResult {
@@ -93,6 +119,7 @@ interface RawRow {
   output_hash: string | null;
   prev_hash: string;
   event_hash: string;
+  tenant_id: string;
 }
 
 function deserializeRow(row: RawRow): LedgerEventRow {
@@ -102,8 +129,12 @@ function deserializeRow(row: RawRow): LedgerEventRow {
   };
 }
 
-/** The fields that make up an event's hashed payload (everything but id/prev_hash/event_hash). */
-type EventPayload = Omit<LedgerEventRow, 'id' | 'prev_hash' | 'event_hash'>;
+/** The fields that make up an event's hashed payload (everything but
+ * id/prev_hash/event_hash — and, since tenant-architecture.md §8, also
+ * excluding tenant_id: the routing column is deliberately NOT hashed, which
+ * is the property that lets a pre-tenancy chain keep verifying byte-for-byte
+ * after `tenant_id` is backfilled onto it). */
+type EventPayload = Omit<LedgerEventRow, 'id' | 'prev_hash' | 'event_hash' | 'tenant_id'>;
 
 function normalizePayload(input: LedgerEventInput): EventPayload {
   return {
@@ -125,6 +156,16 @@ function hashEvent(prevHash: string, payload: EventPayload): string {
   return createHash('sha256').update(prevHash + canonicalJson(payload)).digest('hex');
 }
 
+/** True if `table.column` exists on the connected database. Used only for
+ * the events table's self-healing tenant_id backfill (see the constructor)
+ * — kept local rather than imported from anywhere in src/tenancy/, so this
+ * module stays free of any dependency on it (see LOCAL_TENANT_ID's comment
+ * above for why that matters). */
+function columnExists(db: Database.Database, table: string, column: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return rows.some((r) => r.name === column);
+}
+
 /**
  * Append-only, hash-chained event ledger backed by SQLite.
  * Each event's event_hash = sha256(prev_hash + canonical_json(payload)),
@@ -133,14 +174,32 @@ function hashEvent(prevHash: string, payload: EventPayload): string {
  */
 export class Ledger {
   private db: Database.Database;
+  private ownsDb: boolean;
+  private tenantId: string;
+  private genesisHash: string;
   private appendTxn: Database.Transaction<(input: LedgerEventInput) => LedgerEventRow>;
 
-  constructor(dbPath: string) {
-    if (dbPath !== ':memory:') {
-      mkdirSync(dirname(dbPath), { recursive: true });
+  /** Accepts either a path (opens and owns its own connection — the CLI's
+   * exclusive usage pattern, unchanged) or an already-open Database (the
+   * hosted path: many tenants' Ledgers sharing one writer connection under
+   * WAL — see src/tenancy/scope.ts). Matches the `dbOrPath` convention
+   * Governor/AlertNotifier already use. */
+  constructor(dbOrPath: Database.Database | string, options: LedgerOptions = {}) {
+    if (typeof dbOrPath === 'string') {
+      if (dbOrPath !== ':memory:') {
+        mkdirSync(dirname(dbOrPath), { recursive: true });
+      }
+      this.db = new Database(dbOrPath);
+      this.db.pragma('journal_mode = WAL');
+      this.ownsDb = true;
+    } else {
+      this.db = dbOrPath;
+      this.ownsDb = false;
     }
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
+
+    this.tenantId = options.tenantId ?? LOCAL_TENANT_ID;
+    this.genesisHash = options.genesisHash ?? GENESIS_HASH;
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,13 +215,35 @@ export class Ledger {
         input_hash TEXT,
         output_hash TEXT,
         prev_hash TEXT NOT NULL,
-        event_hash TEXT NOT NULL
+        event_hash TEXT NOT NULL,
+        tenant_id TEXT
       )
     `);
+    // `CREATE TABLE IF NOT EXISTS` above is a no-op against a genuinely
+    // pre-existing pre-tenancy `events` table (one created by this same
+    // class before tenant_id existed) — it does NOT retrofit the new
+    // column. Self-heal that case here, unconditionally and idempotently,
+    // so `new Ledger(existingDbPath)` keeps working exactly as documented
+    // in tenant-architecture.md §8 whether or not the caller has also run
+    // src/tenancy/migrate.ts's M003 against this file. Non-destructive
+    // (ADD COLUMN, not a rebuild) and safe to run on every construction:
+    // once the column exists this is a single cheap PRAGMA lookup, no-op.
+    // Always backfills to LOCAL_TENANT_ID regardless of `options.tenantId`
+    // — a legacy single-tenant chain's existing rows are the local tenant's
+    // history by definition, never the tenant this particular instance
+    // happens to be scoped to.
+    if (!columnExists(this.db, 'events', 'tenant_id')) {
+      this.db.exec(`ALTER TABLE events ADD COLUMN tenant_id TEXT`);
+      this.db.prepare(`UPDATE events SET tenant_id = ? WHERE tenant_id IS NULL`).run(LOCAL_TENANT_ID);
+    }
+    // idx_events_tenant_id / idx_events_tenant_coll_id per
+    // tenant-architecture.md §3.
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_events_tenant_id ON events(tenant_id, id)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_events_tenant_coll_id ON events(tenant_id, collector, id DESC)`);
 
     const insertStmt = this.db.prepare(`
-      INSERT INTO events (ts, tenant, collector, run_id, verdict, cause, evidence, action, heal_job_id, input_hash, output_hash, prev_hash, event_hash)
-      VALUES (@ts, @tenant, @collector, @run_id, @verdict, @cause, @evidence, @action, @heal_job_id, @input_hash, @output_hash, @prev_hash, @event_hash)
+      INSERT INTO events (ts, tenant, collector, run_id, verdict, cause, evidence, action, heal_job_id, input_hash, output_hash, prev_hash, event_hash, tenant_id)
+      VALUES (@ts, @tenant, @collector, @run_id, @verdict, @cause, @evidence, @action, @heal_job_id, @input_hash, @output_hash, @prev_hash, @event_hash, @tenant_id)
     `);
 
     // read-last-hash + insert must be atomic: without a shared lock, two
@@ -172,7 +253,11 @@ export class Ledger {
     // SQLite's write lock (BEGIN IMMEDIATE) up front, before the read runs,
     // so the read-then-write pair is serialized against any other writer on
     // this DB file — the single-writer-per-DB assumption is enforced at the
-    // DB level, not just by convention.
+    // DB level, not just by convention. This still holds with multiple
+    // tenants sharing one writer connection: BEGIN IMMEDIATE serializes
+    // ALL appends through this connection, tenant A's included, so two
+    // tenants' concurrent appends can never interleave their
+    // read-last-hash + insert pairs either.
     this.appendTxn = this.db.transaction((input: LedgerEventInput): LedgerEventRow => {
       const prevHash = this.lastEventHash();
       const payload = normalizePayload(input);
@@ -183,21 +268,31 @@ export class Ledger {
         evidence: JSON.stringify(payload.evidence),
         prev_hash: prevHash,
         event_hash: eventHash,
+        tenant_id: this.tenantId,
       });
 
-      return { id: Number(info.lastInsertRowid), ...payload, prev_hash: prevHash, event_hash: eventHash };
+      return {
+        id: Number(info.lastInsertRowid),
+        ...payload,
+        prev_hash: prevHash,
+        event_hash: eventHash,
+        tenant_id: this.tenantId,
+      };
     });
   }
 
+  /** Only closes the DB this instance opened itself — matches Governor's
+   * ownsDb contract, so a caller sharing one Database across several
+   * tenant-scoped Ledgers closes it exactly once. */
   close(): void {
-    this.db.close();
+    if (this.ownsDb) this.db.close();
   }
 
   private lastEventHash(): string {
-    const row = this.db.prepare('SELECT event_hash FROM events ORDER BY id DESC LIMIT 1').get() as
-      | { event_hash: string }
-      | undefined;
-    return row ? row.event_hash : GENESIS_HASH;
+    const row = this.db
+      .prepare('SELECT event_hash FROM events WHERE tenant_id = ? ORDER BY id DESC LIMIT 1')
+      .get(this.tenantId) as { event_hash: string } | undefined;
+    return row ? row.event_hash : this.genesisHash;
   }
 
   /** Appends a new event, computing its hash chain link. Returns the stored row. */
@@ -205,24 +300,50 @@ export class Ledger {
     return this.appendTxn.immediate(input);
   }
 
-  /** Single event by id, or `undefined` if no such event exists. Added for
+  /** Single event by id, scoped to this tenant — `undefined` if no such
+   * event exists OR it belongs to another tenant (the two are
+   * indistinguishable from the caller's side, which is the point: an id
+   * guessed or leaked from another tenant must never resolve). Added for
    * Task 8's ack flow (`server.ts`'s `ackLedgerEvent` needs to look up the
    * SUSPECT/etc. row a caller is acknowledging before it can copy its
    * tenant/collector/verdict/cause/evidence into the new ACKED event). */
   getById(id: number): LedgerEventRow | undefined {
-    const row = this.db.prepare('SELECT * FROM events WHERE id = ?').get(id) as RawRow | undefined;
+    const row = this.db.prepare('SELECT * FROM events WHERE id = ? AND tenant_id = ?').get(id, this.tenantId) as
+      | RawRow
+      | undefined;
     return row ? deserializeRow(row) : undefined;
   }
 
-  /** All events, oldest first. */
+  /** All events for this tenant, oldest first. */
   all(): LedgerEventRow[] {
-    const rows = this.db.prepare('SELECT * FROM events ORDER BY id ASC').all() as RawRow[];
+    const rows = this.db.prepare('SELECT * FROM events WHERE tenant_id = ? ORDER BY id ASC').all(this.tenantId) as RawRow[];
+    return rows.map(deserializeRow);
+  }
+
+  /** Latest event per collector, for this tenant — the O(collector count)
+   * replacement for `all()` on the dashboard hot path (tenant-architecture.md
+   * §5: `all()` is a full-table JSON.parse-every-row scan, fine for a single
+   * hackathon fleet but not for N tenants' dashboards polling concurrently).
+   * Uses idx_events_tenant_coll_id, one index seek per collector. */
+  latestPerCollector(): LedgerEventRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT e.* FROM events e
+           JOIN (
+             SELECT collector, MAX(id) AS max_id
+               FROM events
+              WHERE tenant_id = ?
+              GROUP BY collector
+           ) latest ON latest.max_id = e.id
+          WHERE e.tenant_id = ?`
+      )
+      .all(this.tenantId, this.tenantId) as RawRow[];
     return rows.map(deserializeRow);
   }
 
   /**
-   * Walks the chain from genesis, verifying each event_hash and prev_hash
-   * link, stopping at the first row where either check fails.
+   * Walks this tenant's chain from its genesis, verifying each event_hash
+   * and prev_hash link, stopping at the first row where either check fails.
    *
    * `firstBadId` is "first row at which the chain breaks", not always "first
    * row that was tampered with": a self-consistent single-row forgery (a
@@ -233,14 +354,14 @@ export class Ledger {
    * `firstBadId - 1`. See the `VerifyResult.firstBadId` doc for detail.
    */
   verify(): VerifyResult {
-    let prevHash = GENESIS_HASH;
+    let prevHash = this.genesisHash;
     let checked = 0;
 
-    const rows = this.db.prepare('SELECT * FROM events ORDER BY id ASC').all() as RawRow[];
+    const rows = this.db.prepare('SELECT * FROM events WHERE tenant_id = ? ORDER BY id ASC').all(this.tenantId) as RawRow[];
     for (const raw of rows) {
       checked++;
       const row = deserializeRow(raw);
-      const { id, prev_hash, event_hash, ...payload } = row;
+      const { id, prev_hash, event_hash, tenant_id, ...payload } = row;
       if (prev_hash !== prevHash) {
         return { ok: false, checked, firstBadId: id };
       }
@@ -254,13 +375,14 @@ export class Ledger {
     return { ok: true, checked };
   }
 
-  /** Most recent events, newest first, optionally filtered by collector and capped by limit (default 20). */
+  /** Most recent events for this tenant, newest first, optionally filtered
+   * by collector and capped by limit (default 20). */
   recent(opts: RecentOptions = {}): LedgerEventRow[] {
     const { collector, limit = 20 } = opts;
-    let query = 'SELECT * FROM events';
-    const params: unknown[] = [];
+    let query = 'SELECT * FROM events WHERE tenant_id = ?';
+    const params: unknown[] = [this.tenantId];
     if (collector) {
-      query += ' WHERE collector = ?';
+      query += ' AND collector = ?';
       params.push(collector);
     }
     query += ' ORDER BY id DESC LIMIT ?';

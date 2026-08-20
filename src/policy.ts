@@ -453,6 +453,7 @@ export interface GovernorGate {
 /** One collector/day's persisted heal-attempt row, as read (never written)
  * by `Governor.snapshotForDay`. */
 export interface GovernorSnapshotRow {
+  tenant_id: string;
   collector: string;
   day: string;
   attempts: number;
@@ -461,8 +462,10 @@ export interface GovernorSnapshotRow {
 
 export interface GovernorSnapshot {
   rows: GovernorSnapshotRow[];
-  /** Sum of `rows[].attempts` — the same fleet-wide daily total
-   * `canHeal`'s `daily_heal_budget` check compares against. */
+  /** Sum of `rows[].attempts` for THIS tenant — the same per-tenant daily
+   * total `canHeal`'s `daily_heal_budget` check compares against. Per R6/the
+   * v1 ruling, the budget stays fleet-wide WITHIN a tenant (summed across
+   * that tenant's collectors) — it must never be summed across tenants. */
   totalAttempts: number;
 }
 
@@ -470,16 +473,29 @@ function dayKey(isoTs: string): string {
   return isoTs.slice(0, 10);
 }
 
+export interface GovernorOptions {
+  /** Defaults to 'local'. The CLI never passes this, so `new Governor(path)`
+   * behaves exactly as it always has and every pre-tenancy call site and
+   * test keeps working unchanged. */
+  tenantId?: string;
+}
+
+// Duplicated from src/tenancy/genesis.ts's LOCAL_TENANT_ID rather than
+// imported, for the same reason ledger.ts duplicates it — see that file's
+// comment. Keeps this module free of any src/tenancy/ dependency.
+const LOCAL_TENANT_ID = 'local';
+
 /** Persists per-collector-per-day heal-attempt state and enforces the
  * fleet's heal policy caps (max attempts per incident, cooldown, and a
- * tenant-wide daily budget shared across all collectors). Backed by the
- * same better-sqlite3 database file the ledger uses — accepts either an
- * already-open Database or a path to open one itself. */
+ * per-tenant daily budget shared across all of that tenant's collectors).
+ * Backed by the same better-sqlite3 database file the ledger uses — accepts
+ * either an already-open Database or a path to open one itself. */
 export class Governor {
   private db: Database.Database;
   private ownsDb: boolean;
+  private tenantId: string;
 
-  constructor(dbOrPath: Database.Database | string) {
+  constructor(dbOrPath: Database.Database | string, options: GovernorOptions = {}) {
     if (typeof dbOrPath === 'string') {
       if (dbOrPath !== ':memory:') {
         mkdirSync(dirname(dbOrPath), { recursive: true });
@@ -499,15 +515,23 @@ export class Governor {
       this.ownsDb = false;
     }
 
+    this.tenantId = options.tenantId ?? LOCAL_TENANT_ID;
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS governor (
+        tenant_id TEXT NOT NULL DEFAULT '${LOCAL_TENANT_ID}',
         collector TEXT NOT NULL,
         day TEXT NOT NULL,
         attempts INTEGER NOT NULL DEFAULT 0,
         last_attempt_ts TEXT,
-        PRIMARY KEY (collector, day)
+        PRIMARY KEY (tenant_id, collector, day)
       )
     `);
+    // tenant_id first in the PK is deliberate (tenant-architecture.md §3): a
+    // query that forgets its tenant predicate cannot use the primary-key
+    // index and degrades to a full scan instead of silently reading another
+    // tenant's rows.
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_governor_tenant_day ON governor(tenant_id, day)`);
   }
 
   close(): void {
@@ -515,16 +539,23 @@ export class Governor {
   }
 
   private row(collector: string, day: string): { attempts: number; last_attempt_ts: string | null } | undefined {
-    return this.db.prepare('SELECT attempts, last_attempt_ts FROM governor WHERE collector = ? AND day = ?').get(
-      collector,
-      day
-    ) as { attempts: number; last_attempt_ts: string | null } | undefined;
+    return this.db
+      .prepare('SELECT attempts, last_attempt_ts FROM governor WHERE tenant_id = ? AND collector = ? AND day = ?')
+      .get(this.tenantId, collector, day) as { attempts: number; last_attempt_ts: string | null } | undefined;
   }
 
+  /** Sum of THIS TENANT's attempts for `day` — scoped to `this.tenantId`.
+   *
+   * BUG FIX (tenant-architecture.md §5 / Task 1 brief): this used to sum
+   * `attempts` across the whole table with no tenant predicate at all, so in
+   * a multi-tenant database one tenant's heals would exhaust every other
+   * tenant's daily_heal_budget. The v1 ruling that the budget is fleet-wide
+   * is unchanged — it is fleet-wide WITHIN one tenant (summed across that
+   * tenant's collectors), never across tenants. */
   private totalAttemptsForDay(day: string): number {
-    const result = this.db.prepare('SELECT COALESCE(SUM(attempts), 0) AS total FROM governor WHERE day = ?').get(
-      day
-    ) as { total: number };
+    const result = this.db
+      .prepare('SELECT COALESCE(SUM(attempts), 0) AS total FROM governor WHERE tenant_id = ? AND day = ?')
+      .get(this.tenantId, day) as { total: number };
     return result.total;
   }
 
@@ -563,29 +594,30 @@ export class Governor {
     return { allowed: true };
   }
 
-  /** Read-only snapshot of every collector's heal-attempt row for `day`
-   * (YYYY-MM-DD), plus the fleet-wide total across them — for dashboard/
-   * status display (Task 8's GET /api/state). Never gates or records
-   * anything itself; `canHeal`/`recordAttempt` remain the sole gate. */
+  /** Read-only snapshot of THIS TENANT's per-collector heal-attempt rows for
+   * `day` (YYYY-MM-DD), plus this tenant's total across them — for
+   * dashboard/status display (Task 8's GET /api/state). Never gates or
+   * records anything itself; `canHeal`/`recordAttempt` remain the sole
+   * gate. */
   snapshotForDay(day: string): GovernorSnapshot {
     const rows = this.db
-      .prepare('SELECT collector, day, attempts, last_attempt_ts FROM governor WHERE day = ?')
-      .all(day) as GovernorSnapshotRow[];
+      .prepare('SELECT tenant_id, collector, day, attempts, last_attempt_ts FROM governor WHERE tenant_id = ? AND day = ?')
+      .all(this.tenantId, day) as GovernorSnapshotRow[];
     const totalAttempts = rows.reduce((sum, r) => sum + r.attempts, 0);
     return { rows, totalAttempts };
   }
 
   /** Records a heal attempt for `collector` at `nowIso`, incrementing that
-   * collector/day's attempt count and advancing last_attempt_ts. */
+   * (tenant, collector, day)'s attempt count and advancing last_attempt_ts. */
   recordAttempt(collector: string, nowIso: string): void {
     const day = dayKey(nowIso);
     this.db
       .prepare(
-        `INSERT INTO governor (collector, day, attempts, last_attempt_ts)
-         VALUES (?, ?, 1, ?)
-         ON CONFLICT(collector, day) DO UPDATE SET attempts = attempts + 1, last_attempt_ts = excluded.last_attempt_ts`
+        `INSERT INTO governor (tenant_id, collector, day, attempts, last_attempt_ts)
+         VALUES (?, ?, ?, 1, ?)
+         ON CONFLICT(tenant_id, collector, day) DO UPDATE SET attempts = attempts + 1, last_attempt_ts = excluded.last_attempt_ts`
       )
-      .run(collector, day, nowIso);
+      .run(this.tenantId, collector, day, nowIso);
   }
 }
 

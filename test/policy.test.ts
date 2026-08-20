@@ -490,6 +490,91 @@ describe('Governor', () => {
   });
 });
 
+describe('Governor — tenant scoping (Task 1: polygraph-v2-hosted-plan)', () => {
+  let db: Database.Database;
+  const policy: Policy = {
+    max_attempts_per_incident: 5,
+    cooldown_minutes: 0,
+    daily_heal_budget: 2,
+    heal_enabled: true,
+  };
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("defaults to tenantId 'local' when no options are passed — every pre-tenancy call site keeps working unchanged", () => {
+    const governor = new Governor(db);
+    governor.recordAttempt('demo-catalog', '2026-08-20T10:00:00Z');
+    const rows = governor.snapshotForDay('2026-08-20').rows;
+    expect(rows).toEqual([expect.objectContaining({ tenant_id: 'local', collector: 'demo-catalog' })]);
+  });
+
+  it(
+    'BUG FIX: totalAttemptsForDay/daily_heal_budget is scoped per tenant — one tenant exhausting its budget must ' +
+      "never block another tenant sharing the same physical governor table (the pre-fix behaviour summed across the WHOLE table with no tenant predicate at all)",
+    () => {
+      const govA = new Governor(db, { tenantId: 'tenant-a' });
+      const govB = new Governor(db, { tenantId: 'tenant-b' });
+
+      // Tenant A spends its entire daily_heal_budget of 2 across two collectors.
+      govA.recordAttempt('collector-1', '2026-08-20T08:00:00Z');
+      govA.recordAttempt('collector-2', '2026-08-20T09:00:00Z');
+      expect(govA.canHeal('collector-3', '2026-08-20T10:00:00Z', policy).allowed).toBe(false);
+
+      // Tenant B, sharing the SAME db and the same collector names even, has
+      // made zero attempts today and must be fully unaffected.
+      expect(govB.canHeal('collector-1', '2026-08-20T10:00:00Z', policy).allowed).toBe(true);
+      govB.recordAttempt('collector-1', '2026-08-20T10:05:00Z');
+      expect(govB.snapshotForDay('2026-08-20').totalAttempts).toBe(1); // not 3
+    }
+  );
+
+  it('snapshotForDay only returns rows for its own tenant, never another tenant sharing the table', () => {
+    const govA = new Governor(db, { tenantId: 'tenant-a' });
+    const govB = new Governor(db, { tenantId: 'tenant-b' });
+
+    govA.recordAttempt('collector-1', '2026-08-20T08:00:00Z');
+    govB.recordAttempt('collector-1', '2026-08-20T08:00:00Z');
+    govB.recordAttempt('collector-2', '2026-08-20T09:00:00Z');
+
+    const snapA = govA.snapshotForDay('2026-08-20');
+    expect(snapA.rows).toHaveLength(1);
+    expect(snapA.totalAttempts).toBe(1);
+    expect(snapA.rows.every((r) => r.tenant_id === 'tenant-a')).toBe(true);
+
+    const snapB = govB.snapshotForDay('2026-08-20');
+    expect(snapB.rows).toHaveLength(2);
+    expect(snapB.totalAttempts).toBe(2);
+  });
+
+  it('cooldown and max_attempts_per_incident are also isolated per tenant for the same collector name', () => {
+    const govA = new Governor(db, { tenantId: 'tenant-a' });
+    const govB = new Governor(db, { tenantId: 'tenant-b' });
+    const strictPolicy: Policy = { ...policy, max_attempts_per_incident: 1, cooldown_minutes: 30 };
+
+    govA.recordAttempt('shared-collector-name', '2026-08-20T10:00:00Z');
+    expect(govA.canHeal('shared-collector-name', '2026-08-20T10:05:00Z', strictPolicy).allowed).toBe(false);
+    // Tenant B has never attempted 'shared-collector-name' — must be allowed.
+    expect(govB.canHeal('shared-collector-name', '2026-08-20T10:05:00Z', strictPolicy).allowed).toBe(true);
+  });
+
+  it('two tenant-scoped Governors sharing one Database (the hosted TenantScope pattern) both persist correctly', () => {
+    const govA = new Governor(db, { tenantId: 'tenant-a' });
+    govA.recordAttempt('collector-1', '2026-08-20T08:00:00Z');
+
+    // A second Governor instance, same tenant, same shared connection —
+    // must see the first instance's write (matches the existing
+    // cross-instance persistence guarantee, now proven under tenant scoping).
+    const govAAgain = new Governor(db, { tenantId: 'tenant-a' });
+    expect(govAAgain.snapshotForDay('2026-08-20').totalAttempts).toBe(1);
+  });
+});
+
 describe('Governor — persistence across process/instance boundaries (real file, not :memory:)', () => {
   // :memory: only proves the in-process logic is right; it can't prove the
   // state actually survives being written to disk and reopened, which is

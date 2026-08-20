@@ -107,7 +107,16 @@ export interface AlertNotifierOptions {
    * failure. Default `console.error`. Never receives the webhook URL or
    * payload body — only a short description of what went wrong. */
   onError?: (message: string) => void;
+  /** Defaults to 'local'. The CLI never passes this, so
+   * `new AlertNotifier(path)` behaves exactly as it always has and every
+   * pre-tenancy call site and test keeps working unchanged. */
+  tenantId?: string;
 }
+
+// Duplicated from src/tenancy/genesis.ts's LOCAL_TENANT_ID rather than
+// imported — see ledger.ts's comment on its own copy of this constant. Keeps
+// this module free of any src/tenancy/ dependency.
+const LOCAL_TENANT_ID = 'local';
 
 /** True for any ReasonCode this module will alert on: FAILED_*, SUSPECT_*,
  * and the two RECOVERY_* terminals. PASS, RECOVERY_PENDING, and any future
@@ -147,6 +156,7 @@ export class AlertNotifier {
   private nowFn: () => string;
   private timeoutMs: number;
   private onError: (message: string) => void;
+  private tenantId: string;
 
   constructor(dbOrPath: Database.Database | string, options: AlertNotifierOptions = {}) {
     if (typeof dbOrPath === 'string') {
@@ -164,27 +174,32 @@ export class AlertNotifier {
       this.ownsDb = false;
     }
 
+    this.tenantId = options.tenantId ?? LOCAL_TENANT_ID;
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS alert_debounce (
+        tenant_id TEXT NOT NULL DEFAULT '${LOCAL_TENANT_ID}',
         collector TEXT NOT NULL,
         verdict TEXT NOT NULL,
         last_sent_ts TEXT NOT NULL,
-        PRIMARY KEY (collector, verdict)
+        PRIMARY KEY (tenant_id, collector, verdict)
       )
     `);
-    // One row per collector: the last STATE-shaped verdict code this
-    // collector was actually observed at (PASS or a FAILED_*/SUSPECT_*
+    // One row per (tenant, collector): the last STATE-shaped verdict code
+    // this collector was actually observed at (PASS or a FAILED_*/SUSPECT_*
     // code that successfully alerted). Deliberately a separate table from
-    // `alert_debounce` — different cardinality/key (one row per collector
-    // here vs. one row per (collector, verdict) pair there) and a
-    // different lifecycle (this is overwritten on every transition;
-    // alert_debounce accumulates one row per code ever seen) — but the
-    // same SQLite DB, so it carries the same cross-process persistence
-    // guarantee (see the real-file tests in test/alerts.test.ts).
+    // `alert_debounce` — different cardinality/key (one row per
+    // tenant/collector here vs. one row per (tenant, collector, verdict)
+    // pair there) and a different lifecycle (this is overwritten on every
+    // transition; alert_debounce accumulates one row per code ever seen) —
+    // but the same SQLite DB, so it carries the same cross-process
+    // persistence guarantee (see the real-file tests in test/alerts.test.ts).
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS alert_state (
-        collector TEXT PRIMARY KEY,
-        verdict TEXT NOT NULL
+        tenant_id TEXT NOT NULL DEFAULT '${LOCAL_TENANT_ID}',
+        collector TEXT NOT NULL,
+        verdict TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, collector)
       )
     `);
 
@@ -203,18 +218,18 @@ export class AlertNotifier {
 
   private lastSent(collector: string, verdict: string): string | undefined {
     const row = this.db
-      .prepare('SELECT last_sent_ts FROM alert_debounce WHERE collector = ? AND verdict = ?')
-      .get(collector, verdict) as { last_sent_ts: string } | undefined;
+      .prepare('SELECT last_sent_ts FROM alert_debounce WHERE tenant_id = ? AND collector = ? AND verdict = ?')
+      .get(this.tenantId, collector, verdict) as { last_sent_ts: string } | undefined;
     return row?.last_sent_ts;
   }
 
   private recordSent(collector: string, verdict: string, ts: string): void {
     this.db
       .prepare(
-        `INSERT INTO alert_debounce (collector, verdict, last_sent_ts) VALUES (?, ?, ?)
-         ON CONFLICT(collector, verdict) DO UPDATE SET last_sent_ts = excluded.last_sent_ts`
+        `INSERT INTO alert_debounce (tenant_id, collector, verdict, last_sent_ts) VALUES (?, ?, ?, ?)
+         ON CONFLICT(tenant_id, collector, verdict) DO UPDATE SET last_sent_ts = excluded.last_sent_ts`
       )
-      .run(collector, verdict, ts);
+      .run(this.tenantId, collector, verdict, ts);
   }
 
   private isDebounced(collector: string, verdict: string, nowIso: string): boolean {
@@ -227,19 +242,19 @@ export class AlertNotifier {
    * `undefined` if none has ever been recorded (a collector's very first
    * observed verdict is therefore always a "transition"). */
   private lastState(collector: string): string | undefined {
-    const row = this.db.prepare('SELECT verdict FROM alert_state WHERE collector = ?').get(collector) as
-      | { verdict: string }
-      | undefined;
+    const row = this.db
+      .prepare('SELECT verdict FROM alert_state WHERE tenant_id = ? AND collector = ?')
+      .get(this.tenantId, collector) as { verdict: string } | undefined;
     return row?.verdict;
   }
 
   private recordState(collector: string, verdict: string): void {
     this.db
       .prepare(
-        `INSERT INTO alert_state (collector, verdict) VALUES (?, ?)
-         ON CONFLICT(collector) DO UPDATE SET verdict = excluded.verdict`
+        `INSERT INTO alert_state (tenant_id, collector, verdict) VALUES (?, ?, ?)
+         ON CONFLICT(tenant_id, collector) DO UPDATE SET verdict = excluded.verdict`
       )
-      .run(collector, verdict);
+      .run(this.tenantId, collector, verdict);
   }
 
   /** POSTs the alert payload with a hard timeout. Throws on any failure
