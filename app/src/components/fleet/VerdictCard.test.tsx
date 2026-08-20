@@ -56,6 +56,26 @@ function baseCollector(overrides: Partial<CollectorState> = {}): CollectorState 
 
 const noop = () => {};
 
+/**
+ * A WRONG_SHAPE run that is genuinely repairable — which means it carries a
+ * `suggestedHealCommand`, because that is the only way the server says so.
+ * `derivePureActionDetail` (src/server.ts) sets the command exactly when the
+ * engine's own decision was REPAIR, so a structural break without one is a
+ * run the engine declined to repair, not a repairable one missing a field.
+ * The Repair affordance is derived from this, so a fixture that wants the
+ * button has to be a run that would actually get it.
+ */
+function repairableShapeCollector(overrides: Partial<CollectorState> = {}): CollectorState {
+  return baseCollector({
+    verdict: 'FAILED_CONTRACT',
+    cause: 'STRUCTURAL',
+    action: 'REPAIR',
+    pureAction: 'REPAIR',
+    suggestedHealCommand: 'bdata scraper heal amazon-prices "re-derive the price selector"',
+    ...overrides,
+  });
+}
+
 describe('VerdictCard — six facts at card density', () => {
   it('renders name, verdict label, fill, rows, age, and the repair slot for a healthy collector', () => {
     stubMatchMedia(false);
@@ -136,7 +156,7 @@ describe('VerdictCard — wiring', () => {
   it('clicking Repair on a WRONG_SHAPE card calls onRepair, not onSelect', () => {
     stubMatchMedia(false);
     const onRepair = vi.fn();
-    const collector = baseCollector({ verdict: 'FAILED_CONTRACT', cause: 'STRUCTURAL' });
+    const collector = repairableShapeCollector();
     render(<VerdictCard collector={collector} density="card" onSelect={noop} onRepair={onRepair} onAcknowledge={noop} />);
     fireEvent.click(screen.getByRole('button', { name: 'Repair' }));
     expect(onRepair).toHaveBeenCalledWith('amazon-prices');
@@ -189,7 +209,7 @@ describe('VerdictCard — the repair slot has room inside the shell (critique.md
 
   it('the slot wrapper never shrinks to make room for the button (shrink-0)', () => {
     stubMatchMedia(false);
-    const collector = baseCollector({ verdict: 'FAILED_CONTRACT', cause: 'STRUCTURAL' });
+    const collector = repairableShapeCollector();
     const { container } = render(
       <VerdictCard collector={collector} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
     );
@@ -494,5 +514,122 @@ describe('VerdictCard — the ring is a resting state channel, not a hover rewar
     );
     const shell = container.querySelector('[data-testid="verdict-card-shell"]') as HTMLElement;
     expect(shell.getAttribute('data-ring')).toBe('#272727');
+  });
+});
+
+/**
+ * A blocked run is a WRONG_SHAPE card that is NOT repairable.
+ *
+ * §2.1 maps `cause: 'BLOCKED'` onto the same display state as a structural
+ * break, and the label "Wrong shape" is settled (five states, five rail
+ * geometries) — so the card keeps the label and the rail, and the ACTION
+ * SLOT is where the two must part. src/policy.ts's `decideBlocked` always
+ * QUARANTINEs, so the server sends no `suggestedHealCommand`; offering a
+ * Repair button anyway is a control that claims it can act while doing
+ * nothing, which is the exact failure this product exists to catch.
+ */
+describe('VerdictCard — a BLOCKED run keeps the label but never the repair', () => {
+  function blockedCollector(overrides: Partial<CollectorState> = {}): CollectorState {
+    return baseCollector({
+      verdict: 'FAILED_BLOCKED_RESPONSE',
+      cause: 'BLOCKED',
+      action: 'QUARANTINE',
+      pureAction: 'QUARANTINE',
+      actionReason: 'blocked/compliance-restricted response',
+      suggestedHealCommand: null,
+      ...overrides,
+    });
+  }
+
+  it('still reads as "Wrong shape" — the five display states do not change', () => {
+    stubMatchMedia(false);
+    render(<VerdictCard collector={blockedCollector()} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    expect(screen.getByText('Wrong shape')).toBeInTheDocument();
+  });
+
+  it('presents NO enabled repair affordance — the slot control is disabled', () => {
+    stubMatchMedia(false);
+    render(<VerdictCard collector={blockedCollector()} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    const repair = screen.getByRole('button', { name: /repair/i });
+    expect(repair).toBeDisabled();
+    expect(repair).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('clicking where the repair used to be never calls onRepair', () => {
+    stubMatchMedia(false);
+    const onRepair = vi.fn();
+    render(<VerdictCard collector={blockedCollector()} density="card" onSelect={noop} onRepair={onRepair} onAcknowledge={noop} />);
+    fireEvent.click(screen.getByRole('button', { name: /repair/i }));
+    expect(onRepair).not.toHaveBeenCalled();
+  });
+
+  it('uses the refusal treatment: sunken, struck through, and the visible word "refused"', () => {
+    stubMatchMedia(false);
+    const { container } = render(
+      <VerdictCard collector={blockedCollector()} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    const slot = container.querySelector('[data-repair-elevation="sunken"]') as HTMLElement;
+    expect(slot).not.toBeNull();
+    expect(slot.className).toContain('shadow-[var(--shadow-e0)]');
+    expect(slot.className).not.toContain('shadow-[var(--shadow-e2)]');
+    expect(screen.getByTestId('repair-slot-strike')).toBeInTheDocument();
+    expect(screen.getByText('refused')).toBeInTheDocument();
+  });
+
+  it('carries the BLOCK-specific reason, not the wrong-target one', () => {
+    stubMatchMedia(false);
+    render(<VerdictCard collector={blockedCollector()} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    const describedBy = screen.getByRole('button', { name: /repair/i }).getAttribute('aria-describedby');
+    const reason = document.getElementById(describedBy!)!.textContent!;
+    expect(reason).toMatch(/blocked this request/i);
+    expect(reason).not.toMatch(/wrong entity|wrong target/i);
+  });
+
+  it('the refusal reaches row density too, where the slot is dropped (§2.8)', () => {
+    stubMatchMedia(false);
+    render(<VerdictCard collector={blockedCollector()} density="row" onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    expect(screen.getByTestId('verdict-chip-refusal-badge')).toBeInTheDocument();
+    expect(screen.getByText('Repair refused')).toBeInTheDocument();
+  });
+
+  it('keeps the WRONG_SHAPE hue — refusal rides on elevation, never on borrowing magenta', () => {
+    stubMatchMedia(false);
+    const { container } = render(
+      <VerdictCard collector={blockedCollector()} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    const shell = container.querySelector('[data-testid="verdict-card-shell"]') as HTMLElement;
+    expect(shell.getAttribute('data-ring')).toBe('var(--color-verdict-shape)');
+    // rgb(248, 81, 73) is --color-verdict-shape #F85149; the magenta of
+    // --color-verdict-target is rgb(232, 121, 249) and must not appear.
+    const slot = container.querySelector('[data-repair-elevation="sunken"]') as HTMLElement;
+    expect(slot.style.borderColor).not.toBe('rgb(232, 121, 249)');
+  });
+});
+
+/**
+ * The other half of the same rule: a structural break that DID come with a
+ * repair still gets the live, raised, enabled button. The fix must not
+ * over-refuse.
+ */
+describe('VerdictCard — a repairable structural run still offers repair', () => {
+  it('renders an enabled, raised Repair button and wires it to onRepair', () => {
+    stubMatchMedia(false);
+    const onRepair = vi.fn();
+    const { container } = render(
+      <VerdictCard collector={repairableShapeCollector()} density="card" onSelect={noop} onRepair={onRepair} onAcknowledge={noop} />,
+    );
+    const repair = screen.getByRole('button', { name: 'Repair' });
+    expect(repair).not.toBeDisabled();
+    expect(container.querySelector('[data-repair-elevation="raised"]')).not.toBeNull();
+    fireEvent.click(repair);
+    expect(onRepair).toHaveBeenCalledWith('amazon-prices');
+  });
+
+  it('shows no refusal badge at row density', () => {
+    stubMatchMedia(false);
+    render(
+      <VerdictCard collector={repairableShapeCollector()} density="row" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    expect(screen.queryByTestId('verdict-chip-refusal-badge')).toBeNull();
   });
 });

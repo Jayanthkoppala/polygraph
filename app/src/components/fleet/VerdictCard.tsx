@@ -17,7 +17,7 @@ import { VerdictCardShell } from './VerdictCardShell';
 import { VerdictRail } from '@/components/verdict/VerdictRail';
 import { VerdictChip } from '@/components/verdict/VerdictChip';
 import { RepairSlot } from '@/components/verdict/RepairSlot';
-import { VERDICT, toVerdictState, type VerdictState } from '@/lib/verdict';
+import { VERDICT, toVerdictState, repairRefusal, type VerdictState } from '@/lib/verdict';
 import { firstIdentityMismatch } from '@/lib/evidence';
 import type { CollectorState } from '@/lib/api';
 import { relativeAge } from '@/lib/time';
@@ -51,6 +51,11 @@ export function VerdictCard({
   const state = toVerdictState(collector);
   const meta = VERDICT[state];
   const Glyph = meta.glyph;
+  // Asked of the RUN, not of the label. WRONG_SHAPE is two different runs
+  // wearing one name — a structural break the engine can re-derive, and a
+  // blocked one it never could — and only the collector knows which. See
+  // `repairRefusal`.
+  const refusal = repairRefusal(collector);
 
   // §2.6 beat 3: the fracture's card-level jolt. VerdictRail only owns its
   // own 3px element, so it hands the card this callback instead of moving
@@ -91,7 +96,7 @@ export function VerdictCard({
             <span className="min-w-0 flex-1 truncate pl-3 text-base font-semibold text-[#EDEDED]">
               {collector.name}
             </span>
-            <VerdictChip state={state} showRefusal />
+            <VerdictChip state={state} showRefusal refused={refusal !== null} />
             <span className="shrink-0 font-mono text-xs tabular-nums text-[#9B9B9B]">
               {collector.fillPct != null ? `${collector.fillPct}%` : '—'}
             </span>
@@ -114,7 +119,7 @@ export function VerdictCard({
               </div>
 
               <div className="pl-3">
-                <VerdictChip state={state} />
+                <VerdictChip state={state} refused={refusal !== null} />
               </div>
             </div>
 
@@ -167,6 +172,7 @@ export function VerdictCard({
             onRepair={onRepair}
             onAcknowledge={onAcknowledge}
             animateEntrance={animateEntrance}
+            refusal={refusal}
           />
         </div>
       )}

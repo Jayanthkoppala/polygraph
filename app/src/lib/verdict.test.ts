@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { toVerdictState, VERDICT, type VerdictState } from '@/lib/verdict';
+import {
+  toVerdictState,
+  repairRefusal,
+  REFUSAL_BLOCKED,
+  REFUSAL_NO_REPAIR,
+  REFUSAL_WRONG_TARGET,
+  VERDICT,
+  type VerdictState,
+} from '@/lib/verdict';
 import type { CollectorState } from '@/lib/api';
 
 /** Minimal valid CollectorState, overridden per test. */
@@ -104,7 +112,7 @@ describe('VERDICT metadata — R1 display labels never leak the engine string', 
     });
   }
 
-  it('only WRONG_TARGET refuses repair', () => {
+  it('only WRONG_TARGET refuses repair by its label alone — every other state must ask the run', () => {
     for (const state of Object.keys(VERDICT) as VerdictState[]) {
       expect(VERDICT[state].refusesRepair).toBe(state === 'WRONG_TARGET');
     }
@@ -114,5 +122,75 @@ describe('VERDICT metadata — R1 display labels never leak the engine string', 
     for (const state of Object.keys(VERDICT) as VerdictState[]) {
       expect(VERDICT[state].color).toMatch(/^var\(--color-verdict-[a-z]+\)$/);
     }
+  });
+});
+
+/**
+ * Repair eligibility is a property of the RUN, not of the display label.
+ *
+ * WRONG_SHAPE is the state where that distinction bites: §2.1 maps both
+ * `cause: 'STRUCTURAL'` and `cause: 'BLOCKED'` onto it, and only the first
+ * kind is fixable. src/policy.ts's `decideBlocked` always QUARANTINEs
+ * ("anti-bot blocks and compliance-restricted targets are never healable by
+ * re-capturing a template"), so a blocked run must never be shown a repair.
+ */
+describe('repairRefusal — the run decides, and says why', () => {
+  it('a BLOCKED run refuses, with the block-specific argument — not the wrong-target one', () => {
+    const refusal = repairRefusal(collector({ verdict: 'FAILED_BLOCKED_RESPONSE', cause: 'BLOCKED' }));
+    expect(refusal).toBe(REFUSAL_BLOCKED);
+  });
+
+  it('a BLOCKED run still refuses even if a heal command somehow rode along', () => {
+    // Can't happen through policy.ts, and the UI must not treat it as
+    // permission if it ever did.
+    const refusal = repairRefusal(
+      collector({
+        verdict: 'FAILED_BLOCKED_RESPONSE',
+        cause: 'BLOCKED',
+        suggestedHealCommand: 'bdata scraper heal c1 "re-derive"',
+      }),
+    );
+    expect(refusal).toBe(REFUSAL_BLOCKED);
+  });
+
+  it('a STRUCTURAL run WITH a heal command does not refuse — this is the fixable kind', () => {
+    const refusal = repairRefusal(
+      collector({
+        verdict: 'FAILED_STRUCTURAL',
+        cause: 'STRUCTURAL',
+        pureAction: 'REPAIR',
+        suggestedHealCommand: 'bdata scraper heal c1 "re-derive the price selector"',
+      }),
+    );
+    expect(refusal).toBeNull();
+  });
+
+  it('a STRUCTURAL run with NO heal command refuses — the engine produced no repair to run', () => {
+    const refusal = repairRefusal(collector({ verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL' }));
+    expect(refusal).toBe(REFUSAL_NO_REPAIR);
+  });
+
+  it('WRONG_TARGET refuses unconditionally, with its own unchanged argument', () => {
+    expect(repairRefusal(collector({ verdict: 'FAILED_IDENTITY', cause: 'IDENTITY' }))).toBe(
+      REFUSAL_WRONG_TARGET,
+    );
+  });
+
+  it('the states with no repair on offer at all never manufacture a refusal', () => {
+    expect(repairRefusal(collector({ verdict: 'PASS' }))).toBeNull();
+    expect(repairRefusal(collector({ verdict: 'SUSPECT_UNEXPLAINED_ANOMALY' }))).toBeNull();
+    expect(repairRefusal(collector({ verdict: 'PASS', unverified: true }))).toBeNull();
+  });
+
+  it('every refusal argument states both the refusal and a reason, never a bare label', () => {
+    for (const reason of [REFUSAL_WRONG_TARGET, REFUSAL_BLOCKED, REFUSAL_NO_REPAIR]) {
+      expect(reason).toMatch(/refused because/i);
+      expect(reason.length).toBeGreaterThan('Repair refused'.length * 3);
+    }
+  });
+
+  it('the blocked argument neither blames the operator nor promises a retry', () => {
+    expect(REFUSAL_BLOCKED).not.toMatch(/\byou\b|\byour\b/i);
+    expect(REFUSAL_BLOCKED).not.toMatch(/try again|retry|later/i);
   });
 });

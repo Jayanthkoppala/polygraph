@@ -341,13 +341,27 @@ collapses them into five display states. This mapping is the contract:
 |---|---|---|
 | **VERIFIED** | `code: 'PASS'` | Released |
 | **UNEXPLAINED** | `code` starts with `SUSPECT_` | Held, needs acknowledgement |
-| **WRONG SHAPE** | `cause: 'STRUCTURAL'` or `'BLOCKED'`, or `code: 'FAILED_CONTRACT'` | Repair offered, or Held if the governor blocked it |
+| **WRONG SHAPE** | `cause: 'STRUCTURAL'` or `'BLOCKED'`, or `code: 'FAILED_CONTRACT'` | Repair offered **only if the run carries one**; otherwise **Repair refused** with its reason |
 | **WRONG TARGET** | `cause: 'IDENTITY'` | Needs rediscovery + **Repair refused** |
 | **NOT CHECKED** | `unverified: true` on the collector state | Held, checks were skipped |
 
 `unverified` wins over everything. A collector with a skipped check never renders as
 VERIFIED even if the verdict string says `PASS`. The server already enforces this
 (`isUnverified` in `src/server.ts`); the UI must not undo it.
+
+**WRONG SHAPE is one label over two different runs, and only the run knows which.** A
+structural break with a confirmed canary failure is the fixable kind. A run the target
+BLOCKED never was: `decideBlocked` (src/policy.ts) always QUARANTINEs, because "anti-bot
+blocks and compliance-restricted targets are never healable by re-capturing a template".
+So repair eligibility is a property of the RUN, never of the display state —
+`repairRefusal(collector)` in `lib/verdict.ts` is the single answer, and
+`VERDICT[state].refusesRepair` is only its per-state fallback (true for WRONG TARGET
+alone, which refuses on its label). The truth source is the server's own
+`suggestedHealCommand`, set exactly where the engine's ungoverned decision was REPAIR;
+a run without one has no repair to run, and offering the button anyway would be a
+control that claims it can act while doing nothing. `cause` picks which refusal argument
+is made. This does not affect a governor-blocked repair (R3, R6): those still carry the
+manual command and stay repairable by a human, which is what the slot hands over.
 
 Recovery codes (`RECOVERY_PENDING` / `VERIFIED` / `FAILED`) are not a sixth state. They
 render as the state they are recovering *from*, with a recovery chip attached. A heal in
@@ -599,7 +613,7 @@ export interface VerdictMeta {
   label: string;
   glyph: Icon;
   color: string;      // css var reference
-  refusesRepair: boolean;
+  refusesRepair: boolean; // per-STATE default only; the run's answer is repairRefusal() — §2.1
 }
 
 export const VERDICT: Record<VerdictState, VerdictMeta> = {
@@ -630,11 +644,14 @@ import { VERDICT, type VerdictState } from "@/lib/verdict";
 export function VerdictChip({
   state,
   showRefusal = false, // true only at `row` density, where RepairSlot is dropped
+  refused,             // repairRefusal(collector) !== null — the RUN's answer, §2.1
 }: {
   state: VerdictState;
   showRefusal?: boolean;
+  refused?: boolean;
 }) {
-  const { label, glyph: Glyph, color, refusesRepair } = VERDICT[state];
+  const { label, glyph: Glyph, color } = VERDICT[state];
+  const refusesRepair = refused ?? VERDICT[state].refusesRepair;
   return (
     <span className="flex items-center gap-2">
       <span
@@ -647,7 +664,7 @@ export function VerdictChip({
       {refusesRepair && showRefusal && (
         <span
           className="flex items-center gap-1 rounded-full px-2 py-[2px] text-xs font-medium"
-          style={{ color: "var(--color-verdict-target)", background: "var(--color-raised)" }}
+          style={{ color, background: "var(--color-raised)" }}
         >
           <Prohibit size={12} weight="regular" aria-hidden />
           Repair refused
@@ -665,6 +682,12 @@ The chip's "Repair refused" badge renders **only at `row` density**, where there
 room for the repair slot. At `card` and `hero` density the slot below carries the refusal,
 and repeating it in the chip is noise. Pass `showRefusal={density === "row"}`.
 
+Whether the badge is warranted comes from the run, not the state (§2.1): the chip takes a
+`refused` prop, `repairRefusal(collector) !== null`, and falls back to
+`VERDICT[state].refusesRepair` only when it is not given one. The badge takes the state's
+own colour so a blocked WRONG SHAPE card does not borrow the wrong-target magenta —
+colour stays third and redundant (§2.5) behind the Prohibit glyph and the words.
+
 ## 2.8 The repair slot
 
 Co-equal with the rail, and the more immediate of the two. The rail tells you *what kind*
@@ -680,7 +703,8 @@ constant, the only thing the eye compares between two cards is what is *inside* 
 |---|---|---|
 | VERIFIED | "Released" label, no control | flat, inert |
 | UNEXPLAINED | **Acknowledge** button, live (`POST /api/ack`) | raised |
-| WRONG SHAPE | **Repair** button, live and enabled | **raised** |
+| WRONG SHAPE, run carries a repair | **Repair** button, live and enabled | **raised** |
+| WRONG SHAPE, blocked or no repair | **Repair** struck through, "refused", disabled | **sunken** |
 | WRONG TARGET | **Repair** struck through, "refused", disabled | **sunken** |
 | NOT CHECKED | "Run checks" button, disabled with a reason | flat, inert |
 

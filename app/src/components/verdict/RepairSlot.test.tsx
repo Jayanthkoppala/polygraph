@@ -358,3 +358,105 @@ describe('RepairSlot — a settled refusal never re-arms itself (§1.9 "nothing 
     expect(button.querySelector('[data-testid="repair-slot-glyph-outgoing"]')).not.toBeNull();
   });
 });
+
+/**
+ * The slot's refusal is driven by the RUN, not by the display state.
+ *
+ * WRONG_SHAPE is the one state that carries both kinds of run — a structural
+ * break the engine can re-derive, and a blocked one it never could — so the
+ * caller passes the answer down as `refusal`. The per-state default stays as
+ * the fallback for callers that hold only a state.
+ */
+describe('RepairSlot — a refused run overrides the state default (§2.8, R3)', () => {
+  const BLOCK_REASON = 'Repair is refused because the target site blocked this request.';
+
+  it('WRONG_SHAPE with a refusal renders the refused control, not the live Repair button', () => {
+    stubMatchMedia(false);
+    const { container } = render(
+      <RepairSlot
+        state="WRONG_SHAPE"
+        collectorId="c1"
+        onRepair={noop}
+        onAcknowledge={noop}
+        refusal={BLOCK_REASON}
+      />,
+    );
+    const button = screen.getByRole('button');
+    expect(button).toBeDisabled();
+    expect(container.querySelector('[data-repair-elevation="sunken"]')).not.toBeNull();
+    expect(container.querySelector('[data-repair-elevation="raised"]')).toBeNull();
+  });
+
+  it('the refused control still fills the same fixed box — the slot never resizes', () => {
+    stubMatchMedia(false);
+    const { container } = render(
+      <RepairSlot state="WRONG_SHAPE" collectorId="c1" onRepair={noop} onAcknowledge={noop} refusal={BLOCK_REASON} />,
+    );
+    const box = container.querySelector('[data-verdict-state="WRONG_SHAPE"]')!;
+    expect(box).toHaveClass('h-8');
+    expect(box).toHaveClass('w-full');
+  });
+
+  it('speaks the refusal reason it was given, verbatim, through aria-describedby', () => {
+    stubMatchMedia(false);
+    render(
+      <RepairSlot state="WRONG_SHAPE" collectorId="c1" onRepair={noop} onAcknowledge={noop} refusal={BLOCK_REASON} />,
+    );
+    const describedBy = screen.getByRole('button').getAttribute('aria-describedby');
+    expect(document.getElementById(describedBy!)!.textContent).toBe(BLOCK_REASON);
+  });
+
+  it('keeps its own state colour rather than borrowing the wrong-target magenta (§2.5)', () => {
+    stubMatchMedia(false);
+    render(
+      <RepairSlot state="WRONG_SHAPE" collectorId="c1" onRepair={noop} onAcknowledge={noop} refusal={BLOCK_REASON} />,
+    );
+    const button = screen.getByRole('button') as HTMLElement;
+    expect(button.style.borderColor).toBe('rgb(248, 81, 73)'); // --color-verdict-shape
+    expect(button.style.borderColor).not.toBe('rgb(232, 121, 249)'); // --color-verdict-target
+  });
+
+  it('mounts settled: a repair that was never on offer is not "withdrawn" in front of you (§1.9)', () => {
+    stubMatchMedia(false);
+    render(
+      <RepairSlot
+        state="WRONG_SHAPE"
+        collectorId="c1"
+        onRepair={noop}
+        onAcknowledge={noop}
+        refusal={BLOCK_REASON}
+        animateEntrance
+      />,
+    );
+    const button = screen.getByRole('button') as HTMLElement;
+    expect(button.style.boxShadow).toContain('inset 0 -1px 0 0 rgb(255 255 255 / 0.04)');
+    expect(button.querySelector('[data-testid="repair-slot-glyph-outgoing"]')).toBeNull();
+  });
+
+  it('refusal={null} on WRONG_SHAPE leaves the live Repair button alone', () => {
+    stubMatchMedia(false);
+    render(
+      <RepairSlot state="WRONG_SHAPE" collectorId="c1" onRepair={noop} onAcknowledge={noop} refusal={null} />,
+    );
+    expect(screen.getByRole('button')).not.toBeDisabled();
+  });
+
+  it('refusal={null} can NOT talk WRONG_TARGET into offering a repair', () => {
+    stubMatchMedia(false);
+    render(
+      <RepairSlot state="WRONG_TARGET" collectorId="c1" onRepair={noop} onAcknowledge={noop} refusal={null} />,
+    );
+    expect(screen.getByRole('button')).toBeDisabled();
+  });
+
+  it('with the prop omitted, the per-state default still governs both ways', () => {
+    stubMatchMedia(false);
+    const { unmount } = render(
+      <RepairSlot state="WRONG_TARGET" collectorId="c1" onRepair={noop} onAcknowledge={noop} />,
+    );
+    expect(screen.getByRole('button')).toBeDisabled();
+    unmount();
+    render(<RepairSlot state="WRONG_SHAPE" collectorId="c1" onRepair={noop} onAcknowledge={noop} />);
+    expect(screen.getByRole('button')).not.toBeDisabled();
+  });
+});

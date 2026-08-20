@@ -45,3 +45,43 @@ describe('VerdictChip — refusal badge only at row density (§2.8)', () => {
     }
   });
 });
+
+/**
+ * The badge follows the RUN. At row density the slot is dropped, so this
+ * badge is the only surface left that can carry a refusal — and a blocked
+ * run is a WRONG_SHAPE card that refuses. §2.8: "the refusal is never
+ * invisible at any density."
+ */
+describe('VerdictChip — the refusal badge follows the run, not the label', () => {
+  it('WRONG_SHAPE with refused=true shows the badge', () => {
+    render(<VerdictChip state="WRONG_SHAPE" showRefusal refused />);
+    expect(screen.getByTestId('verdict-chip-refusal-badge')).toBeInTheDocument();
+    expect(screen.getByText('Repair refused')).toBeInTheDocument();
+  });
+
+  it('WRONG_SHAPE with refused=false shows no badge — a repairable run keeps its repair', () => {
+    render(<VerdictChip state="WRONG_SHAPE" showRefusal refused={false} />);
+    expect(screen.queryByTestId('verdict-chip-refusal-badge')).toBeNull();
+  });
+
+  it('refused=false cannot suppress the badge for WRONG_TARGET... it is simply never passed one', () => {
+    // Documents the contract: VerdictCard derives `refused` from
+    // repairRefusal(), which returns a refusal for every WRONG_TARGET run,
+    // so refused=false is unreachable there. The prop is an override for the
+    // WRONG_SHAPE split, not a licence to un-refuse an identity failure.
+    render(<VerdictChip state="WRONG_TARGET" showRefusal />);
+    expect(screen.getByTestId('verdict-chip-refusal-badge')).toBeInTheDocument();
+  });
+
+  it('the badge still needs row density — refused=true alone never renders it', () => {
+    render(<VerdictChip state="WRONG_SHAPE" refused />);
+    expect(screen.queryByTestId('verdict-chip-refusal-badge')).toBeNull();
+  });
+
+  it('the badge takes the state hue, so a blocked card does not turn magenta (§2.5)', () => {
+    render(<VerdictChip state="WRONG_SHAPE" showRefusal refused />);
+    const badge = screen.getByTestId('verdict-chip-refusal-badge');
+    expect(badge.getAttribute('style')).toContain('var(--color-verdict-shape)');
+    expect(badge.getAttribute('style')).not.toContain('var(--color-verdict-target)');
+  });
+});

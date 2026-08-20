@@ -17,7 +17,7 @@
  */
 import { motion, useReducedMotion } from 'motion/react';
 import { Wrench, Prohibit, Check, ArrowClockwise, SealCheck } from '@phosphor-icons/react';
-import type { VerdictState } from '@/lib/verdict';
+import { VERDICT, REFUSAL_WRONG_TARGET, type VerdictState } from '@/lib/verdict';
 import { EASE_FLUID, EASE_SNAP, REFUSAL_BEAT } from '@/lib/motion';
 import { useSkipEntrance } from '@/hooks/useSkipEntrance';
 import { useFrozen } from '@/hooks/useFrozen';
@@ -33,9 +33,25 @@ const SHADOW_E0 = 'inset 0 -1px 0 0 rgb(255 255 255 / 0.04)';
 const COLOR_SHAPE = '#F85149';
 const COLOR_TARGET = '#E879F9';
 
-const REFUSAL_REASON =
-  'Repair is refused because this run returned well formed data for the wrong entity. ' +
-  'Re-deriving a field selector cannot fix fetching the wrong target.';
+/**
+ * The settled colour of a refused control, as a literal.
+ *
+ * motion/react cannot tween a `var()` reference (see SHADOW_E2 above), and
+ * the settled path writes its values through `animate` too, so the refused
+ * control needs one literal per state it can appear in. It takes the state's
+ * OWN colour rather than a single "refusal colour": a blocked run is still a
+ * WRONG_SHAPE card, its rail and ring are red, and painting its slot magenta
+ * would say "wrong target" in the one channel §2.5 keeps redundant. The
+ * refusal is carried by elevation, the strike, and the word "refused" —
+ * never by hue.
+ */
+const REFUSED_COLOR: Record<VerdictState, string> = {
+  VERIFIED: COLOR_SHAPE,
+  UNEXPLAINED: COLOR_SHAPE,
+  WRONG_SHAPE: COLOR_SHAPE,
+  WRONG_TARGET: COLOR_TARGET,
+  NOT_CHECKED: COLOR_SHAPE,
+};
 
 /** Every branch below fills exactly this box — same position, same height,
  * on all five states. Never resized or reflowed between them. */
@@ -52,12 +68,50 @@ export interface RepairSlotProps {
    * site (landing page `ProofMoment`) needs this. Undefined preserves the
    * default behaviour. */
   animateEntrance?: boolean;
+  /**
+   * This RUN's refusal argument, from `repairRefusal(collector)`, or `null`
+   * when the run is genuinely repairable. A non-null string renders the
+   * refusal treatment whatever the display state says — which is the whole
+   * point: WRONG_SHAPE covers both a repairable structural break and a
+   * blocked run, and only the run knows which.
+   *
+   * `undefined` (the prop omitted) falls back to the per-STATE default in
+   * `VERDICT[state].refusesRepair`, so a call site with no collector in hand
+   * still gets WRONG_TARGET's unconditional refusal.
+   */
+  refusal?: string | null;
 }
 
-export function RepairSlot({ state, collectorId, onRepair, onAcknowledge, animateEntrance }: RepairSlotProps) {
+export function RepairSlot({
+  state,
+  collectorId,
+  onRepair,
+  onAcknowledge,
+  animateEntrance,
+  refusal,
+}: RepairSlotProps) {
   const reduceMotion = useReducedMotion();
   const mountSkip = useSkipEntrance(reduceMotion);
   const skipEntrance = animateEntrance === undefined ? mountSkip : Boolean(reduceMotion) || !animateEntrance;
+
+  const reason =
+    refusal === undefined ? (VERDICT[state].refusesRepair ? REFUSAL_WRONG_TARGET : null) : refusal;
+
+  if (reason !== null) {
+    return (
+      <RefusedRepair
+        collectorId={collectorId}
+        state={state}
+        reason={reason}
+        // Beat 4 is a WITHDRAWAL — §2.8, "the button in the slot does not
+        // appear ... it is taken away in front of you". That only tells the
+        // truth where a repair was ever on offer. A blocked run never had
+        // one, so it mounts settled: animating a withdrawal there would
+        // stage a decision that was never taken.
+        skipEntrance={state === 'WRONG_TARGET' ? skipEntrance : true}
+      />
+    );
+  }
 
   if (state === 'WRONG_SHAPE') {
     return (
@@ -76,8 +130,20 @@ export function RepairSlot({ state, collectorId, onRepair, onAcknowledge, animat
     );
   }
 
+  // Backstop, not dead code: WRONG_TARGET refuses unconditionally (R3, §2.1),
+  // so even a caller that hands this slot `refusal={null}` for an identity
+  // failure — a contradiction the run itself can never produce, since
+  // `decideIdentity` cannot emit REPAIR — still gets the refusal. The
+  // invariant holds structurally rather than by the caller's good behaviour.
   if (state === 'WRONG_TARGET') {
-    return <RefusedRepair collectorId={collectorId} skipEntrance={skipEntrance} />;
+    return (
+      <RefusedRepair
+        collectorId={collectorId}
+        state={state}
+        reason={REFUSAL_WRONG_TARGET}
+        skipEntrance={skipEntrance}
+      />
+    );
   }
 
   if (state === 'UNEXPLAINED') {
@@ -147,12 +213,17 @@ export function RepairSlot({ state, collectorId, onRepair, onAcknowledge, animat
  */
 function RefusedRepair({
   collectorId,
+  state,
+  reason,
   skipEntrance: skipEntranceProp,
 }: {
   collectorId: string;
+  state: VerdictState;
+  reason: string;
   skipEntrance: boolean;
 }) {
   const skipEntrance = useFrozen(skipEntranceProp);
+  const settledColor = REFUSED_COLOR[state];
   return (
     <>
       <motion.button
@@ -160,16 +231,16 @@ function RefusedRepair({
         disabled
         aria-disabled="true"
         aria-describedby={`refusal-${collectorId}`}
-        data-verdict-state="WRONG_TARGET"
+        data-verdict-state={state}
         data-repair-elevation="sunken"
-        className={`${SLOT_BOX} cursor-not-allowed border-[var(--color-verdict-target)] bg-[#1F1F1F]
-                    text-[var(--color-verdict-target)] shadow-[var(--shadow-e0)]`}
+        style={{ borderColor: VERDICT[state].color, color: VERDICT[state].color }}
+        className={`${SLOT_BOX} cursor-not-allowed bg-[#1F1F1F] shadow-[var(--shadow-e0)]`}
         initial={
           skipEntrance
             ? false
             : { boxShadow: SHADOW_E2, borderColor: COLOR_SHAPE, color: COLOR_SHAPE }
         }
-        animate={{ boxShadow: SHADOW_E0, borderColor: COLOR_TARGET, color: COLOR_TARGET }}
+        animate={{ boxShadow: SHADOW_E0, borderColor: settledColor, color: settledColor }}
         transition={
           skipEntrance
             ? { duration: 0 }
@@ -241,8 +312,8 @@ function RefusedRepair({
                     ease: EASE_SNAP,
                   }
             }
-            style={{ transformOrigin: 'left' }}
-            className="absolute inset-x-0 top-1/2 h-px bg-[var(--color-verdict-target)]"
+            style={{ transformOrigin: 'left', background: VERDICT[state].color }}
+            className="absolute inset-x-0 top-1/2 h-px"
           />
         </span>
         <motion.span
@@ -259,7 +330,7 @@ function RefusedRepair({
         </motion.span>
       </motion.button>
       <span id={`refusal-${collectorId}`} className="sr-only">
-        {REFUSAL_REASON}
+        {reason}
       </span>
     </>
   );
