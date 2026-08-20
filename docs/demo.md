@@ -4,6 +4,14 @@ The whole thing runs offline, on your own laptop, against a local fixture site. 
 Bright Data account, no API key, no network access required. One terminal runs
 `polygraph demo`; a second terminal drives the chaos.
 
+**What this is and isn't.** `polygraph demo` is the single-tenant offline path — one
+fleet, one ledger, no signup, no key custody, nothing under `src/tenancy/` even loaded.
+It exists to show the verification engine's decision-making in three minutes with no
+setup. The hosted multi-tenant product is a different entry point (`polygraph serve`),
+where a stranger signs up, pastes their own Bright Data key, and gets their own
+scheduled fleet with its own hash chain — see the README's "Being a tenant" section.
+The engine below the two is identical; only what wraps it differs.
+
 ## Setup (before you start talking)
 
 ```
@@ -117,8 +125,10 @@ row. Say the two things that matter here:
   request, right now) confirmed the field is still broken. That three-way
   confirmation is exactly what policy.ts calls a `HealProof`, and it's the only thing
   that's allowed to make a REPAIR decision.
-- Heal is disabled by policy right now (our actual Bright Data account is 403-gated
-  on AI self-healing features — see the README's "account gate" note). Rather than
+- Heal is disabled by policy right now (this Bright Data account was 403-gated on AI
+  self-healing features for most of the build, and a heal cannot be promoted to
+  production through the API even when it runs — see the README's Current limits and
+  [`FINDING-heal-promotion.md`](FINDING-heal-promotion.md)). Rather than
   silently doing nothing, Polygraph prints the *exact* command a human could run to
   trigger the same repair by hand: `bdata scraper heal demo-fixture-catalog "..."`.
   That's a feature, not a fallback — the system did the diagnosis, it's just not the

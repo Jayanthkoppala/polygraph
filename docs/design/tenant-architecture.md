@@ -1,8 +1,13 @@
 # Polygraph multi-tenant architecture
 
-Status: design spec, not implemented.
-Target branch: `build/v1` (or a `build/hosted` branch off it).
+Status: **implemented on `build/v1`** — §§1-5 and §§7-8 all ship in `src/tenancy/`,
+covered by the `test/tenancy.*.test.ts` suite. §6 (Deploy) is the exception and is
+still a recommendation rather than a description: see the note at the head of that
+section for what actually runs today.
 Written against: 30 commits / 347 tests, single-tenant CLI + `node:http` server + better-sqlite3.
+This document was the spec that work was built from, so it is kept in its original
+proposing voice ("recommended", "should") rather than rewritten past-tense; treat the
+code and the README as authoritative where the two disagree.
 
 This document specifies the layer that turns Polygraph from a single-tenant local
 tool into a publicly hosted one, **without forking the core**. Everything below
@@ -1248,6 +1253,16 @@ an optimisation.**
 ---
 
 ## 6. Deploy
+
+> **This section is the one part of this document that was not carried out.** The
+> Fly.io deploy below was prepared — `Dockerfile`, `fly.toml`, `scripts/deploy-fly.sh`,
+> `scripts/verify-fly.sh`, and `test/deploy.config.test.ts` all exist and pass — but no
+> `fly deploy` was ever run, because always-on hosting costs money and that was declined.
+> What actually runs today: the full product self-hosted via `polygraph serve`, exposed
+> through a Cloudflare quick tunnel when it needs to be publicly reachable (a new random
+> hostname on every restart, so `POLYGRAPH_PUBLIC_ORIGIN` has to be set to match it), plus
+> a separate static Vercel build serving only the landing page and its in-browser sandbox.
+> Read everything below as a plan for whoever wants always-on hosting later.
 
 ### Recommendation: Fly.io, single machine, one persistent volume.
 
