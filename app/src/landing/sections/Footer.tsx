@@ -3,12 +3,13 @@
  * `Sandbox · GitHub · Privacy · Sign in`. No testimonials, no logo wall,
  * no team section, no test counts.
  *
- * `Terms` is kept alongside copy.md's four links: ui-system.md §4.3/B10
- * makes privacy AND terms mandatory ship requirements, and copy.md's list
- * doesn't read as an instruction to un-ship a legal page. Flagged to the
- * lead as a deliberate reconciliation, not drift.
+ * `Terms` is kept alongside copy.md's links: ui-system.md §4.3/B10 makes
+ * privacy AND terms mandatory ship requirements — ratified by the lead and
+ * positioning, and copy.md's list now includes it.
  *
- * GitHub URL is package.json's `repository` field, not a guess.
+ * The GitHub link from copy.md's list is deliberately NOT rendered yet:
+ * package.json's `repository` URL 404s and the repo has no remote. See the
+ * comment at the link site below.
  */
 export function Footer() {
   return (
@@ -23,9 +24,11 @@ export function Footer() {
           <a href="#sandbox" className="underline underline-offset-2 hover:text-[#EDEDED]">
             Sandbox
           </a>
-          <a href="https://github.com/jayanth137/polygraph" className="underline underline-offset-2 hover:text-[#EDEDED]">
-            GitHub
-          </a>
+          {/* GitHub link intentionally absent: package.json's repository
+              URL 404s and this repo has no remote — nothing has been
+              pushed. A dead GitHub link on a page selling verification is
+              self-refuting. Restore the link (copy.md's list has it) the
+              moment the public repo exists (team-lead ruling, 2026-08-20). */}
           <a href="/legal/privacy" className="underline underline-offset-2 hover:text-[#EDEDED]">
             Privacy
           </a>

@@ -102,12 +102,16 @@ export function ThreeFailures() {
             schema was unchanged, and we found no API endpoint that promotes a draft to production. Polygraph
             checks the schema before and after a repair, and refuses to call that a recovery.
           </p>
-          <a
-            href="https://github.com/jayanth137/polygraph/blob/main/docs/FINDING-heal-promotion.md"
-            className="mt-3 inline-block font-mono text-sm text-[#9B9B9B] underline underline-offset-2 hover:text-[#EDEDED]"
-          >
-            Read the finding →
-          </a>
+          {/* Deliberately NOT a link: package.json's repository URL 404s —
+              the repo has never been pushed (git remote is empty), and a
+              skeptical reader clicking "Read the finding" into a 404 under
+              our most falsifiable claim would read as fabrication. The
+              plain path tells them exactly where to verify it in the repo
+              they will get. Convert back to a real link the moment the
+              public repo exists (team-lead ruling, 2026-08-20). */}
+          <p className="mt-3 font-mono text-sm text-[#9B9B9B]">
+            The full finding: <span className="text-[#EDEDED]">docs/FINDING-heal-promotion.md</span>
+          </p>
         </div>
       </BlurFade>
     </section>
