@@ -1,0 +1,8 @@
+node_modules/
+reference/
+gates/
+*.sqlite
+*.db
+.env
+dist/
+.superpowers/
