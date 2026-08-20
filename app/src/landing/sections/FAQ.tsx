@@ -1,7 +1,10 @@
 /**
  * FAQ — S6 per positioning.md §3 and copy.md §2/S6: FIVE questions only,
  * copy.md verbatim (sandbox vs real product · what we call on your Bright
- * Data account · do you spend my credits · lose/revoke my key · self-host).
+ * Data account · do you spend my credits · is my key safe · self-host —
+ * "is my key safe" replaced "lose/revoke my key" per the copy owner's
+ * swap: the revoke answer was a subset, and the custody objection deserves
+ * the searchable title).
  * The previous eight-question set is deleted per the positioning ruling —
  * the hero now carries what those answered.
  *
@@ -24,8 +27,8 @@ const FAQS: { q: string; a: string }[] = [
     a: 'Repairs are off for every hosted fleet, structurally: the hosted product does not trigger repairs on your behalf. Scheduled runs use your account the same way running the collector yourself would. When a break is repairable, Polygraph shows you the exact command and you decide whether to run it.',
   },
   {
-    q: 'What if I lose or revoke my key?',
-    a: 'Revoke it in one click in settings: the stored copy is deleted, runs pause, and your ledger stays intact. There is no way to view a stored key, by design; there is no endpoint that returns it. To resume, paste a key again.',
+    q: 'Is my Bright Data API key safe here?',
+    a: 'It is encrypted before it touches disk, and the key that decrypts it is not in the database — it lives in the server environment, so a stolen database file yields ciphertext and nothing else. There is no endpoint that shows a stored key back, to you or to anyone. Every request ever made with it lands on your ledger, and revoking it takes one click: the stored copy is deleted, runs pause, and your ledger stays intact.',
   },
   {
     q: 'Can I self-host?',

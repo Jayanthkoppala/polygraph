@@ -36,7 +36,7 @@ function ledgerRowState(verdict: string, cause: string | null) {
 type VerifyStatus = 'idle' | 'checking' | 'ok' | 'broken';
 
 const CUSTODY_FACTS = [
-  'Your key is AES-256-GCM encrypted per tenant. There is no endpoint that shows it back.',
+  'Your key is AES-256-GCM encrypted per tenant, and the key that decrypts it lives in the server environment, never the database — stealing the database file yields ciphertext and nothing else. No endpoint shows it back.',
   'Your fleet, your ledger — every tenant’s chain starts from its own genesis.',
   'Repairs are off in the hosted product — structurally, not as a default. A repair would spend your Bright Data credits, and nothing here can spend them.',
 ];
