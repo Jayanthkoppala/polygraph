@@ -32,7 +32,11 @@ const countTests = (out) => {
 };
 
 const commits = run('git rev-list --count HEAD').trim();
-const backend = countTests(run('npx vitest run --exclude "app/**"'));
+// `vitest.config.ts` (Task 10b) scopes the root project to `test/**` only —
+// `npx vitest run` from the repo root no longer globs into `app/src/**`,
+// so the `--exclude "app/**"` this script used to need is gone; it was a
+// workaround for the exact bug `npm run test:all` now fixes properly.
+const backend = countTests(run('npx vitest run'));
 const app = countTests(run('npm --prefix app run test'));
 const typecheckOut = run('npm run typecheck');
 const typecheck = /error TS\d+/.test(typecheckOut) ? 'ERRORS' : 'clean';
@@ -43,8 +47,9 @@ const block = `| Metric | Value |
 | Backend tests | ${backend} |
 | App tests | ${app} |
 | Typecheck | ${typecheck} |
-| Backend suite | \`npx vitest run --exclude "app/**"\` |
-| App suite | \`npm --prefix app run test\` |`;
+| Backend suite | \`npx vitest run\` |
+| App suite | \`npm --prefix app run test\` |
+| Both, one command | \`npm run test:all\` |`;
 
 const path = resolve(root, 'PROGRESS.md');
 const before = readFileSync(path, 'utf8');
