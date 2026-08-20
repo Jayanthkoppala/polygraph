@@ -62,14 +62,16 @@ Shipped, reviewed, demo-ready. This is the fallback if v2 does not land.
 | 1 | Tenancy foundation (per-tenant chains, isolation, migration) | `src/tenancy/` | ✅ |
 | 2 | Auth + AES-256-GCM key custody | `src/tenancy/` | ✅ |
 | 3 | Onboarding: infer → probe → confirm | `src/tenancy/` | ✅ |
-| 4 | `serve`, `migrate`, scheduler, tenant routes, deploy files | `src/tenancy/`, `src/index.ts` | ✅ |
+| 4 | `serve`, `migrate`, scheduler, tenant routes, deploy files | `src/server.ts`, `src/index.ts` | ✅ |
 | 5 | Frontend foundation (Vite, Tailwind v4, tokens, fonts) | `app/` | ✅ |
 | 6 | Verdict visual system (rail, shell, repair slot) | `app/src/components/` | ✅ |
 | 7 | Fleet view + evidence panel + ledger stream | `app/src/` | ✅ |
 | 8 | Landing page + live sandbox | `app/src/landing/` | ✅ |
 | 9 | Onboarding UI + tenant app shell | `app/src/onboarding/` | ✅ |
-| 10a | App routing (landing/onboarding/fleet), app-side integration | `app/` | 🔄 |
-| 10b | Backend integration: `/api/ledger/verify`, `test:all`, docs, deploy readiness | root, `src/` | ✅ |
+| 10 | Integration, routing, honesty pass, deploy readiness | root + `app/` | ✅ |
+| — | Design critique (rendered, measured, 15 screenshots) | `docs/design/critique.md` | ✅ |
+| — | **Visual defect fixes** (repair slot clipped, layout blowout, unpainted body) | `app/` | 🔄 |
+| — | **Heal promotion fix** (live finding: heal reports done without promoting) | `src/heal.ts` | 🔄 |
 
 Tasks 4/7/8/9's own deliverables landed and are individually reviewed-complete per their
 task reports — the 🔄 on 10a reflects frontend work landing concurrently with (and after)
@@ -84,17 +86,13 @@ router wiring between landing/onboarding/fleet, and `app/`'s test suite settling
 | Wiring | State |
 |---|---|
 | Tenancy reachable over HTTP | ✅ |
-| `serve` command | ✅ |
-| `migrate` command | ✅ |
-| `admin rekey` / `admin set-public` commands | ✅ |
-| `POST /api/ledger/verify` (tenant-scoped, off the dashboard's hot path, yields on a long chain walk) | ✅ Task 10b |
-| Server serves the React app (`app/dist`), with a graceful degrade when it's missing | ✅ |
-| Routing between landing / onboarding / fleet | ⬜ Task 10a — `app/src/main.tsx` renders only the fleet dashboard as of this writing; no router wired yet |
-| Dockerfile + `fly.toml` | ✅ files exist, lint-tested (`test/deploy.config.test.ts`) — see Docker build row below for whether they currently produce a working image |
-| Docker image actually builds right now | ✅ verified with a real `docker build` against the current working tree, then a real `docker run` with a mounted volume and `POLYGRAPH_MASTER_KEY` set: `/healthz` → 200, `/` serves the real built app (not the placeholder), `POST /api/signup` → real token, `/t/:token` → real session cookie, `POST /api/ledger/verify` (this task's own new route) → `{"ok":true,"checked":0}`. This was flaky earlier in this same task (see Known limits) while `app/**` was mid-fix; re-verify before trusting this row if it's been a while |
-| Deployed | ⬜ — deliberately not done by any task; a human's call (`fly deploy`) |
-| Single command that runs both test suites | ✅ `npm run test:all` (Task 10b) — verified it actually fails when either suite fails, not just when both do |
-| A 403/network-unverified key flips to `verified` on its first genuinely successful run | ✅ Task 10b — `ScopedSecrets.markVerified()` existed with no caller since the 403-key fix (`key-verification.ts`); wired into `src/tenancy/scheduler.ts`'s `createDefaultRunOne`, gated on a real `PASS` verdict only (never on a run that failed auth — both collapse to the same `SUSPECT_UNEXPLAINED_ANOMALY`/`DATA`/`QUARANTINE` shape at the summary level, so `PASS` is the one unambiguous proof available), idempotent (a cached `status()` read skips the write once already verified), and never throws into the scheduler |
+| `serve` / `migrate` / `admin rekey` commands | ✅ |
+| Server serves the React app (`app/dist`) | ✅ |
+| Routing between landing / onboarding / fleet | ✅ |
+| `POST /api/ledger/verify` | ✅ |
+| Dockerfile + `fly.toml` | ✅ verified with a real build + container boot |
+| One command for both suites (`npm run test:all`) | ✅ proven to fail when either fails |
+| Deployed | ⬜ **awaiting your go — not an agent's call** |
 
 ---
 
@@ -114,16 +112,14 @@ router wiring between landing/onboarding/fleet, and `app/`'s test suite settling
 
 | Limit | Why |
 |---|---|
-| Heal has never run live | Bright Data account is 403-gated on AI features; the controller is complete and mock-tested |
-| Bright Data adapter path never run live | Same gate; live smoke test is skipped by default (`POLYGRAPH_LIVE=1`) — true for both the CLI path and the hosted scheduler, which calls the same adapter code |
-| Peer corroboration built but unwired | Advisory-only; needs ≥3 same-purpose collectors the demo fleet lacks; true hosted too |
+| Heal promotes to draft, not production | **Proven live 2026-08-20**: Bright Data's heal returned `status: done` while production stayed unchanged. Fix in flight; the finding is now the strongest submission story |
+| Bright Data adapter path now proven live | Real collector, 59 records, real heal — no longer mock-only |
+| Landing sandbox is client-side | Real verdicts/fill-rates/SHA-256 chain computed in the browser, not the server pipeline. Disclosed on the page |
+| Peer corroboration built but unwired | Advisory-only; needs ≥3 same-purpose collectors |
 | Drift detection cut | No trend signal exists; a chart would be a lie |
-| Auto-repair off in hosted | Server never sets `POLYGRAPH_HEAL_ENABLED`; heal.ts's AND-gate blocks every live heal regardless of a tenant's own `heal_enabled` setting |
-| `blocked` chaos mode excluded from the demo | Locally it cannot produce a real `BLOCKED` cause |
-| `output_schema` shape unverified | Docs give no example body; onboarding degrades safely if unrecognised |
-| Landing page's "Verify chain" sandbox is client-side only | `app/src/landing/sandbox/engine.ts` runs a real SHA-256 chain walk in-browser to demonstrate the mechanism pre-signup, but never calls the backend — the signed-in dashboard's own verify button (`POST /api/ledger/verify`) is the real one, against the real ledger |
-| `app/` test/build state is volatile | Under active concurrent development (Task 10a) as of this writing — observed broken (missing `lucide-react`), then fixed, then 5 newly-failing tests, all within this task's own working session. Outside `src/`/root ownership; not fixed here. Re-run `npm run test:all` for the current truth |
-| Nothing is deployed | No task runs `fly deploy`; that is deliberately left to a human decision, not automated by this branch |
+| Auto-repair off in hosted | Server never sets `POLYGRAPH_HEAL_ENABLED`; heals spend the tenant's credits |
+| JS bundle is one 734KB chunk | Route-level code-splitting not done |
+| Roving keyboard nav incomplete past 24 collectors | Virtualized window boundary |
 
 ---
 
@@ -131,8 +127,9 @@ router wiring between landing/onboarding/fleet, and `app/`'s test suite settling
 
 | Item | Who | Note |
 |---|---|---|
-| Bright Data account verification | Jay | Unlocks the live heal leg; form at `/cp/account_verification` |
-| Hackathon submission | Jay | Form is open, resubmission allowed |
+| ~~Bright Data account verification~~ | ~~Jay~~ | ✅ **DONE 2026-08-20** — AI generation, runs and heal all confirmed working live |
+| Deploy to Fly | Jay | Everything is ready; agents were told not to deploy without your say-so |
+| Hackathon submission | Jay | Form open, resubmission allowed |
 | Git author identity | Jay | Commits still author as "Fakename"; LICENCE says Jayanth Koppala |
 
 ---
