@@ -1,0 +1,36 @@
+# Example fleet.yaml — copy to fleet.yaml and edit for your tenant.
+tenant:
+  name: acme-corp
+
+collectors:
+  - id: acme-product-catalog
+    name: Acme Product Catalog
+    entity_key: sku
+    canary_inputs:
+      - "SKU-1001"
+      - "SKU-1002"
+    adapter: brightdata
+    url_template: "https://acme.example.com/products/{input}"
+
+  - id: acme-pricing-feed
+    name: Acme Pricing Feed
+    canary_inputs:
+      - "US"
+      - "EU"
+    adapter: unlocker
+    url_template: "https://acme.example.com/pricing/{input}"
+
+  - id: acme-local-mirror
+    name: Acme Local Mirror
+    canary_inputs:
+      - "healthcheck"
+    adapter: local
+
+policy:
+  max_attempts_per_incident: 2
+  cooldown_minutes: 30
+  daily_heal_budget: 10
+  heal_enabled: false
+
+alerts:
+  telegram_webhook: "https://api.telegram.org/bot<token>/sendMessage"
