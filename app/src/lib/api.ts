@@ -148,3 +148,41 @@ export async function acknowledgeCollector(ledgerId: number): Promise<{ event: L
   }
   return res.json() as Promise<{ event: LedgerEventRow }>;
 }
+
+export interface LedgerVerifyResult {
+  ok: boolean;
+  /** Number of events walked from genesis. */
+  checked: number;
+  /** Present only when `ok` is false — the id/reason the chain broke at. */
+  reason?: string;
+}
+
+/**
+ * POST /api/ledger/verify — walks the tenant's chain from genesis
+ * (`Ledger.verify()` in src/ledger.ts) and reports whether every
+ * event_hash/prev_hash link still holds. ux-spec.md §1/§6 requires this be
+ * a real, running check ("a `Verify chain` button that actually runs and
+ * prints `OK — 47 events verified, chain intact`"), not a static claim.
+ *
+ * COUPLING NOTE: as of this writing `src/server.ts` exposes `/api/state`,
+ * `/api/ledger`, and `/api/ack` only — no verify route yet (that module was
+ * being built concurrently by another task). This client calls the REST
+ * path the rest of `/api/ledger*` already establishes; `LedgerStream`
+ * degrades to a plain error message (never a crash, never a fabricated
+ * "chain intact") if the route 404s. Re-confirm this path once the serve
+ * task reports its final route list.
+ */
+export async function verifyLedgerChain(): Promise<LedgerVerifyResult> {
+  const res = await fetch('/api/ledger/verify', { method: 'POST', headers: { accept: 'application/json' } });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body?.error) detail = body.error;
+    } catch {
+      // body wasn't JSON — keep statusText
+    }
+    throw new ApiError(`/api/ledger/verify → ${res.status} ${detail}`, res.status);
+  }
+  return res.json() as Promise<LedgerVerifyResult>;
+}

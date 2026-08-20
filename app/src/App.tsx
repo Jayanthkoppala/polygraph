@@ -1,47 +1,105 @@
-import { useEffect, useState } from 'react';
-import { fetchFleetState } from '@/lib/api';
-import type { FleetState } from '@/lib/api';
-
 /**
- * Task 5 placeholder. Screens are built in later tasks (6-9) — this exists
- * only to prove, visually, that the foundation actually works end to end:
- * the self-hosted Geist fonts load, the design tokens resolve to real
- * pixels/colours, and the typed API client can reach a running
- * `polygraph watch` server. Nothing here is a real component; the real
- * fleet/focus/ledger shell is Task 7's `docs/design/ui-system.md` §5.2.
+ * App — polls `/api/state` and `/api/ledger`, and renders the real
+ * three-region shell (docs/design/ui-system.md §5.2, assembled in
+ * `FleetShell`). Replaces Task 5's placeholder, which existed only to
+ * prove tokens/fonts/the API client worked end to end.
  */
+import { useCallback, useEffect, useState } from 'react';
+import { FleetShell } from '@/components/fleet/FleetShell';
+import { fetchFleetState, fetchLedger, acknowledgeCollector, ApiError } from '@/lib/api';
+import type { CollectorState, FleetState } from '@/lib/api';
+import { toVerdictState } from '@/lib/verdict';
+import type { LedgerRow } from '@/components/ledger/LedgerStream';
+
+const POLL_INTERVAL_MS = 5000;
+
+/** Same engine->display mapping `lib/verdict.ts` uses for a collector,
+ * applied to a raw ledger row. Ledger rows don't carry an `unverified`
+ * flag on the wire (that's a `CollectorState`-only derived field, per
+ * `src/server.ts`'s `isUnverified`) — a skipped check on a ledger row is
+ * legible from its own `evidence[]` instead, which the rail's five-state
+ * split doesn't need to distinguish for a historical log entry. */
+function ledgerRowState(verdict: string, cause: string | null) {
+  return toVerdictState({ verdict, cause, unverified: false } as CollectorState);
+}
+
 function App() {
-  const [state, setState] = useState<FleetState | null>(null);
+  const [fleet, setFleet] = useState<FleetState | null>(null);
+  const [ledgerRows, setLedgerRows] = useState<LedgerRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchFleetState()
-      .then(setState)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+  const poll = useCallback(async () => {
+    try {
+      const [state, ledger] = await Promise.all([fetchFleetState(), fetchLedger(100)]);
+      setFleet(state);
+      setLedgerRows(
+        ledger.events
+          .map((e) => ({
+            id: e.id,
+            ts: e.ts,
+            collector: e.collector,
+            state: ledgerRowState(e.verdict, e.cause),
+            action: e.action,
+            eventHash: e.event_hash,
+          }))
+          .sort((a, b) => a.id - b.id), // append-only, oldest first, newest at the bottom
+      );
+      setError(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err));
+    }
   }, []);
 
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--color-void)] p-8 font-sans text-[#EDEDED]">
-      <h1 className="text-3xl font-semibold">Polygraph — frontend foundation</h1>
-      <p className="max-w-md text-center text-base text-[#B4B4B4]">
-        Tokens, self-hosted Geist/Geist Mono, and the typed API client are wired.
-        Real screens land in Tasks 6-9.
-      </p>
-      <div className="rounded-2xl border border-[#272727] bg-[var(--color-surface)] px-6 py-4 font-mono text-sm text-[#9B9B9B]">
-        {error ? (
-          <span style={{ color: 'var(--color-verdict-shape)' }}>api/state error: {error}</span>
-        ) : state ? (
-          <span>
-            tenant <span className="text-[#EDEDED]">{state.tenant}</span> ·{' '}
-            <span className="tabular-nums">{state.collectors.length}</span> collector
-            {state.collectors.length === 1 ? '' : 's'}
-          </span>
-        ) : (
-          <span>loading /api/state…</span>
-        )}
-      </div>
-    </main>
+  useEffect(() => {
+    void poll();
+    const id = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [poll]);
+
+  const handleAcknowledge = useCallback(
+    (id: string) => {
+      const collector = fleet?.collectors.find((c) => c.id === id);
+      if (!collector?.ledgerId) return;
+      void acknowledgeCollector(collector.ledgerId).then(() => void poll());
+    },
+    [fleet, poll],
   );
+
+  // No `/api/repair` route exists yet (repairs are executed by heal.ts on
+  // its own schedule, not triggered from the dashboard). While that wiring
+  // doesn't exist, Repair's click gives the diagnostic fallback ux-spec.md
+  // §6 describes for repairs being off: the exact manual command, copied
+  // to the clipboard, never a dead button.
+  const handleRepair = useCallback(
+    (id: string) => {
+      const collector = fleet?.collectors.find((c) => c.id === id);
+      const command = collector?.suggestedHealCommand;
+      if (command && typeof navigator !== 'undefined' && navigator.clipboard) {
+        void navigator.clipboard.writeText(command);
+      }
+    },
+    [fleet],
+  );
+
+  if (error && !fleet) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--color-void)] p-8 font-sans text-[#EDEDED]">
+        <p className="max-w-md text-center text-sm" style={{ color: 'var(--color-verdict-shape)' }}>
+          Could not reach the fleet: {error}
+        </p>
+      </main>
+    );
+  }
+
+  if (!fleet) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[var(--color-void)] font-sans text-[#EDEDED]">
+        <p className="font-mono text-sm text-[#9B9B9B]">loading /api/state…</p>
+      </main>
+    );
+  }
+
+  return <FleetShell fleet={fleet} ledgerRows={ledgerRows} onRepair={handleRepair} onAcknowledge={handleAcknowledge} />;
 }
 
 export default App;
