@@ -172,6 +172,67 @@ describe('Ledger', () => {
     ledger.close();
   });
 
+  it('verifyAsync agrees with verify() on a healthy chain, including the checked count', async () => {
+    const { dir, path } = tempDbPath();
+    dirs.push(dir);
+    const ledger = new Ledger(path);
+
+    ledger.append(baseEvent({ run_id: 'run-1' }));
+    ledger.append(baseEvent({ run_id: 'run-2' }));
+    ledger.append(baseEvent({ run_id: 'run-3' }));
+
+    await expect(ledger.verifyAsync()).resolves.toEqual({ ok: true, checked: 3 });
+    ledger.close();
+  });
+
+  it('verifyAsync detects tampering at the same row verify() does', async () => {
+    const { dir, path } = tempDbPath();
+    dirs.push(dir);
+    const ledger = new Ledger(path);
+
+    ledger.append(baseEvent({ run_id: 'run-1' }));
+    ledger.append(baseEvent({ run_id: 'run-2' }));
+    ledger.append(baseEvent({ run_id: 'run-3' }));
+
+    const raw = new Database(path);
+    raw.prepare('UPDATE events SET verdict = ? WHERE id = ?').run('tampered', 2);
+    raw.close();
+
+    const result = await ledger.verifyAsync();
+    expect(result.ok).toBe(false);
+    expect(result.firstBadId).toBe(2);
+
+    ledger.close();
+  });
+
+  it('verifyAsync yields to the event loop mid-walk on a long chain instead of blocking it straight through', async () => {
+    const { dir, path } = tempDbPath();
+    dirs.push(dir);
+    const ledger = new Ledger(path);
+
+    for (let i = 0; i < 25; i++) {
+      ledger.append(baseEvent({ run_id: `run-${i}` }));
+    }
+
+    // `setImmediate` callbacks run strictly FIFO. Queue ours BEFORE calling
+    // verifyAsync: if verifyAsync's own internal `setImmediate(resolve)`
+    // yields at least once mid-walk (yieldEveryRows=5 on 25 rows -> 4
+    // yields), ours — queued first — is guaranteed to fire before
+    // verifyAsync's promise resolves. A purely synchronous walk (the bug
+    // this test guards against) would never yield at all, so this callback
+    // would never get a chance to run before `await` below returns.
+    const order: string[] = [];
+    setImmediate(() => order.push('other event-loop work'));
+
+    const result = await ledger.verifyAsync(5);
+    order.push('verifyAsync resolved');
+
+    expect(result).toEqual({ ok: true, checked: 25 });
+    expect(order).toEqual(['other event-loop work', 'verifyAsync resolved']);
+
+    ledger.close();
+  });
+
   it('exports valid JSONL with one event per line', () => {
     const { dir, path } = tempDbPath();
     dirs.push(dir);

@@ -58,6 +58,7 @@ import { probeCollector, buildProbeDraft, ConsentRequiredError } from './probe.j
 import { buildConfirmedSchema, persistConfirmedSetup, type ConfirmedFieldInput } from './onboarding.js';
 import type { EntityKeyRule } from './entity-key.js';
 import { checkAndIncrementRateLimit, hourlyWindowKey, dailyWindowKey } from './rate-limit.js';
+import { recordVerifyResult } from './scheduler.js';
 
 const SIGNUP_LIMIT_PER_HOUR = 3;
 const PROBE_LIMIT_PER_DAY = 10;
@@ -92,12 +93,19 @@ interface TenantRow {
   max_collectors: number;
   is_public: number;
   status: string;
+  /** Cache written by the scheduler's hourly sweep OR an explicit
+   * `POST /api/ledger/verify` (migrate.ts M006) — never computed on this
+   * row's own read path. `null` until the first check ever runs for this
+   * tenant (a brand-new tenant with no ledger history yet). */
+  last_verify_ok: number | null;
+  last_verify_at: string | null;
 }
 
 function loadTenantRow(db: Database.Database, tenantId: string): TenantRow | undefined {
   return db
     .prepare(
-      `SELECT id, display_name, genesis_hash, heal_enabled, max_collectors, is_public, status
+      `SELECT id, display_name, genesis_hash, heal_enabled, max_collectors, is_public, status,
+              last_verify_ok, last_verify_at
          FROM tenants WHERE id = ?`
     )
     .get(tenantId) as TenantRow | undefined;
@@ -117,7 +125,8 @@ function scopeWithSecrets(db: Database.Database, tenantId: string, genesisHash: 
 function loadPublicTenantRow(db: Database.Database): TenantRow | undefined {
   return db
     .prepare(
-      `SELECT id, display_name, genesis_hash, heal_enabled, max_collectors, is_public, status
+      `SELECT id, display_name, genesis_hash, heal_enabled, max_collectors, is_public, status,
+              last_verify_ok, last_verify_at
          FROM tenants WHERE is_public = 1 LIMIT 1`
     )
     .get() as TenantRow | undefined;
@@ -385,9 +394,59 @@ export async function handleTenantRequest(req: IncomingMessage, res: ServerRespo
       if (method === 'GET' && path === '/api/state') {
         const client = new BrightDataClient({ apiKey: 'session-unused', fetchImpl: deps.fetchImpl, baseUrl: deps.baseUrl });
         const state = await buildDashboardState(deps.reader, tenantRowWriter, client, nowFn());
+        // The dashboard's poll-driven hot path never runs a chain walk
+        // itself (tenant-architecture.md §5) — this is the CACHED result of
+        // the scheduler's hourly sweep or the last explicit
+        // `POST /api/ledger/verify` click, never a fresh computation. `null`
+        // fields mean "never checked yet", not "checked and unknown".
         sendJson(res, 200, {
           ...state,
-          verify: { checked: false },
+          verify: { checked: tenantRowWriter.last_verify_ok !== null, ok: tenantRowWriter.last_verify_ok === 1, at: tenantRowWriter.last_verify_at },
+        });
+        return;
+      }
+
+      if (method === 'POST' && path === '/api/ledger/verify') {
+        // DELIBERATE DEVIATION from tenant-architecture.md §5(b)'s original
+        // sketch ("A user-triggered 'verify now' enqueues and returns
+        // 202"): app/src/lib/api.ts's `verifyLedgerChain()` — written in
+        // Task 7, before this route existed — already sends a plain POST
+        // and awaits `res.json()` as the final `{ok, checked, reason?}`
+        // result directly; there is no job-id/poll loop anywhere in the
+        // frontend to consume a 202. Changing that is out of this task's
+        // ownership (app/**) and would break an already-tested contract
+        // (app/src/components/ledger/LedgerStream.test.tsx). This route
+        // honors the ACTUAL frontend contract instead: a synchronous 200
+        // with the real result. The spec's underlying concern — a long walk
+        // must never stall other tenants' concurrent requests — is met by
+        // `verifyAsync`'s periodic event-loop yields below (see its own
+        // doc comment) rather than by an async job queue.
+        //
+        // `verifyLedgerChain()` (app/src/lib/api.ts) sends no request body,
+        // so it carries no `Content-Type` header and `requireCsrf`'s
+        // JSON-content-type check would always fail it — an Origin match is
+        // sufficient defense-in-depth here regardless: `SameSite=Lax`
+        // already keeps the session cookie off any cross-site fetch (§1
+        // "CSRF"), and every real browser attaches `Origin` to same-origin
+        // POST requests too (not just cross-origin ones), so this is a real
+        // check, not a bypass.
+        if (req.headers.origin !== deps.publicOrigin) {
+          sendJson(res, 403, { error: 'CSRF check failed — missing or mismatched Origin' });
+          return;
+        }
+        // The one place a full chain walk runs synchronously against live
+        // traffic — an explicit, user-triggered "Verify chain" click, never
+        // the poll-driven `/api/state`. `verifyAsync` (not `verify`) so a
+        // large ledger yields to the event loop periodically instead of
+        // stalling every other tenant's concurrent request for the whole
+        // walk (tenant-architecture.md §5/§6).
+        const ledger = new Ledger(deps.writer, { tenantId: session.tenantId, genesisHash: tenantRowWriter.genesis_hash });
+        const result = await ledger.verifyAsync();
+        recordVerifyResult(deps.writer, session.tenantId, result, nowFn());
+        sendJson(res, 200, {
+          ok: result.ok,
+          checked: result.checked,
+          reason: result.ok ? undefined : `chain broken at event #${result.firstBadId}`,
         });
         return;
       }

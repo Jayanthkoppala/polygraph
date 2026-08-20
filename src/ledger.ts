@@ -156,6 +156,31 @@ function hashEvent(prevHash: string, payload: EventPayload): string {
   return createHash('sha256').update(prevHash + canonicalJson(payload)).digest('hex');
 }
 
+interface ChainStepResult {
+  ok: boolean;
+  /** The hash to carry into the next row's check. Equal to the input
+   * `prevHash` when this step failed (irrelevant at that point — the caller
+   * returns immediately), or to this row's own `event_hash` when it passed. */
+  nextPrevHash: string;
+  firstBadId?: number;
+}
+
+/** One row's worth of `verify()`/`verifyAsync()`'s check, factored out so
+ * the sync and async walkers can never drift against each other — same
+ * checks, same order, same `firstBadId` semantics either way. */
+function checkChainStep(raw: RawRow, prevHash: string): ChainStepResult {
+  const row = deserializeRow(raw);
+  const { id, prev_hash, event_hash, tenant_id, ...payload } = row;
+  if (prev_hash !== prevHash) {
+    return { ok: false, nextPrevHash: prevHash, firstBadId: id };
+  }
+  const expectedHash = hashEvent(prevHash, payload);
+  if (expectedHash !== event_hash) {
+    return { ok: false, nextPrevHash: prevHash, firstBadId: id };
+  }
+  return { ok: true, nextPrevHash: event_hash };
+}
+
 /** True if `table.column` exists on the connected database. Used only for
  * the events table's self-healing tenant_id backfill (see the constructor)
  * — kept local rather than imported from anywhere in src/tenancy/, so this
@@ -400,21 +425,50 @@ export class Ledger {
     // O(1) memory regardless of chain length instead of materializing the
     // whole table up front. Same query, same row order, same result shape —
     // this is a memory-bound change, not a behavior change. Callers must
-    // never run this on a request thread (see server.ts/tenancy/scheduler.ts
-    // for the scheduled/on-demand job that does).
+    // never run this synchronously on a request thread (see
+    // src/tenancy/scheduler.ts for the scheduled job, and `verifyAsync`
+    // below for the on-demand HTTP route — both keep this off the hot path).
     const stmt = this.db.prepare('SELECT * FROM events WHERE tenant_id = ? ORDER BY id ASC');
     for (const raw of stmt.iterate(this.tenantId) as IterableIterator<RawRow>) {
       checked++;
-      const row = deserializeRow(raw);
-      const { id, prev_hash, event_hash, tenant_id, ...payload } = row;
-      if (prev_hash !== prevHash) {
-        return { ok: false, checked, firstBadId: id };
+      const step = checkChainStep(raw, prevHash);
+      if (!step.ok) {
+        return { ok: false, checked, firstBadId: step.firstBadId };
       }
-      const expectedHash = hashEvent(prevHash, payload);
-      if (expectedHash !== event_hash) {
-        return { ok: false, checked, firstBadId: id };
+      prevHash = step.nextPrevHash;
+    }
+
+    return { ok: true, checked };
+  }
+
+  /**
+   * Same walk as `verify()`, but yields to the event loop every
+   * `yieldEveryRows` rows (default 2000) via `setImmediate` — for the ONE
+   * caller that runs a full chain walk synchronously in response to an HTTP
+   * request (`POST /api/ledger/verify`, an explicit user-triggered
+   * "Verify chain" click, tenant-architecture.md §5/§6). A tenant with a
+   * very large ledger must never be able to stall every other tenant's
+   * concurrent request for the whole duration of their own walk — `verify()`
+   * itself is still correct for a small/bounded walk (the scheduler's hourly
+   * background job, which has no request waiting on it), but nothing that
+   * serves live traffic should call it directly on a long chain.
+   */
+  async verifyAsync(yieldEveryRows = 2000): Promise<VerifyResult> {
+    let prevHash = this.genesisHash;
+    let checked = 0;
+
+    const stmt = this.db.prepare('SELECT * FROM events WHERE tenant_id = ? ORDER BY id ASC');
+    for (const raw of stmt.iterate(this.tenantId) as IterableIterator<RawRow>) {
+      checked++;
+      const step = checkChainStep(raw, prevHash);
+      if (!step.ok) {
+        return { ok: false, checked, firstBadId: step.firstBadId };
       }
-      prevHash = event_hash;
+      prevHash = step.nextPrevHash;
+
+      if (checked % yieldEveryRows === 0) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
     }
 
     return { ok: true, checked };

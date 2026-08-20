@@ -15,7 +15,7 @@
  * "no network in tests" rule.
  */
 import type Database from 'better-sqlite3';
-import { Ledger } from '../ledger.js';
+import { Ledger, type VerifyResult } from '../ledger.js';
 import { runFleet } from '../runner.js';
 import { buildTenantContext } from '../config.js';
 import { BrightDataClient, type PollOptions } from '../brightdata.js';
@@ -303,11 +303,31 @@ export function createDefaultRunOne(deps: DefaultRunOneDeps): (row: DueRow) => P
 }
 
 /**
+ * Writes a `Ledger.verify()`/`verifyAsync()` result to
+ * `tenants.last_verify_ok/last_verify_at/last_verify_checked` (migrate.ts
+ * M006) — the one place either caller (this module's own hourly sweep, or
+ * `http-routes.ts`'s explicit `POST /api/ledger/verify`) persists a verify
+ * outcome, so the two call sites can never disagree on the column set or
+ * drift out of sync with each other.
+ */
+export function recordVerifyResult(db: Database.Database, tenantId: string, result: VerifyResult, nowIso: string): void {
+  db.prepare(`UPDATE tenants SET last_verify_ok = ?, last_verify_at = ?, last_verify_checked = ? WHERE id = ?`).run(
+    result.ok ? 1 : 0,
+    nowIso,
+    Date.now(),
+    tenantId
+  );
+}
+
+/**
  * Runs `Ledger.verify()` (iterate()-based, tenant-architecture.md §5) for
  * one tenant IF its last check was more than `intervalMs` ago, writing the
- * result to `tenants.last_verify_ok/last_verify_at/last_verify_checked`
- * (migrate.ts M006) rather than returning it — callers (the dashboard) read
- * those columns instead of ever running `verify()` on a request thread.
+ * result via `recordVerifyResult` rather than returning it — callers (the
+ * dashboard) read those columns instead of ever running `verify()` on a
+ * request thread. This is the scheduler's own background sweep — no request
+ * is waiting on it, so the synchronous `verify()` (not `verifyAsync()`) is
+ * fine here; see `verifyAsync`'s doc comment for why the HTTP route uses the
+ * yielding version instead.
  */
 export function runVerifyIfDue(
   db: Database.Database,
@@ -326,12 +346,7 @@ export function runVerifyIfDue(
 
   const ledger = new Ledger(db, { tenantId, genesisHash });
   const result = ledger.verify();
-  db.prepare(`UPDATE tenants SET last_verify_ok = ?, last_verify_at = ?, last_verify_checked = ? WHERE id = ?`).run(
-    result.ok ? 1 : 0,
-    nowIso,
-    Date.now(),
-    tenantId
-  );
+  recordVerifyResult(db, tenantId, result, nowIso);
   return true;
 }
 

@@ -442,6 +442,109 @@ describe('tenancy/serve — public showcase', () => {
   });
 });
 
+describe('tenancy/serve — POST /api/ledger/verify', () => {
+  let dir: string;
+  let running: RunningServer;
+  let base: string;
+
+  beforeEach(async () => {
+    dir = tempDir();
+    process.env.POLYGRAPH_MASTER_KEY = randomBytes(32).toString('base64');
+    running = await startServer({
+      dbPath: join(dir, 'polygraph.sqlite'),
+      port: 0,
+      host: '127.0.0.1',
+      publicOrigin: ORIGIN,
+      webDir: join(dir, 'nonexistent-app-dist'),
+    });
+    base = `http://127.0.0.1:${running.port}`;
+  });
+
+  afterEach(async () => {
+    await running.stop();
+    delete process.env.POLYGRAPH_MASTER_KEY;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('without a session cookie returns 401', async () => {
+    const res = await fetch(`${base}/api/ledger/verify`, { method: 'POST', headers: { origin: ORIGIN } });
+    expect(res.status).toBe(401);
+  });
+
+  it('with a valid session but the wrong Origin is rejected (403), matching every other mutating route', async () => {
+    const { token } = await signup(base, 'Verify Tenant');
+    const cookie = await sessionCookieFor(base, token);
+    const res = await fetch(`${base}/api/ledger/verify`, {
+      method: 'POST',
+      headers: { origin: 'http://evil.example', cookie },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('with a matching Origin and NO Content-Type or body — the exact request app/src/lib/api.ts\'s verifyLedgerChain() sends — succeeds', async () => {
+    const { token } = await signup(base, 'Verify Tenant');
+    const cookie = await sessionCookieFor(base, token);
+    // Deliberately mirrors verifyLedgerChain() byte-for-byte: no body, only
+    // `accept`. A real browser still attaches `Origin` to this POST itself
+    // (fetch spec: any non-GET/HEAD request gets one, same-origin or not) —
+    // simulated here since Node's fetch has no page-origin concept to do
+    // that automatically.
+    const res = await fetch(`${base}/api/ledger/verify`, {
+      method: 'POST',
+      headers: { accept: 'application/json', origin: ORIGIN, cookie },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; checked: number };
+    expect(body).toEqual({ ok: true, checked: 0 }); // fresh tenant, no ledger events yet
+  });
+
+  it('tenant A\'s verify walk can never read or report on tenant B\'s chain', async () => {
+    const a = await signup(base, 'Verify Tenant A');
+    const b = await signup(base, 'Verify Tenant B');
+    const cookieA = await sessionCookieFor(base, a.token);
+    const cookieB = await sessionCookieFor(base, b.token);
+
+    // Tenant B creates a collector — irrelevant to verify() directly, but
+    // proves a request under B's session touched B's own tenant-scoped
+    // storage before A's verify call runs.
+    await fetch(`${base}/api/collectors`, {
+      method: 'POST',
+      headers: jsonHeaders({ cookie: cookieB }),
+      body: JSON.stringify({ collector_id: 'b-collector', name: 'B Collector', canary_inputs: ['SKU-1'] }),
+    });
+
+    const verifyA = await fetch(`${base}/api/ledger/verify`, { method: 'POST', headers: { origin: ORIGIN, cookie: cookieA } });
+    expect(verifyA.status).toBe(200);
+    const bodyA = (await verifyA.json()) as { ok: boolean; checked: number };
+    // Tenant A has zero events of its own regardless of what tenant B did —
+    // a leaked/shared chain walk would report a nonzero count here.
+    expect(bodyA).toEqual({ ok: true, checked: 0 });
+  });
+
+  it('reports a broken chain honestly, never a fabricated pass', async () => {
+    const { token, tenantId } = await signup(base, 'Broken Chain Tenant');
+    const cookie = await sessionCookieFor(base, token);
+
+    // Force a real, already-broken event onto this tenant's chain, over the
+    // SAME writer connection the running server owns (matches the public
+    // showcase test above — avoids any question of WAL visibility timing
+    // between a second connection and the server's own).
+    running.writer
+      .prepare(
+        `INSERT INTO events (ts, tenant, collector, run_id, verdict, cause, evidence, action, prev_hash, event_hash, tenant_id)
+         VALUES ('2026-08-20T00:00:00.000Z', ?, 'c1', 'run-1', 'ok', NULL, 'null', 'none', ?, 'not-a-real-hash', ?)`
+      )
+      .run(tenantId, '0'.repeat(64), tenantId);
+
+    const res = await fetch(`${base}/api/ledger/verify`, { method: 'POST', headers: { origin: ORIGIN, cookie } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; checked: number; reason?: string };
+    expect(body.ok).toBe(false);
+    expect(body.checked).toBe(1);
+    expect(body.reason).toBeTruthy();
+  });
+});
+
 describe('tenancy/serve — master key canary', () => {
   it('refuses to start with a wrong master key on an already-canaried database', async () => {
     const dir = tempDir();
