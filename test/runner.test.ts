@@ -3,6 +3,7 @@ import { runFleet, type RunnerContext } from '../src/runner.js';
 import { Governor } from '../src/policy.js';
 import { Ledger } from '../src/ledger.js';
 import { BrightDataClient } from '../src/brightdata.js';
+import { AlertNotifier } from '../src/alerts.js';
 import type { FleetConfig, Collector, Policy } from '../src/config.js';
 import type { OutputSchema } from '../src/types.js';
 
@@ -304,5 +305,122 @@ describe('runFleet', () => {
     const middleEvidence = events[1].evidence as { check: string; ok: boolean; detail: string }[];
     expect(middleEvidence[0]).toMatchObject({ check: 'adapter', ok: false });
     expect(middleEvidence[0].detail).toContain('no extractor registered');
+  });
+});
+
+const WEBHOOK = 'https://api.telegram.org/botSECRET/sendMessage';
+
+function fleetConfigWithWebhook(collectors: Collector[], policy: Policy = HEAL_ENABLED_POLICY): FleetConfig {
+  return { tenant: { name: 'acme-corp' }, collectors, policy, alerts: { telegram_webhook: WEBHOOK } };
+}
+
+describe('runFleet — alerts hook-in (never breaks the pipeline)', () => {
+  it('does not alert on a clean PASS run', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(textResponse(200, 'SKU-1 $9.99'));
+    const webhookFetch = vi.fn().mockResolvedValue(jsonResponse(200, {}));
+    const notifier = new AlertNotifier(':memory:', { fetchImpl: webhookFetch });
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1', price: 9.99 }) },
+      },
+      schemas: { 'acme-catalog': healthySchema },
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
+      notifier,
+    });
+
+    const summary = await runFleet(fleetConfigWithWebhook([healthyCollector]), ctx);
+
+    expect(summary.results[0].verdict).toBe('PASS');
+    expect(webhookFetch).not.toHaveBeenCalled();
+    notifier.close();
+  });
+
+  it('alerts on a FAILED_* transition, with the ledger row id and cause in the payload', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(textResponse(200, 'boom'));
+    const webhookFetch = vi.fn().mockResolvedValue(jsonResponse(200, {}));
+    const notifier = new AlertNotifier(':memory:', { fetchImpl: webhookFetch });
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1' }) }, // price always missing -> FAILED_STRUCTURAL
+      },
+      schemas: { 'acme-catalog': healthySchema },
+      notifier,
+    });
+
+    const summary = await runFleet(fleetConfigWithWebhook([healthyCollector], HEAL_DISABLED_POLICY), ctx);
+
+    expect(summary.results[0].verdict).toBe('FAILED_STRUCTURAL');
+    expect(webhookFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = webhookFetch.mock.calls[0];
+    expect(url).toBe(WEBHOOK);
+    const payload = JSON.parse((init as RequestInit).body as string);
+    expect(payload).toMatchObject({
+      collector: 'acme-catalog',
+      verdict: 'FAILED_STRUCTURAL',
+      cause: 'STRUCTURAL',
+      ledger_id: ctx.ledger.all()[0].id,
+    });
+    notifier.close();
+  });
+
+  it('a webhook that 404s never breaks the run: verdict/action/ledger are unaffected', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(textResponse(200, 'boom'));
+    const webhookFetch = vi.fn().mockResolvedValue(jsonResponse(404, { error: 'not found' }));
+    const onError = vi.fn();
+    const notifier = new AlertNotifier(':memory:', { fetchImpl: webhookFetch, onError });
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1' }) },
+      },
+      schemas: { 'acme-catalog': healthySchema },
+      notifier,
+    });
+
+    const summary = await runFleet(fleetConfigWithWebhook([healthyCollector], HEAL_DISABLED_POLICY), ctx);
+
+    expect(summary.results[0]).toMatchObject({ verdict: 'FAILED_STRUCTURAL', action: 'QUARANTINE' });
+    expect(ctx.ledger.all()).toHaveLength(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    notifier.close();
+  });
+
+  it('a webhook that throws synchronously/rejects never breaks the run', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(textResponse(200, 'boom'));
+    const webhookFetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    const notifier = new AlertNotifier(':memory:', { fetchImpl: webhookFetch, onError: vi.fn() });
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1' }) },
+      },
+      schemas: { 'acme-catalog': healthySchema },
+      notifier,
+    });
+
+    await expect(
+      runFleet(fleetConfigWithWebhook([healthyCollector], HEAL_DISABLED_POLICY), ctx)
+    ).resolves.toMatchObject({
+      results: [{ verdict: 'FAILED_STRUCTURAL', action: 'QUARANTINE' }],
+    });
+    notifier.close();
+  });
+
+  it('running without a notifier configured at all works exactly as before (backward compatible)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(textResponse(200, 'SKU-1 $9.99'));
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1', price: 9.99 }) },
+      },
+      schemas: { 'acme-catalog': healthySchema },
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
+      // no notifier
+    });
+
+    const summary = await runFleet(fleetConfigWithWebhook([healthyCollector]), ctx);
+    expect(summary.results[0].verdict).toBe('PASS');
   });
 });

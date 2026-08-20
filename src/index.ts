@@ -5,6 +5,7 @@ import { loadFleetConfig } from './config.js';
 import { Governor } from './policy.js';
 import { BrightDataClient } from './brightdata.js';
 import { runFleet } from './runner.js';
+import { AlertNotifier } from './alerts.js';
 
 const program = new Command();
 
@@ -50,6 +51,11 @@ program
       const governor = new Governor(dbPath);
       const ledger = new Ledger(dbPath);
       const client = new BrightDataClient();
+      // Task 7: same SQLite file as the ledger/governor (own connection,
+      // like they each have — better-sqlite3 + WAL supports multiple
+      // connections to one file), so the debounce table survives a
+      // process restart exactly like the governor's attempt counts do.
+      const notifier = new AlertNotifier(dbPath);
 
       // Contract/coherence/identity checks fall back to extractors.ts's
       // COLLECTOR_REGISTRY (keyed by collector name) automatically — no
@@ -60,7 +66,7 @@ program
       // running a fleet with unlocker/local collectors from the CLI today
       // requires a richer entry point than this one (a future task's
       // concern; unrelated to the schema/identity registry above).
-      const summary = await runFleet(config, { adapterContext: { client }, governor, ledger });
+      const summary = await runFleet(config, { adapterContext: { client }, governor, ledger, notifier });
 
       for (const r of summary.results) {
         process.stdout.write(
@@ -70,6 +76,7 @@ program
 
       governor.close();
       ledger.close();
+      notifier.close();
       process.exitCode = summary.results.some((r) => r.action !== 'RELEASE') ? 1 : 0;
     } catch (err) {
       process.stderr.write(`polygraph run: ${(err as Error).message}\n`);

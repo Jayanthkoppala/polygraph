@@ -4,6 +4,7 @@ import { healCollector, isHealEnabled, PolygraphHealDisabled } from '../src/heal
 import { decideWithGovernor, Governor } from '../src/policy.js';
 import { Ledger } from '../src/ledger.js';
 import { BrightDataClient, BrightDataError, BrightDataPollTimeoutError } from '../src/brightdata.js';
+import { AlertNotifier } from '../src/alerts.js';
 import type { Collector, Policy } from '../src/config.js';
 import type { RunnerContext } from '../src/runner.js';
 import type { Evidence } from '../src/types.js';
@@ -732,5 +733,182 @@ describe('healCollector — a ledger write itself failing must not mask the real
 
     appendSpy.mockRestore();
     realLedger.close();
+  });
+});
+
+const WEBHOOK = 'https://api.telegram.org/botSECRET/sendMessage';
+
+describe('healCollector — alerts hook-in (RECOVERY_VERIFIED / RECOVERY_FAILED)', () => {
+  const prevEnv = process.env.POLYGRAPH_HEAL_ENABLED;
+
+  beforeEach(() => {
+    process.env.POLYGRAPH_HEAL_ENABLED = '1';
+  });
+
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.POLYGRAPH_HEAL_ENABLED;
+    else process.env.POLYGRAPH_HEAL_ENABLED = prevEnv;
+  });
+
+  it('alerts RECOVERY_VERIFIED with the terminal ledger row id when the heal actually fixed the collector', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_1', status: 'started' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_1', status: 'done' }))
+      .mockResolvedValueOnce(new Response('SKU-1 $9.99', { status: 200, headers: { 'content-type': 'text/html' } }));
+    const webhookFetch = vi.fn().mockResolvedValue(jsonResponse(200, {}));
+    const notifier = new AlertNotifier(':memory:', { fetchImpl: webhookFetch });
+
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: instantSleep });
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1', price: 9.99 }) },
+      },
+      schemas: {
+        'acme-catalog': { fields: { sku: { type: 'string', required: true }, price: { type: 'number', required: true, default_value: 0 } } },
+      },
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
+      notifier,
+    });
+    const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
+
+    const outcome = await healCollector('acme-catalog', prompt, {
+      client,
+      policy: HEAL_POLICY,
+      tenant: 'acme-corp',
+      collector,
+      runnerCtx: ctx,
+      webhookUrl: WEBHOOK,
+    });
+
+    expect(outcome.status).toBe('verified');
+    expect(webhookFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = webhookFetch.mock.calls[0];
+    expect(url).toBe(WEBHOOK);
+    const payload = JSON.parse((init as RequestInit).body as string);
+    const terminalRow = ctx.ledger.all().at(-1)!;
+    expect(terminalRow.verdict).toBe('RECOVERY_VERIFIED');
+    expect(payload).toMatchObject({
+      collector: 'acme-catalog',
+      verdict: 'RECOVERY_VERIFIED',
+      ledger_id: terminalRow.id,
+    });
+    notifier.close();
+  });
+
+  it('alerts RECOVERY_FAILED when the heal did not fix the collector', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_2', status: 'started' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_2', status: 'done' }))
+      .mockResolvedValueOnce(new Response('still broken', { status: 200, headers: { 'content-type': 'text/html' } }));
+    const webhookFetch = vi.fn().mockResolvedValue(jsonResponse(200, {}));
+    const notifier = new AlertNotifier(':memory:', { fetchImpl: webhookFetch });
+
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: instantSleep });
+    const ctx = newRunnerContext({
+      adapterContext: { extractors: { 'acme-catalog': () => ({ sku: 'SKU-1' }) } },
+      schemas: {
+        'acme-catalog': { fields: { sku: { type: 'string', required: true }, price: { type: 'number', required: true, default_value: 0 } } },
+      },
+      notifier,
+    });
+    const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
+
+    const outcome = await healCollector('acme-catalog', prompt, {
+      client,
+      policy: HEAL_POLICY,
+      tenant: 'acme-corp',
+      collector,
+      runnerCtx: ctx,
+      webhookUrl: WEBHOOK,
+    });
+
+    expect(outcome.status).toBe('failed');
+    expect(webhookFetch).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse((webhookFetch.mock.calls[0][1] as RequestInit).body as string);
+    expect(payload.verdict).toBe('RECOVERY_FAILED');
+    notifier.close();
+  });
+
+  it('alerts RECOVERY_FAILED on the throw/rethrow path (e.g. a poll timeout) before rethrowing', async () => {
+    let now = 0;
+    const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_timeout', status: 'started' }))
+      .mockImplementation(async () => {
+        now += 6000;
+        return jsonResponse(200, { id: 'ai_job_timeout', status: 'building' });
+      });
+    const webhookFetch = vi.fn().mockResolvedValue(jsonResponse(200, {}));
+    const notifier = new AlertNotifier(':memory:', { fetchImpl: webhookFetch });
+
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: instantSleep });
+    const ctx = newRunnerContext({ notifier });
+    const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
+
+    try {
+      await expect(
+        healCollector('acme-catalog', prompt, {
+          client,
+          policy: HEAL_POLICY,
+          tenant: 'acme-corp',
+          collector,
+          runnerCtx: ctx,
+          webhookUrl: WEBHOOK,
+          poll: { intervalMs: 5000, deadlineMs: 10000 },
+        })
+      ).rejects.toBeInstanceOf(BrightDataPollTimeoutError);
+    } finally {
+      // Only restore the Date.now spy — vi.restoreAllMocks() would also
+      // reset webhookFetch's own call history (a plain vi.fn() has no
+      // "original" to restore to, so restoreAllMocks clears it like
+      // mockReset would), wiping out the very calls this test asserts on.
+      dateNowSpy.mockRestore();
+    }
+
+    expect(webhookFetch).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse((webhookFetch.mock.calls[0][1] as RequestInit).body as string);
+    expect(payload.verdict).toBe('RECOVERY_FAILED');
+    notifier.close();
+  });
+
+  it('a webhook failure never breaks a heal cycle — outcome and thrown errors are unaffected', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_4', status: 'started' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_4', status: 'done' }))
+      .mockResolvedValueOnce(new Response('SKU-1 $9.99', { status: 200, headers: { 'content-type': 'text/html' } }));
+    const webhookFetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    const notifier = new AlertNotifier(':memory:', { fetchImpl: webhookFetch, onError: vi.fn() });
+
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: instantSleep });
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1', price: 9.99 }) },
+      },
+      schemas: {
+        'acme-catalog': { fields: { sku: { type: 'string', required: true }, price: { type: 'number', required: true, default_value: 0 } } },
+      },
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
+      notifier,
+    });
+    const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
+
+    const outcome = await healCollector('acme-catalog', prompt, {
+      client,
+      policy: HEAL_POLICY,
+      tenant: 'acme-corp',
+      collector,
+      runnerCtx: ctx,
+      webhookUrl: WEBHOOK,
+    });
+
+    expect(outcome.status).toBe('verified');
+    expect(outcome.ledgerWriteError).toBeUndefined();
+    notifier.close();
   });
 });

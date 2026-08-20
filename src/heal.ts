@@ -71,7 +71,7 @@ import {
 import type { Collector, Policy } from './config.js';
 import { evaluateCollector, type RunnerContext } from './runner.js';
 import { decide } from './policy.js';
-import type { Ledger, LedgerEventInput } from './ledger.js';
+import type { Ledger, LedgerEventInput, LedgerEventRow } from './ledger.js';
 
 export class PolygraphHealDisabled extends Error {
   constructor(reason: string) {
@@ -117,6 +117,14 @@ export interface HealCollectorOptions {
    * 10_000, deadlineMs 20min (Bright Data documents a heal as taking up
    * to ~15 minutes). */
   poll?: PollOptions;
+  /** Task 7: `config.alerts.telegram_webhook`, forwarded through
+   * `options.runnerCtx.notifier` on this heal cycle's terminal outcome
+   * (RECOVERY_VERIFIED or RECOVERY_FAILED — never RECOVERY_PENDING, which
+   * is a pause, not a terminal event). This module has no FleetConfig of
+   * its own (only `policy`), hence the plain string rather than reading it
+   * off a config object. No-ops (same as `AlertNotifier.notify` always
+   * does) when unset or when `runnerCtx.notifier` itself is absent. */
+  webhookUrl?: string;
 }
 
 export type HealStatus = 'verified' | 'failed' | 'pending_approval';
@@ -187,6 +195,14 @@ function nowIso(ctx: RunnerContext): string {
   return ctx.now ? ctx.now() : new Date().toISOString();
 }
 
+/** Result of `appendBestEffort`: exactly one of `row` (the appended
+ * LedgerEventRow, on success — carries the `id`/`ts` Task 7's alert payload
+ * needs) or `error` (the caught error, on failure) is set. */
+interface AppendResult {
+  row?: LedgerEventRow;
+  error?: unknown;
+}
+
 /**
  * `Ledger.append` does a synchronous better-sqlite3 write
  * (`appendTxn.immediate(...)`) and can genuinely throw — SQLITE_BUSY, disk
@@ -194,19 +210,18 @@ function nowIso(ctx: RunnerContext): string {
  * this module goes through this wrapper instead of calling `ledger.append`
  * directly, specifically so a bookkeeping failure can never mask a heal
  * outcome (success OR the original failure) the caller needs to see.
- * Returns the caught error (undefined on success) rather than throwing —
+ * Returns `{row}` on success or `{error}` on failure rather than throwing —
  * callers decide what to do with a secondary failure; this function never
  * makes that decision for them. (Found in review — see task-6-report.md's
  * "Fix round 2": the very first version of this fix guarded the RECOVERY_PENDING
  * append but left the catch block's own terminal append unguarded, which
  * reproduced the exact orphaned-RECOVERY_PENDING bug it was meant to fix.)
  */
-function appendBestEffort(ledger: Ledger, event: LedgerEventInput): unknown {
+function appendBestEffort(ledger: Ledger, event: LedgerEventInput): AppendResult {
   try {
-    ledger.append(event);
-    return undefined;
+    return { row: ledger.append(event) };
   } catch (ledgerErr) {
-    return ledgerErr;
+    return { error: ledgerErr };
   }
 }
 
@@ -296,7 +311,7 @@ export async function healCollector(
     // ledger write failing here must surface as `ledgerWriteError` on the
     // returned HealOutcome, never as an opaque thrown sqlite error that
     // masks a heal that actually succeeded (or a real re-grade failure).
-    let ledgerWriteError = appendBestEffort(ledger, {
+    const firstWrite = appendBestEffort(ledger, {
       ts: nowIso(options.runnerCtx),
       tenant: options.tenant,
       collector: collectorId,
@@ -307,7 +322,7 @@ export async function healCollector(
       action: decision.action.type,
     });
 
-    const secondWriteError = appendBestEffort(ledger, {
+    const secondWrite = appendBestEffort(ledger, {
       ts: nowIso(options.runnerCtx),
       tenant: options.tenant,
       collector: collectorId,
@@ -317,7 +332,23 @@ export async function healCollector(
       action: decision.action.type,
       heal_job_id: healJobId,
     });
-    ledgerWriteError = ledgerWriteError ?? secondWriteError;
+    const ledgerWriteError = firstWrite.error ?? secondWrite.error;
+
+    // Task 7: alert on the terminal RECOVERY_VERIFIED/RECOVERY_FAILED
+    // outcome — only when that write actually landed (`secondWrite.row`),
+    // since the alert's `ledger_id` must point at a real row. Like
+    // runner.ts's own hook-in, `AlertNotifier.notify` never throws, so no
+    // extra try/catch is needed around this await.
+    if (options.runnerCtx.notifier && secondWrite.row) {
+      await options.runnerCtx.notifier.notify(options.webhookUrl, {
+        collector: collectorId,
+        verdict: verified ? 'RECOVERY_VERIFIED' : 'RECOVERY_FAILED',
+        cause: decision.verdict.cause,
+        evidence: decision.verdict.evidence,
+        ts: secondWrite.row.ts,
+        ledger_id: secondWrite.row.id,
+      });
+    }
 
     return {
       status: verified ? 'verified' : 'failed',
@@ -340,6 +371,9 @@ export async function healCollector(
     // failure, attach it to the original error as context (there's no
     // dedicated logging channel in library code — only index.ts's CLI
     // layer writes to stderr) and always rethrow the ORIGINAL error.
+    const failureEvidence = [
+      { check: 'heal', ok: false, detail: `heal attempt failed: ${(err as Error).message ?? String(err)}` },
+    ];
     const ledgerErr = appendBestEffort(ledger, {
       ts: nowIso(options.runnerCtx),
       tenant: options.tenant,
@@ -347,13 +381,29 @@ export async function healCollector(
       run_id: healJobId,
       verdict: 'RECOVERY_FAILED',
       cause: 'STRUCTURAL',
-      evidence: [{ check: 'heal', ok: false, detail: `heal attempt failed: ${(err as Error).message ?? String(err)}` }],
+      evidence: failureEvidence,
       action: 'QUARANTINE',
       heal_job_id: healJobId,
     });
-    if (ledgerErr !== undefined && err instanceof Error) {
-      (err as Error & { ledgerAppendError?: unknown }).ledgerAppendError = ledgerErr;
+    if (ledgerErr.error !== undefined && err instanceof Error) {
+      (err as Error & { ledgerAppendError?: unknown }).ledgerAppendError = ledgerErr.error;
     }
+
+    // Task 7: alert on this terminal RECOVERY_FAILED too — the throw/rethrow
+    // path is just as much a terminal outcome as the regrade-based one
+    // above, and must not go unreported. Same "only if the write actually
+    // landed" gate, same no-throw guarantee from AlertNotifier.notify.
+    if (options.runnerCtx.notifier && ledgerErr.row) {
+      await options.runnerCtx.notifier.notify(options.webhookUrl, {
+        collector: collectorId,
+        verdict: 'RECOVERY_FAILED',
+        cause: 'STRUCTURAL',
+        evidence: failureEvidence,
+        ts: ledgerErr.row.ts,
+        ledger_id: ledgerErr.row.id,
+      });
+    }
+
     throw err;
   }
 }

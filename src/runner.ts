@@ -29,6 +29,7 @@ import { causeForErrorCode, worstCause, decideWithGovernor, Governor, type Actio
 import { Ledger } from './ledger.js';
 import { getAdapter, type AdapterContext } from './adapters.js';
 import { COLLECTOR_REGISTRY, type EntityKeyFn } from './extractors.js';
+import { AlertNotifier } from './alerts.js';
 
 export interface RunnerContext {
   adapterContext: AdapterContext;
@@ -43,6 +44,12 @@ export interface RunnerContext {
   entityExtractors?: Record<string, KeyExtractor>;
   /** Clock, injectable for tests. Defaults to `() => new Date().toISOString()`. */
   now?: () => string;
+  /** Task 7: fires config.alerts.telegram_webhook on a transition-worthy
+   * verdict (see alerts.ts's `isAlertable`). Optional — a caller (or an
+   * older test) that omits it simply gets no alerting, same as before this
+   * field existed. `AlertNotifier.notify` never throws, so this is safe to
+   * call unconditionally without its own try/catch here. */
+  notifier?: AlertNotifier;
 }
 
 export interface CollectorRunSummary {
@@ -249,7 +256,7 @@ export async function runFleet(config: FleetConfig, ctx: RunnerContext): Promise
       evidence = [{ check: 'adapter', ok: false, detail: `adapter error: ${(err as Error).message ?? String(err)}` }];
     }
 
-    ctx.ledger.append({
+    const ledgerRow = ctx.ledger.append({
       ts: nowIso(ctx),
       tenant: config.tenant.name,
       collector: collector.id,
@@ -259,6 +266,22 @@ export async function runFleet(config: FleetConfig, ctx: RunnerContext): Promise
       evidence,
       action: actionType,
     });
+
+    // Alerts hook-in (Task 7): fire-and-await, never fire-and-forget — but
+    // `AlertNotifier.notify` catches every failure of its own (bad webhook,
+    // timeout, garbage response) and always resolves, so awaiting it here
+    // can never throw into this loop or delay the next collector beyond its
+    // own bounded timeout. Skipped entirely when no notifier is configured.
+    if (ctx.notifier) {
+      await ctx.notifier.notify(config.alerts.telegram_webhook, {
+        collector: collector.id,
+        verdict: verdictCode,
+        cause,
+        evidence,
+        ts: ledgerRow.ts,
+        ledger_id: ledgerRow.id,
+      });
+    }
 
     results.push({ collector: collector.id, run_id: runId, verdict: verdictCode, cause, action: actionType });
   }
