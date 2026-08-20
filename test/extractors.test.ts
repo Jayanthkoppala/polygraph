@@ -1,5 +1,40 @@
 import { describe, it, expect } from 'vitest';
-import { COLLECTOR_REGISTRY } from '../src/extractors.js';
+import { COLLECTOR_REGISTRY, extractorsForCollectors } from '../src/extractors.js';
+import type { Collector } from '../src/config.js';
+
+/** A trimmed but structurally real books.toscrape.com product page —
+ * verified 2026-08-20 against the live site's actual markup for
+ * https://books.toscrape.com/catalogue/soumission_998/index.html. Includes
+ * a SECOND price_color/star-rating/instock block (mirroring the page's real
+ * "products you may also like" carousel) specifically to prove the
+ * extractor locks onto the first occurrence — the main product's own data
+ * — not a recommended book's. */
+const REAL_BOOKS_TOSCRAPE_PAGE = `
+<html><body>
+<div class="col-sm-6 product_main">
+<h1>Soumission</h1>
+<p class="price_color">£50.10</p>
+<p class="instock availability">
+  <i class="icon-ok"></i>
+  In stock (20 available)
+</p>
+<p class="star-rating One">
+  <i class="icon-star"></i>
+</p>
+</div>
+<table class="table table-striped">
+<tr><th>UPC</th><td>6957f44c3847a760</td></tr>
+</table>
+<section class="related">
+  <p class="star-rating Three"><i class="icon-star"></i></p>
+  <p class="price_color">£53.74</p>
+  <p class="instock availability">
+    <i class="icon-ok"></i>
+    In stock
+  </p>
+</section>
+</body></html>
+`;
 
 describe('COLLECTOR_REGISTRY', () => {
   it('has an entry for books.toscrape.com with the specified schema fields', () => {
@@ -76,5 +111,55 @@ describe('COLLECTOR_REGISTRY', () => {
       const input = 'https://jobs.ashbyhq.com/acme-corp/1234-5678';
       expect(entityKey(input, {})).toBeNull();
     });
+  });
+
+  describe('books.toscrape.com extractor', () => {
+    const extractor = COLLECTOR_REGISTRY['books.toscrape.com'].extractor!;
+
+    it('parses title/price/availability/star_rating/upc from a real page, locking onto the FIRST occurrence of each field', () => {
+      const row = extractor(REAL_BOOKS_TOSCRAPE_PAGE, 'unused');
+      expect(row).toEqual({
+        title: 'Soumission',
+        price: 50.1,
+        availability: 'In stock (20 available)',
+        star_rating: 'One', // not "Three" — that's the recommendation carousel's rating
+        upc: '6957f44c3847a760',
+      });
+    });
+
+    it('omits (never defaults) a field it cannot find, so contract.ts reads it as genuinely UNFILLED', () => {
+      const row = extractor('<html><body>no product markup at all</body></html>', 'unused');
+      expect(row).toEqual({});
+    });
+  });
+
+  describe('Fixture Catalog extractor', () => {
+    it('is the same extractFixtureProduct used by the fixture server itself', () => {
+      const entry = COLLECTOR_REGISTRY['Fixture Catalog'];
+      expect(entry.extractor).toBeDefined();
+      const row = entry.extractor!('<p class="product-sku" data-field="sku">SKU-001</p>', 'unused');
+      expect(row).toMatchObject({ sku: 'SKU-001' });
+    });
+  });
+});
+
+describe('extractorsForCollectors', () => {
+  it('maps collector.id -> the registered extractor for every registered collector.name', () => {
+    const collectors: Collector[] = [
+      { id: 'c1', name: 'books.toscrape.com', canary_inputs: ['x'], adapter: 'unlocker' },
+      { id: 'c2', name: 'Fixture Catalog', canary_inputs: ['x'], adapter: 'local' },
+    ];
+    const extractors = extractorsForCollectors(collectors);
+    expect(Object.keys(extractors).sort()).toEqual(['c1', 'c2']);
+    expect(extractors.c1).toBe(COLLECTOR_REGISTRY['books.toscrape.com'].extractor);
+    expect(extractors.c2).toBe(COLLECTOR_REGISTRY['Fixture Catalog'].extractor);
+  });
+
+  it('omits a collector whose registry entry has no extractor (or no entry at all) — never fabricates one', () => {
+    const collectors: Collector[] = [
+      { id: 'no-extractor', name: 'jobs.ashbyhq.com', canary_inputs: ['x'], adapter: 'unlocker' },
+      { id: 'unregistered', name: 'some-other-site.example.com', canary_inputs: ['x'], adapter: 'unlocker' },
+    ];
+    expect(extractorsForCollectors(collectors)).toEqual({});
   });
 });

@@ -6,3 +6,5 @@ gates/
 .env
 dist/
 .superpowers/
+/fleet.yaml
+/fixture/state.json

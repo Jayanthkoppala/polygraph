@@ -13,8 +13,20 @@ import type { OutputSchema } from '../types.js';
 /** A field never found on the page (the default_value every FieldSchema
  * below declares) must round-trip through `checkContract`'s isUnfilled
  * logic as UNFILLED — so this extractor always returns exactly these
- * defaults for a field it can't find, never `undefined`/omits the key. */
-export const FIXTURE_DEFAULTS = { sku: '', title: '', price: 0, stock: 0 } as const;
+ * defaults for a field it can't find, never `undefined`/omits the key.
+ *
+ * `price`'s default is `null`, not `0`: `checks/canary.ts`'s `isEmpty()`
+ * (the canary confirmation gate policy.ts's REPAIR decision structurally
+ * requires alongside a failed contract/coherence evidence — see
+ * policy.ts's `deriveHealProof`) only recognizes
+ * `undefined`/`null`/`''`/`[]` as empty — a numeric `0` reads as a
+ * perfectly valid price to it. Defaulting to `0` would make price_dead
+ * mode's canary rerun always report "pass" (0 isn't empty), so
+ * `deriveHealProof` could never confirm a HealProof and `price_dead` would
+ * never be REPAIR-eligible at all — silently breaking the demo's core
+ * "the system knows exactly what's wrong and offers the fix" moment. `null`
+ * is unfilled to BOTH checks at once. */
+export const FIXTURE_DEFAULTS = { sku: '', title: '', price: null as number | null, stock: 0 } as const;
 
 export const FIXTURE_SCHEMA: OutputSchema = {
   fields: {
@@ -49,7 +61,7 @@ export const extractFixtureProduct: Extractor = (html) => {
   const priceRaw = extractField(html, 'price');
   const stockRaw = extractField(html, 'stock');
 
-  const price = priceRaw !== undefined ? Number.parseFloat(priceRaw.replace(/[^0-9.]/g, '')) : FIXTURE_DEFAULTS.price;
+  const price = priceRaw !== undefined ? Number.parseFloat(priceRaw.replace(/[^0-9.]/g, '')) : NaN;
   const stock = stockRaw !== undefined ? Number.parseInt(stockRaw, 10) : FIXTURE_DEFAULTS.stock;
 
   return {

@@ -15,18 +15,22 @@ production collector IDs here once the real fleet.yaml is finalized. -->
 ## Commands
 
 - `npm test` — run the vitest suite
+- `npm run typecheck` — typecheck src/ and test/
 - `npm run build` — compile TypeScript to `dist/`
 - `npx tsx src/index.ts --help` — run the CLI from source without building
-- `polygraph run` — run a single verification pass across the fleet
-- `polygraph watch` — continuously watch the fleet and verify on a schedule
-- `polygraph status` — show current health status for the fleet
-- `polygraph log` — show recent incidents from the ledger
-- `polygraph ack` — acknowledge an open incident
-- `polygraph demo` — run a scripted end-to-end demo scenario
-- `polygraph ledger verify` — verify the integrity of the ledger
-
-All subcommands above are stubs as of the initial scaffold — they print
-"not implemented" to stderr and exit 1 until implemented in later tasks.
+- `polygraph run [--collector <id>]` — run a single verification pass across the
+  fleet, or just one collector (e.g. re-running only the chaos fixture during a demo
+  without also touching any network-backed collectors in the same fleet.yaml)
+- `polygraph watch` — continuously watch the fleet on a cron schedule, serving the
+  live dashboard on `:4141`
+- `polygraph log` / `polygraph ack` — inspect and acknowledge ledger incidents
+- `polygraph ledger verify` — walk the hash chain and verify integrity
+- `polygraph chaos <healthy|price_dead|wrong_entity|blocked>` — flip the local chaos
+  fixture's failure mode (see `src/fixture/`, `docs/demo.md`)
+- `polygraph demo` — seed a demo fleet, run one pass against the local fixture, and
+  serve the dashboard; see `docs/demo.md` for the full 3-minute script
+- `polygraph status` — still a stub (prints "not implemented", exit 1); everything
+  else above is implemented.
 
 ## Docs
 

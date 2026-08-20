@@ -42,7 +42,7 @@ describe('renderProductPage', () => {
 
     it('extracts price as the schema default while sku/title/stock stay correct', () => {
       const row = extractFixtureProduct(html, first.sku);
-      expect(row).toEqual({ sku: first.sku, title: first.title, price: 0, stock: first.stock });
+      expect(row).toEqual({ sku: first.sku, title: first.title, price: null, stock: first.stock });
     });
   });
 
@@ -76,7 +76,7 @@ describe('renderProductPage', () => {
 
     it('extracts every field as its schema default', () => {
       const row = extractFixtureProduct(html, first.sku);
-      expect(row).toEqual({ sku: '', title: '', price: 0, stock: 0 });
+      expect(row).toEqual({ sku: '', title: '', price: null, stock: 0 });
     });
   });
 });

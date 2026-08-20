@@ -1,0 +1,173 @@
+# Polygraph demo script (~3 minutes)
+
+The whole thing runs offline, on your own laptop, against a local fixture site. No
+Bright Data account, no API key, no network access required. One terminal runs
+`polygraph demo`; a second terminal drives the chaos.
+
+## Setup (before you start talking)
+
+```
+mkdir polygraph-demo && cd polygraph-demo
+npx polygraph demo
+```
+
+(If you're running from a source checkout instead of the published package: `npx tsx
+path/to/polygraph/src/index.ts demo`.)
+
+This does four things, in order:
+
+1. Seeds a fresh `fleet.yaml` — a demo fleet with three collectors: the local chaos
+   fixture (`demo-fixture-catalog`) plus two real `books.toscrape.com` category
+   collectors (`books-fiction`, `books-mystery`) included for fleet-scale realism.
+2. Resets the ledger (`polygraph.sqlite`) to a clean genesis, so the chain you verify
+   at the end started right here, in front of the audience.
+3. Starts the chaos fixture — a tiny 12-product catalog server on `:4200` — in
+   `healthy` mode, and runs **one** verification pass against it. That pass is
+   deliberately scoped to the local fixture only: the two real network collectors sit
+   in the fleet.yaml for you to explore later, but never touch the network as part of
+   the guaranteed-offline demo path.
+4. Starts the dashboard on `:4141`.
+
+Open `http://127.0.0.1:4141` in a browser. You should see three cards: the fixture
+catalog at **PASS**, and the two books.toscrape.com collectors sitting at "awaiting
+first run" (nothing invented — they genuinely haven't run yet).
+
+Leave that terminal running. Everything below happens in a **second terminal**, in
+the same directory.
+
+## The script
+
+**0:00 — "Here's a normal fleet."**
+
+Point at the dashboard. The fixture catalog card is green, `PASS`, `RELEASE`. Say what
+Polygraph actually checks on every pass: not just "did the scraper return 200 and
+valid JSON" but *contract* (are the fields actually filled, or silently defaulted),
+*coherence* (did one field collapse while the rest look fine), *identity* (is this
+even the product we asked for), and a live *canary* re-fetch that confirms a failure
+before anything gets marked repairable.
+
+**0:30 — Break the site.**
+
+```
+polygraph chaos price_dead
+polygraph run --collector demo-fixture-catalog
+```
+
+`chaos price_dead` renames the price field's selector on the live fixture server —
+the page still returns a normal HTTP 200, every other field (sku, title, stock) is
+completely untouched. This is deliberately NOT a 404 or a 500. It's the failure mode
+that makes scrapers dangerous: they keep running, keep returning "successful" 200s,
+and just quietly stop collecting the field that broke.
+
+Terminal output:
+
+```
+demo-fixture-catalog: verdict=FAILED_STRUCTURAL cause=STRUCTURAL action=QUARANTINE run=...
+  suggested fix: bdata scraper heal demo-fixture-catalog "The field(s) price return default/empty values on 100% of pages since ..."
+```
+
+Refresh the dashboard (or wait ~2s for its own poll) — the card flips to
+`FAILED_STRUCTURAL`, amber/red badge, and the ledger stream at the bottom gets a new
+row. Say the two things that matter here:
+
+- The verdict isn't "HTTP error" — it's a *lying* 200. Contract check caught the
+  collapsed price field; coherence confirmed it's a single-field collapse, not a
+  systemic problem; a **live canary re-fetch** (not last week's data — a fresh
+  request, right now) confirmed the field is still broken. That three-way
+  confirmation is exactly what policy.ts calls a `HealProof`, and it's the only thing
+  that's allowed to make a REPAIR decision.
+- Heal is disabled by policy right now (our actual Bright Data account is 403-gated
+  on AI self-healing features — see the README's "account gate" note). Rather than
+  silently doing nothing, Polygraph prints the *exact* command a human could run to
+  trigger the same repair by hand: `bdata scraper heal demo-fixture-catalog "..."`.
+  That's a feature, not a fallback — the system did the diagnosis, it's just not the
+  one pulling the trigger on a paid, live-mutating API call without you asking it to.
+
+**1:30 — The differentiating moment: a well-formed lie.**
+
+```
+polygraph chaos wrong_entity
+polygraph run --collector demo-fixture-catalog
+```
+
+`wrong_entity` is the failure mode that contract/coherence checks alone can NEVER
+catch: every field on the page is genuinely filled — sku, title, price, stock all
+present and well-formed — it's just serving a *different, real* product than the one
+requested. A caching bug, a redirect, a similar-SKU substitution: this looks like a
+perfect success to any check that only inspects field shape.
+
+Terminal output:
+
+```
+demo-fixture-catalog: verdict=FAILED_IDENTITY cause=IDENTITY action=REDISCOVER run=...
+```
+
+Notice what's missing: **no suggested fix line.** This is the point. `FAILED_IDENTITY`
+can never produce a REPAIR action — not "the policy decided not to," but "the type
+system will not let `decideIdentity` construct one" (`policy.ts`'s `decideIdentity`
+returns a type that structurally excludes REPAIR; only `decideStructural`'s
+proof-confirmed branch can even call the private function that mints one). Re-capturing
+a selector doesn't fix "we're looking at the wrong entity entirely" — the system
+refuses to even offer that as an option, and routes to `REDISCOVER` (re-derive the
+target) instead. Say it plainly: *heal refused, by construction, not by configuration.*
+
+**2:15 — The receipt.**
+
+```
+polygraph chaos healthy
+polygraph run --collector demo-fixture-catalog
+polygraph ledger verify
+```
+
+Flip back to healthy, one more pass shows `PASS` again — the incident is over, but the
+history isn't erased (the dashboard's ledger stream still shows every event). Then:
+
+```
+ledger verify: OK — N event(s) verified, chain intact
+```
+
+Every decision Polygraph made this demo — the clean pass, the structural failure and
+its suggested fix, the identity failure and its refusal, the recovery — is one
+SHA-256 hash-chained event in an append-only ledger (`polygraph ledger verify` walks
+the whole chain from genesis and would catch a single tampered byte in any row). This
+is the audit trail a team actually needs when they're deciding whether to trust an
+automated repair: not "the scraper said it worked," but a signed, ordered receipt of
+every verification and every decision that led there.
+
+**2:45 — Close.**
+
+`polygraph run --collector demo-fixture-catalog` (or `polygraph watch`, which adds a
+cron schedule on top of everything above) is the exact same pipeline you'd point at a
+real fleet. The two `books.toscrape.com` collectors sitting in this demo's
+`fleet.yaml` are real, live scrapers — try `polygraph run` (no `--collector` filter)
+against them with your own Bright Data account/`bdata` CLI auth if you want to see the
+same checks running against genuinely external, uncontrolled pages.
+
+## Reference: the fixture's four modes
+
+| Mode | What changes | HTTP status | What it produces |
+|---|---|---|---|
+| `healthy` | Nothing — clean catalog data | 200 | `PASS` / `RELEASE` |
+| `price_dead` | Price field's selector renamed; every other field untouched | 200 | `FAILED_STRUCTURAL`, REPAIR-eligible (HealProof-confirmed), suggested `bdata scraper heal` command |
+| `wrong_entity` | Product page serves a different, real product's full data for the requested SKU | 200 | `FAILED_IDENTITY`, never REPAIR-eligible (structurally excluded) |
+| `blocked` | Interstitial "verifying you are human" page, no product fields at all | 200 | contract/coherence failure (all fields collapsed) |
+
+Every mode returns HTTP 200. That's deliberate — a 4xx/5xx is a problem any uptime
+monitor already catches. Polygraph exists for the failure mode uptime monitoring
+can't see at all: scrapers that keep returning "success."
+
+Switch modes any time with `polygraph chaos <mode>` — it just flips a JSON switch
+file (`fixture/state.json`) the fixture server re-reads on every request, so it takes
+effect on the very next fetch with zero restart.
+
+## Troubleshooting
+
+- **Dashboard shows nothing:** `polygraph demo` must still be running in its own
+  terminal — it's what's serving both the fixture site and the dashboard.
+- **`polygraph run` (no `--collector` filter) hangs or is slow:** you're touching the
+  two real `books.toscrape.com` collectors, which need either a configured Web
+  Unlocker zone or the `bdata` CLI on `PATH`. That's expected and outside the
+  guaranteed-offline path above — use `--collector demo-fixture-catalog` for the
+  scripted narrative.
+- **Ports already in use:** `polygraph demo --port <dashboard-port> --fixture-port
+  <fixture-port>`.

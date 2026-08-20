@@ -15,7 +15,9 @@
  * something to check against.
  */
 import type { OutputSchema } from './types.js';
-import { FIXTURE_SCHEMA } from './fixture/extractor.js';
+import type { Collector } from './config.js';
+import type { Extractor } from './adapters.js';
+import { FIXTURE_SCHEMA, extractFixtureProduct } from './fixture/extractor.js';
 
 /** Derives the identity key runner.ts should expect a run's row to carry
  * in its `entity_key` field, given the input that produced it AND the row
@@ -29,6 +31,20 @@ export type EntityKeyFn = (input: unknown, row: Record<string, unknown>) => stri
 export interface CollectorDefinition {
   schema: OutputSchema;
   entityKey?: EntityKeyFn;
+  /**
+   * The unlocker/local adapters' page-content parser for this collector
+   * (adapters.ts's `AdapterContext.extractors`, keyed by collector.id — a
+   * DIFFERENT key space than this registry's own collector.NAME keying).
+   * Optional: Task 5 left wiring a page extractor into the CLI's default
+   * `run`/`watch` path unresolved ("a future task's concern" — see
+   * runner.ts's own docstring); `extractorsForCollectors` below is that
+   * wiring, and this field is what it reads. A collector whose registry
+   * entry has no `extractor` still needs one supplied via
+   * `AdapterContext.extractors` directly (tests do this today) if it uses
+   * the unlocker/local adapter — the `brightdata` adapter never needs one
+   * at all (see adapters.ts).
+   */
+  extractor?: Extractor;
 }
 
 function urlOf(input: unknown): string | undefined {
@@ -54,6 +70,41 @@ function urlOf(input: unknown): string | undefined {
 function booksToscrapeSlug(url: string): string | undefined {
   const match = url.match(/\/catalogue\/([^/]+)\/index\.html/);
   return match?.[1];
+}
+
+/**
+ * Parses a real books.toscrape.com product page's HTML (verified against
+ * the live site's actual markup, e.g.
+ * https://books.toscrape.com/catalogue/soumission_998/index.html) into
+ * title/price/availability/star_rating/upc. Each field's regex targets the
+ * FIRST match only (never global), which is deliberate: the page also
+ * renders a "product recommendation" carousel further down with the same
+ * CSS classes (`.price_color`, `.star-rating`, `.instock`) for OTHER
+ * books — matching the first occurrence keeps this locked onto the actual
+ * requested product's own markup, not a recommended one.
+ *
+ * This registry's own `'books.toscrape.com'` schema (below) declares no
+ * `default_value` for any field, so per contract.ts's `isUnfilled`, a field
+ * is only UNFILLED when its key is genuinely ABSENT from the row — a field
+ * this function can't find is therefore OMITTED entirely (not defaulted to
+ * `''`/`0`), never fabricated.
+ */
+function extractBooksToscrapeProduct(html: string): Record<string, unknown> {
+  const title = html.match(/<h1>([^<]*)<\/h1>/)?.[1]?.trim();
+  const priceRaw = html.match(/<p class="price_color">£([0-9.]+)<\/p>/)?.[1];
+  const availability = html
+    .match(/<p class="instock availability">\s*<i class="icon-ok"><\/i>\s*([^<]*)<\/p>/)?.[1]
+    ?.trim();
+  const starRating = html.match(/<p class="star-rating (\w+)">/)?.[1];
+  const upc = html.match(/<th>UPC<\/th><td>([^<]*)<\/td>/)?.[1]?.trim();
+
+  const row: Record<string, unknown> = {};
+  if (title !== undefined) row.title = title;
+  if (priceRaw !== undefined) row.price = Number.parseFloat(priceRaw);
+  if (availability !== undefined) row.availability = availability;
+  if (starRating !== undefined) row.star_rating = starRating;
+  if (upc !== undefined) row.upc = upc;
+  return row;
 }
 
 /** jobs.ashbyhq.com job URLs look like
@@ -112,6 +163,7 @@ export const COLLECTOR_REGISTRY: Record<string, CollectorDefinition> = {
       // check, not a genuine cross-check; see the doc comment above).
       return upc;
     },
+    extractor: extractBooksToscrapeProduct,
   },
 
   'jobs.ashbyhq.com': {
@@ -163,5 +215,33 @@ export const COLLECTOR_REGISTRY: Record<string, CollectorDefinition> = {
       // DIFFERENT real product's sku here on purpose.
       return sku === requestedSku ? sku : `MISMATCH:${requestedSku}`;
     },
+    extractor: extractFixtureProduct,
   },
 };
+
+/**
+ * Builds the `AdapterContext.extractors` map (`Extractor`s keyed by
+ * collector.id — adapters.ts's key space) for every collector in
+ * `collectors` whose `COLLECTOR_REGISTRY[collector.name]` entry declares
+ * one. This is the CLI's default wiring Task 5 left unresolved (see
+ * runner.ts's own docstring: "running a fleet with unlocker/local
+ * collectors from the CLI today requires a richer entry point... a future
+ * task's concern") — `index.ts`'s `run`/`watch`/`demo` commands all call
+ * this instead of hand-wiring each collector's extractor individually. A
+ * collector whose registry entry has no `extractor` (or has no registry
+ * entry at all) is simply absent from the returned map — same
+ * "never silently invent a check, but never crash the fleet pass either"
+ * posture as runner.ts's own `skippedEvidence`: the unlocker/local adapter
+ * will throw a clear "no extractor registered" error for that ONE
+ * collector, caught and ledgered as its own SUSPECT/QUARANTINE by
+ * runFleet's per-collector fault isolation — never a crash, never silently
+ * treated as a pass.
+ */
+export function extractorsForCollectors(collectors: Collector[]): Record<string, Extractor> {
+  const result: Record<string, Extractor> = {};
+  for (const collector of collectors) {
+    const extractor = COLLECTOR_REGISTRY[collector.name]?.extractor;
+    if (extractor) result[collector.id] = extractor;
+  }
+  return result;
+}

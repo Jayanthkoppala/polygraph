@@ -86,14 +86,29 @@ describe('demo pipeline against the real local fixture', () => {
     expect(summary.results[0]).toMatchObject({ verdict: 'PASS', cause: 'NONE', action: 'RELEASE' });
   });
 
-  it('produces FAILED_STRUCTURAL after flipping the fixture to price_dead', async () => {
+  it('produces FAILED_STRUCTURAL after flipping the fixture to price_dead, with a genuinely failed canary (HealProof-confirmed) and a suggested heal command', async () => {
     writeChaosMode(statePath, 'price_dead');
     const summary = await runOnce();
     expect(summary.results[0]).toMatchObject({ verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL' });
 
     const events = ctx.ledger.all();
-    const contractEvidence = events[0].evidence as Array<{ check: string; ok: boolean }>;
-    expect(contractEvidence.find((e) => e.check === 'contract')?.ok).toBe(false);
+    const evidence = events[0].evidence as Array<{ check: string; ok: boolean }>;
+    expect(evidence.find((e) => e.check === 'contract')?.ok).toBe(false);
+    // The canary rerun (a SECOND, live fetch against the still-chaos-flipped
+    // fixture) must ALSO genuinely fail — this is what makes it
+    // HealProof-confirmed (policy.ts's deriveHealProof requires both) rather
+    // than just a one-off contract violation. price_dead's default_value is
+    // `null` specifically so this holds (see fixture/extractor.ts's doc
+    // comment) — a regression back to a numeric `0` default would silently
+    // make this canary evidence read as "passed" and break this assertion.
+    expect(evidence.find((e) => e.check === 'canary')?.ok).toBe(false);
+
+    // With heal disabled (this test's POLICY, matching the demo's own
+    // default), the governor downgrades the would-be REPAIR to QUARANTINE —
+    // but the pure decision underneath is still REPAIR-eligible, so
+    // runFleet surfaces the exact manual heal command.
+    expect(summary.results[0].action).toBe('QUARANTINE');
+    expect(summary.results[0].suggestedHealCommand).toMatch(/^bdata scraper heal demo-fixture-catalog "/);
   });
 
   it('produces FAILED_IDENTITY after flipping the fixture to wrong_entity, and never REPAIR', async () => {
