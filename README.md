@@ -401,15 +401,23 @@ put the answer.**
 `fly auth login` is interactive and cannot be scripted. Everything after it is:
 
 ```
-fly auth login                  # opens a browser — a human has to do this
-./scripts/deploy-fly.sh         # or: ./scripts/deploy-fly.sh <app-name>
+export PATH="$HOME/.fly/bin:$PATH" && fly auth login
+./scripts/deploy-fly.sh polygraph-hosted
 ```
+
+Every flag is decided in the script — region `iad`, a 1 GB volume, org `personal`,
+`--remote-only` — so nothing prompts partway through. Override with `FLY_REGION`,
+`FLY_VOLUME_SIZE_GB`, or `FLY_ORG` if you need to.
 
 `scripts/deploy-fly.sh` creates the app, creates the `polygraph_data` volume, generates
 a 32-byte master key with `openssl rand -base64 32` and sets it as a Fly **secret**
 (never in `fly.toml`, never printed, never committed), deploys with `--remote-only`,
-asserts `POLYGRAPH_HEAL_ENABLED` is absent, and then runs `scripts/verify-fly.sh`
-against the live URL. Pass an app name if `polygraph` is taken — Fly app names are one
+asserts `POLYGRAPH_HEAL_ENABLED` is absent **from the running container** — `fly ssh
+console -C env | grep -i heal` must come back empty, since grepping the repo would only
+prove we never wrote the string down, not that nothing injected it at deploy time — and
+then runs `scripts/verify-fly.sh` against the live URL. Pass an app name if `polygraph`
+is taken; the script tells you plainly whether an existing name is yours or a
+stranger's rather than failing confusingly later. Fly app names are one
 global namespace. The script rewrites `fly.toml`'s `app` and `POLYGRAPH_PUBLIC_ORIGIN`
 together when you do, because that env var is what the CSRF gate compares the `Origin`
 header against: if it does not match the hostname the browser actually loaded, every
@@ -432,11 +440,15 @@ on.
 
 ### What is actually live
 
-**Neither URL is filled in below yet, and this section will say so until one is.**
-
-- **Fly (full product):** _not yet deployed._ The deploy is staged and blocked only on
-  `fly auth login`, which needs a human at a browser.
-- **Vercel (landing + sandbox):** _URL pending from the Vercel build._
+- **Vercel (landing + sandbox):** **https://polygraph-two.vercel.app** — live now.
+  The landing page and the in-browser sandbox. The verdicts it computes are real and so
+  is the SHA-256 chain behind them, but it all runs **entirely in your browser tab**:
+  no server, no database, no signup, nothing persisted. As the app itself says, *the
+  dashboard runs on your machine, not this one.* It cannot take a Bright Data key and
+  never asks for one.
+- **Fly (full product):** _not yet deployed._ Staged and blocked only on `fly auth
+  login`, which needs a human at a browser. This is the one where you sign up, paste
+  your **own** Bright Data key, and get your own fleet with its own ledger chain.
 
 What *has* been verified first-hand: `fly.toml` still passes `test/deploy.config.test.ts`
 after every subsequent commit, and the exact server binary that the image runs
