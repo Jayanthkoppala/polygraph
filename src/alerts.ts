@@ -4,7 +4,7 @@
  * human's attention, and on a heal cycle's terminal RECOVERY_VERIFIED /
  * RECOVERY_FAILED outcome.
  *
- * Two invariants, both load-bearing:
+ * Three invariants, all load-bearing:
  *
  * 1. NEVER throws into the verification pipeline. Every failure mode — the
  *    webhook 404s, times out, returns a garbage body, DNS fails, whatever —
@@ -13,18 +13,45 @@
  *    never be able to break a verification run (see runner.ts/heal.ts,
  *    where this is called straight after the ledger append that already
  *    recorded the real outcome).
- * 2. Debounced: at most one alert per (collector, verdict code) per 10
- *    minutes, persisted in the SAME SQLite DB as the ledger/governor (a
- *    small `alert_debounce` table) so a collector stuck in a failed state
- *    doesn't re-alert every cycle, and the debounce itself survives a
- *    process restart — mirrors policy.ts's `Governor` exactly:
- *    constructible from either a `better-sqlite3.Database` or a path,
- *    `close()` only closes a DB this instance opened itself.
  *
- * A failed delivery does NOT get recorded in the debounce table — only a
- * successful POST does — so a webhook that was down for one cycle gets
- * retried the next cycle rather than silently going dark for 10 minutes on
- * an alert nobody actually received.
+ * 2. TRANSITION-gated, not just rate-capped. `notify()` is called on EVERY
+ *    run for EVERY collector (see runner.ts), including plain PASS runs —
+ *    it has to be, since this module is the only place that knows what a
+ *    collector's previous verdict was. Two different code shapes need two
+ *    different rules, tracked separately (see `isEventShaped` below):
+ *      - STATE-shaped codes (PASS + every FAILED_* / SUSPECT_*) describe an
+ *        ongoing condition. An alert fires only when the verdict code
+ *        actually CHANGES from the last one recorded for that collector
+ *        (`alert_state`, one row per collector) — a collector stuck
+ *        reporting the same FAILED_CONTRACT run after run, hours apart,
+ *        alerts exactly ONCE, not every cycle. Returning to PASS is itself
+ *        a transition worth recording (so the *next* failure reads as new)
+ *        even though PASS never sends a webhook (PASS isn't alertable).
+ *      - EVENT-shaped codes (RECOVERY_VERIFIED / RECOVERY_FAILED) describe
+ *        a one-off heal-cycle outcome, not an ongoing condition — two
+ *        separate heal attempts each deserve their own alert even if both
+ *        happen to land on the same code. These bypass the state gate
+ *        entirely and fall straight through to the debounce-only path this
+ *        module always had.
+ *    State is only ever recorded on a SUCCESSFUL delivery for an alertable
+ *    code (mirrors the debounce rule below: a failed send must not be
+ *    mistaken for "already handled," or a real transition could go
+ *    unreported forever) — except PASS, which has no delivery to succeed
+ *    or fail and is simply recorded on observation.
+ *
+ * 3. Debounced ON TOP of the transition gate, as a flap guard: at most one
+ *    alert per (collector, verdict code) per 10 minutes, persisted
+ *    alongside the state table in the SAME SQLite DB as the ledger/governor
+ *    (`alert_debounce` / `alert_state`) so both survive a process restart —
+ *    mirrors policy.ts's `Governor` exactly: constructible from either a
+ *    `better-sqlite3.Database` or a path, `close()` only closes a DB this
+ *    instance opened itself. This catches a collector oscillating between
+ *    two codes fast enough that each swap reads as a fresh transition
+ *    (FAILED_A -> FAILED_B -> FAILED_A within a couple minutes) — without
+ *    it, that flap would re-alert on every swap even though the state gate
+ *    alone would let it. A failed delivery does NOT get recorded in the
+ *    debounce table either, for the same "don't mistake a failure for
+ *    success" reason as the state gate.
  *
  * PASS and RECOVERY_PENDING are deliberately not alertable: PASS is the
  * default healthy state (alerting on it would be noise, not signal) and
@@ -94,6 +121,14 @@ export function isAlertable(code: ReasonCode): boolean {
   );
 }
 
+/** RECOVERY_VERIFIED/RECOVERY_FAILED describe a one-off heal-cycle outcome,
+ * not an ongoing collector condition — see the module docstring's
+ * invariant 2. Every other code (PASS, FAILED_*, SUSPECT_*) is
+ * state-shaped and goes through the transition gate instead. */
+function isEventShaped(code: ReasonCode): boolean {
+  return code === 'RECOVERY_VERIFIED' || code === 'RECOVERY_FAILED';
+}
+
 /** Renders a one-line, safe-to-forward summary from Evidence[]: the failed
  * checks' own `detail` strings (already rate/count summaries, never raw
  * rows — see contract.ts/coherence.ts/identity.ts), or a `verdict (cause)`
@@ -133,6 +168,21 @@ export class AlertNotifier {
         PRIMARY KEY (collector, verdict)
       )
     `);
+    // One row per collector: the last STATE-shaped verdict code this
+    // collector was actually observed at (PASS or a FAILED_*/SUSPECT_*
+    // code that successfully alerted). Deliberately a separate table from
+    // `alert_debounce` — different cardinality/key (one row per collector
+    // here vs. one row per (collector, verdict) pair there) and a
+    // different lifecycle (this is overwritten on every transition;
+    // alert_debounce accumulates one row per code ever seen) — but the
+    // same SQLite DB, so it carries the same cross-process persistence
+    // guarantee (see the real-file tests in test/alerts.test.ts).
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS alert_state (
+        collector TEXT PRIMARY KEY,
+        verdict TEXT NOT NULL
+      )
+    `);
 
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.nowFn = options.now ?? (() => new Date().toISOString());
@@ -169,6 +219,25 @@ export class AlertNotifier {
     return new Date(nowIso).getTime() - new Date(last).getTime() < DEBOUNCE_MS;
   }
 
+  /** The last state-shaped verdict code recorded for `collector`, or
+   * `undefined` if none has ever been recorded (a collector's very first
+   * observed verdict is therefore always a "transition"). */
+  private lastState(collector: string): string | undefined {
+    const row = this.db.prepare('SELECT verdict FROM alert_state WHERE collector = ?').get(collector) as
+      | { verdict: string }
+      | undefined;
+    return row?.verdict;
+  }
+
+  private recordState(collector: string, verdict: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO alert_state (collector, verdict) VALUES (?, ?)
+         ON CONFLICT(collector) DO UPDATE SET verdict = excluded.verdict`
+      )
+      .run(collector, verdict);
+  }
+
   /** POSTs the alert payload with a hard timeout. Throws on any failure
    * (non-ok response, network error, timeout) — `notify()` is the layer
    * that catches and swallows; this stays a plain throwing helper so its
@@ -191,34 +260,68 @@ export class AlertNotifier {
     }
   }
 
+  private buildPayload(ctx: AlertContext): AlertPayload {
+    return {
+      collector: ctx.collector,
+      verdict: ctx.verdict,
+      cause: ctx.cause,
+      summary: summarize(ctx.verdict, ctx.cause, ctx.evidence ?? []),
+      ts: ctx.ts,
+      ledger_id: ctx.ledger_id,
+    };
+  }
+
   /**
-   * Fires an alert for `ctx` if — and only if — `webhookUrl` is set,
-   * `ctx.verdict` is alertable (see `isAlertable`), and this
-   * (collector, verdict) pair hasn't already alerted within the last 10
-   * minutes. Always resolves; never rejects. On success, records the
-   * debounce entry; on any failure, logs via `onError` and does NOT record
-   * a debounce entry (so the next cycle retries rather than going silently
-   * dark for 10 minutes on an alert nobody received).
+   * Called on every run for every collector — including plain PASS runs,
+   * since this is the only place that knows the previous verdict. Always
+   * resolves; never rejects.
+   *
+   * EVENT-shaped codes (RECOVERY_VERIFIED/RECOVERY_FAILED): fires per
+   * occurrence, gated only by the 10-minute (collector, verdict) debounce —
+   * unchanged from before this module tracked state.
+   *
+   * STATE-shaped codes (PASS, FAILED_*, SUSPECT_*): fires only when
+   * `ctx.verdict` differs from the last state-shaped verdict recorded for
+   * this collector (a genuine transition), AND that specific verdict code
+   * hasn't already alerted for this collector within the last 10 minutes
+   * (the flap guard). A verdict equal to the last recorded one NEVER
+   * re-alerts, no matter how much time has passed. PASS updates the
+   * recorded state (so the next failure reads as a fresh transition) but
+   * never sends a webhook, since PASS isn't alertable. State is recorded
+   * on a successful send for alertable codes — never on failure, so a
+   * webhook outage doesn't retroactively mark a transition as "handled."
    */
   async notify(webhookUrl: string | undefined, ctx: AlertContext): Promise<void> {
     try {
       if (!webhookUrl) return;
-      if (!isAlertable(ctx.verdict)) return;
+
+      if (isEventShaped(ctx.verdict)) {
+        const nowIso = this.nowFn();
+        if (this.isDebounced(ctx.collector, ctx.verdict, nowIso)) return;
+        await this.post(webhookUrl, this.buildPayload(ctx));
+        this.recordSent(ctx.collector, ctx.verdict, nowIso);
+        return;
+      }
+
+      const priorState = this.lastState(ctx.collector);
+      const isTransition = priorState !== ctx.verdict;
+
+      if (!isAlertable(ctx.verdict)) {
+        // e.g. PASS: never sends a webhook, but the observed state must
+        // still be recorded on a transition so a later failure is read as
+        // new rather than silently suppressed by stale state.
+        if (isTransition) this.recordState(ctx.collector, ctx.verdict);
+        return;
+      }
+
+      if (!isTransition) return; // steady-state repeat: never re-alert.
 
       const nowIso = this.nowFn();
-      if (this.isDebounced(ctx.collector, ctx.verdict, nowIso)) return;
+      if (this.isDebounced(ctx.collector, ctx.verdict, nowIso)) return; // flap guard
 
-      const payload: AlertPayload = {
-        collector: ctx.collector,
-        verdict: ctx.verdict,
-        cause: ctx.cause,
-        summary: summarize(ctx.verdict, ctx.cause, ctx.evidence ?? []),
-        ts: ctx.ts,
-        ledger_id: ctx.ledger_id,
-      };
-
-      await this.post(webhookUrl, payload);
+      await this.post(webhookUrl, this.buildPayload(ctx));
       this.recordSent(ctx.collector, ctx.verdict, nowIso);
+      this.recordState(ctx.collector, ctx.verdict);
     } catch (err) {
       // Never let a broken notifier throw into the verification pipeline.
       // The logged message is deliberately built from nothing but the

@@ -140,17 +140,50 @@ describe('AlertNotifier — fires on transition-worthy verdicts', () => {
   });
 });
 
-describe('AlertNotifier — debounce (max 1 per collector per verdict code per 10 min)', () => {
-  it('suppresses a second alert for the same collector+code within 10 minutes', async () => {
+describe('AlertNotifier — transition gate (state-shaped codes: PASS/FAILED_*/SUSPECT_*)', () => {
+  it('(a) the same failed verdict repeated across many runs, hours apart, alerts exactly ONCE', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200));
     let now = '2026-08-20T00:00:00.000Z';
     const notifier = new AlertNotifier(':memory:', { fetchImpl, now: () => now });
 
-    await notifier.notify(WEBHOOK, ctx());
-    now = '2026-08-20T00:05:00.000Z'; // +5 min, still within debounce window
-    await notifier.notify(WEBHOOK, ctx());
+    for (let i = 0; i < 6; i++) {
+      await notifier.notify(WEBHOOK, ctx());
+      now = new Date(new Date(now).getTime() + 3 * 60 * 60_000).toISOString(); // +3h each cycle
+    }
 
+    // Well past any debounce window by the second call — a repeat verdict
+    // must never re-alert no matter how much time has passed; only a real
+    // state CHANGE can trigger another alert.
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    notifier.close();
+  });
+
+  it('(b) failed -> PASS -> the same failed verdict again fires TWO alerts (state reset)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200));
+    let now = '2026-08-20T00:00:00.000Z';
+    const notifier = new AlertNotifier(':memory:', { fetchImpl, now: () => now });
+    const advanceHours = (h: number) => {
+      now = new Date(new Date(now).getTime() + h * 60 * 60_000).toISOString();
+    };
+
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'FAILED_CONTRACT' })); // 1st alert
+    advanceHours(1);
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'PASS', cause: 'NONE', evidence: [] })); // recovers: resets state
+    advanceHours(1);
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'FAILED_CONTRACT' })); // fails again: 2nd alert
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    notifier.close();
+  });
+
+  it('(c) failed verdict A then failed verdict B are distinct transitions — two alerts', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200));
+    const notifier = new AlertNotifier(':memory:', { fetchImpl, now: () => '2026-08-20T00:00:00.000Z' });
+
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'FAILED_CONTRACT' }));
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'FAILED_STRUCTURAL' }));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
     notifier.close();
   });
 
@@ -168,25 +201,47 @@ describe('AlertNotifier — debounce (max 1 per collector per verdict code per 1
     notifier.close();
   });
 
-  it('fires again once 10 minutes have elapsed since the last alert for that collector+code', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200));
-    let now = '2026-08-20T00:00:00.000Z';
-    const notifier = new AlertNotifier(':memory:', { fetchImpl, now: () => now });
-
-    await notifier.notify(WEBHOOK, ctx());
-    now = '2026-08-20T00:10:01.000Z'; // just over 10 min
-    await notifier.notify(WEBHOOK, ctx());
-
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    notifier.close();
-  });
-
   it('debounce is scoped per collector: a different collector with the same code fires independently', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200));
     const notifier = new AlertNotifier(':memory:', { fetchImpl, now: () => '2026-08-20T00:00:00.000Z' });
 
     await notifier.notify(WEBHOOK, ctx({ collector: 'collector-a' }));
     await notifier.notify(WEBHOOK, ctx({ collector: 'collector-b' }));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    notifier.close();
+  });
+});
+
+describe('AlertNotifier — debounce as a flap guard on top of the transition gate', () => {
+  it('suppresses a second alert for the same collector+code within 10 minutes', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200));
+    let now = '2026-08-20T00:00:00.000Z';
+    const notifier = new AlertNotifier(':memory:', { fetchImpl, now: () => now });
+
+    await notifier.notify(WEBHOOK, ctx());
+    now = '2026-08-20T00:05:00.000Z'; // +5 min, still within debounce window
+    await notifier.notify(WEBHOOK, ctx());
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    notifier.close();
+  });
+
+  it('(d) rapid repeat of a NEW verdict within 10 min is still capped by debounce, even though each swap is a real transition', async () => {
+    // Oscillation: A fires -> B fires (a genuine transition away from A) ->
+    // A again shortly after (a genuine transition away from B, structurally
+    // identical to a fresh A) — the transition gate alone would fire on
+    // every swap; the (collector, verdict) debounce is what actually caps
+    // this kind of flapping.
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200));
+    let now = '2026-08-20T00:00:00.000Z';
+    const notifier = new AlertNotifier(':memory:', { fetchImpl, now: () => now });
+
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'FAILED_CONTRACT' })); // fires, debounce(A) set @0m
+    now = '2026-08-20T00:02:00.000Z';
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'FAILED_STRUCTURAL' })); // fires, debounce(B) set @2m
+    now = '2026-08-20T00:04:00.000Z';
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'FAILED_CONTRACT' })); // transition true, but debounce(A) is only 4m old -> suppressed
 
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     notifier.close();
@@ -214,6 +269,62 @@ describe('AlertNotifier — debounce (max 1 per collector per verdict code per 1
     await notifier.notify(WEBHOOK, ctx());
     now = '2026-08-20T00:01:00.000Z'; // +1 min, well within the debounce window
     await notifier.notify(WEBHOOK, ctx());
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    notifier.close();
+  });
+
+  it('a failed delivery does not falsely record a transition either — state stays unset, so the very next cycle is still treated as a fresh transition', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(500))
+      .mockResolvedValueOnce(jsonResponse(200));
+    const notifier = new AlertNotifier(':memory:', { fetchImpl, now: () => '2026-08-20T00:00:00.000Z' });
+
+    await notifier.notify(WEBHOOK, ctx()); // fails to deliver
+    await notifier.notify(WEBHOOK, ctx()); // same verdict again -- still a "transition" since state was never recorded
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    notifier.close();
+  });
+});
+
+describe('AlertNotifier — RECOVERY_VERIFIED/RECOVERY_FAILED are event-shaped, not state-shaped', () => {
+  it('fires on every occurrence (subject only to debounce), never suppressed by "same as last time"', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200));
+    let now = '2026-08-20T00:00:00.000Z';
+    const notifier = new AlertNotifier(':memory:', { fetchImpl, now: () => now });
+
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'RECOVERY_FAILED', evidence: [] }));
+    now = '2026-08-20T00:11:00.000Z'; // past the 10-minute debounce window
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'RECOVERY_FAILED', evidence: [] }));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    notifier.close();
+  });
+
+  it('is still debounced within the window like before (unchanged behavior)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200));
+    let now = '2026-08-20T00:00:00.000Z';
+    const notifier = new AlertNotifier(':memory:', { fetchImpl, now: () => now });
+
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'RECOVERY_VERIFIED', evidence: [] }));
+    now = '2026-08-20T00:05:00.000Z';
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'RECOVERY_VERIFIED', evidence: [] }));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    notifier.close();
+  });
+
+  it('does not disturb the state-shaped transition gate for the same collector', async () => {
+    // A RECOVERY_VERIFIED for a collector must not be mistaken for a PASS
+    // state reset by the (unrelated) FAILED_*/SUSPECT_* transition gate.
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200));
+    const notifier = new AlertNotifier(':memory:', { fetchImpl, now: () => '2026-08-20T00:00:00.000Z' });
+
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'FAILED_CONTRACT' })); // 1st alert, state=FAILED_CONTRACT
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'RECOVERY_VERIFIED', evidence: [] })); // 2nd alert, event-shaped
+    await notifier.notify(WEBHOOK, ctx({ verdict: 'FAILED_CONTRACT' })); // still the same recorded state -> suppressed
 
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     notifier.close();
@@ -318,5 +429,35 @@ describe('AlertNotifier — debounce persistence across instances (real file, no
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     notifier.close(); // must not close a Database it doesn't own
     db.close();
+  });
+
+  it('(e) the last-alerted verdict state survives a restart too — a second instance still suppresses a repeat, but recognizes a real transition', async () => {
+    const { dir, path } = tempAlertsPath();
+    dirs.push(dir);
+
+    const writerFetch = vi.fn().mockResolvedValue(jsonResponse(200));
+    const writer = new AlertNotifier(path, { fetchImpl: writerFetch, now: () => '2026-08-20T00:00:00.000Z' });
+    await writer.notify(WEBHOOK, ctx({ verdict: 'FAILED_CONTRACT' }));
+    writer.close();
+
+    // Second instance, same file, well past the debounce window: a repeat
+    // of the SAME verdict must still be suppressed by the persisted state,
+    // not just by (an already-expired) debounce timestamp.
+    const readerFetch = vi.fn().mockResolvedValue(jsonResponse(200));
+    const reader = new AlertNotifier(path, { fetchImpl: readerFetch, now: () => '2026-08-20T03:00:00.000Z' });
+    await reader.notify(WEBHOOK, ctx({ verdict: 'FAILED_CONTRACT' }));
+    expect(readerFetch).not.toHaveBeenCalled();
+
+    // A genuine transition (via PASS, hours later) is still recognized
+    // across the restart -- the persisted state, not just the debounce
+    // table, carries over.
+    await reader.notify(WEBHOOK, ctx({ verdict: 'PASS', cause: 'NONE', evidence: [] }));
+    const thirdFetch = vi.fn().mockResolvedValue(jsonResponse(200));
+    const reader2 = new AlertNotifier(path, { fetchImpl: thirdFetch, now: () => '2026-08-20T06:00:00.000Z' });
+    await reader2.notify(WEBHOOK, ctx({ verdict: 'FAILED_CONTRACT' }));
+    expect(thirdFetch).toHaveBeenCalledTimes(1);
+
+    reader.close();
+    reader2.close();
   });
 });
