@@ -491,10 +491,12 @@ for fleet-scale realism.
 (`policy.ts`'s `composeHealPrompt`), the heal controller's full trigger → poll →
 approve → re-run → re-grade cycle (`heal.ts`), and the structural refusal logic are all
 complete and covered by tests, every one against a mocked HTTP layer. The account's
-AI-feature 403-gate has since lifted for one real run (2026-08-20, `gates/t2live/`) —
-see [Current limits](#current-limits) for what that live run found (`--auto-approve`
-genuinely clears the diff-approval gate, but approving is not the same as promoting to
-production). Heal is double-gated behind `policy.heal_enabled` in `fleet.yaml` **and**
+AI-feature 403-gate has since lifted for one real run (2026-08-20, `gates/t2live/`), and
+what that run found is the single most interesting artifact in this repo:
+**[`docs/FINDING-heal-promotion.md`](docs/FINDING-heal-promotion.md)** — `--auto-approve`
+genuinely clears the diff-approval gate and the job reports `status: "done"`, but
+approving is not the same as promoting to production, and the fix never reached the live
+collector. Reproduction steps are at the end of that document. Heal is double-gated behind `policy.heal_enabled` in `fleet.yaml` **and**
 the environment variable `POLYGRAPH_HEAL_ENABLED=1` — both must be set for a real heal
 attempt to fire; either one closed disables every heal path (`heal.ts`'s
 `isHealEnabled`). The demo shows the diagnosis and the exact manual fallback command
