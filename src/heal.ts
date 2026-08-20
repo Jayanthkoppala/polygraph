@@ -56,7 +56,7 @@
  * CONFIRMED LIVE (2026-08-20, gates/t2live/heal.json + heal.log — the
  * account's AI-feature 403-gate lifted for this one run): an
  * `--auto-approve` heal against a real collector (`c_mt1dsu9fdtdtx3uhf`,
- * Hacker News) reported `status: "done"` after 71 poll attempts (~173s wall
+ * Hacker News) reported `status: "done"` after 71 poll attempts (~105s wall
  * clock) with `user_approval` present in `completed_steps` — proving
  * `--auto-approve` does clear the diff-approval gate via
  * `resume_automation_job`, well inside Bright Data's documented "up to
