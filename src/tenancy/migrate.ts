@@ -308,12 +308,34 @@ function up005(db: Database.Database): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// M006 — verification-job bookkeeping columns on `tenants`, per
+// tenant-architecture.md §5: `Ledger.verify()` must never run on a request
+// thread, so the scheduler (Task 4's `src/tenancy/scheduler.ts`) runs it as a
+// background job and writes its result here; GET routes read these columns
+// instead of ever calling `verify()` themselves. Non-destructive — `ALTER
+// TABLE ADD COLUMN`, all nullable, no rebuild needed (unlike M004's PK
+// widening).
+
+function up006(db: Database.Database): void {
+  if (!columnExists(db, 'tenants', 'last_verify_ok')) {
+    db.exec(`ALTER TABLE tenants ADD COLUMN last_verify_ok INTEGER`);
+  }
+  if (!columnExists(db, 'tenants', 'last_verify_at')) {
+    db.exec(`ALTER TABLE tenants ADD COLUMN last_verify_at TEXT`);
+  }
+  if (!columnExists(db, 'tenants', 'last_verify_checked')) {
+    db.exec(`ALTER TABLE tenants ADD COLUMN last_verify_checked INTEGER`);
+  }
+}
+
 const MIGRATIONS: Migration[] = [
   { version: 1, destructive: false, up: up001 },
   { version: 2, destructive: false, up: up002 },
   { version: 3, destructive: false, up: up003 },
   { version: 4, destructive: true, up: up004 },
   { version: 5, destructive: false, up: up005 },
+  { version: 6, destructive: false, up: up006 },
 ];
 
 /** One consistent snapshot before the first destructive step. VACUUM INTO

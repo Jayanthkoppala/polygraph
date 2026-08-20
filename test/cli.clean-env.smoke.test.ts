@@ -19,7 +19,7 @@
  * reaching a catch block).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -159,5 +159,107 @@ describe('CLI: `polygraph run --collector <local>` in a clean environment (no Br
     expect(stdout).toContain('clean-fixture-2: verdict=PASS');
     expect(stdout).toContain('needs-brightdata:');
     expect(stdout).not.toContain('needs-brightdata: verdict=PASS');
+  });
+});
+
+/**
+ * tenant-architecture.md §7 rule 3 / R9 (docs/plans/polygraph-v2-hosted-
+ * plan.md): "The CLI and `polygraph demo` must keep working exactly as
+ * today, fully offline... tenancy code is dynamically imported so the CLI
+ * never loads the crypto module." Task 4 (`serve`) is the ONLY thing that
+ * touches `src/tenancy/**` — these two tests are the explicit proof the
+ * spec asks for, run against the REAL compiled CLI entrypoint exactly like
+ * the suite above, never `import`ing `src/index.ts` directly.
+ */
+describe('CLI: R9 — tenancy is never loaded outside `polygraph serve`', () => {
+  let cleanHome: string;
+  let workDir: string;
+
+  beforeAll(() => {
+    cleanHome = mkdtempSync(join(tmpdir(), 'polygraph-r9-clean-home-'));
+    workDir = mkdtempSync(join(tmpdir(), 'polygraph-r9-work-'));
+  });
+
+  afterAll(() => {
+    rmSync(cleanHome, { recursive: true, force: true });
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  function cleanEnv(): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: cleanHome };
+    delete env.BRIGHTDATA_API_KEY;
+    delete env.BRIGHTDATA_UNLOCKER_ZONE;
+    delete env.POLYGRAPH_MASTER_KEY;
+    delete env.POLYGRAPH_MASTER_KEY_PREVIOUS;
+    delete env.POLYGRAPH_HEAL_ENABLED;
+    env.POLYGRAPH_DB = join(workDir, `polygraph-${Math.random().toString(36).slice(2)}.sqlite`);
+    return env;
+  }
+
+  it('`polygraph demo` runs offline with no master key set and no network — boots the dashboard and shuts down cleanly', async () => {
+    const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+    const tsxBin = join(repoRoot, 'node_modules', '.bin', 'tsx');
+    const entrypoint = join(repoRoot, 'src', 'index.ts');
+    const configPath = join(workDir, `demo-fleet-${Math.random().toString(36).slice(2)}.yaml`);
+    // `demo`'s own --port/--fixture-port parsing is `parseInt(...) ||
+    // DEFAULT` (index.ts), which means "0" (this test's usual "ephemeral
+    // port" idiom) falls back to the fixed defaults, not a real ephemeral
+    // port — pick our own high random ports instead, to stay independent of
+    // that pre-existing parsing detail.
+    const dashboardPort = 20000 + Math.floor(Math.random() * 20000);
+    const fixturePort = 40000 + Math.floor(Math.random() * 20000);
+
+    const child = spawn(
+      tsxBin,
+      [entrypoint, 'demo', '--config', configPath, '--port', String(dashboardPort), '--fixture-port', String(fixturePort)],
+      { cwd: workDir, env: cleanEnv() }
+    );
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => (stdout += chunk.toString()));
+    child.stderr.on('data', (chunk) => (stderr += chunk.toString()));
+
+    // `demo` never exits on its own (it serves the dashboard until Ctrl+C) —
+    // wait for its own "dashboard on http://" confirmation line rather than
+    // process exit, then send it the same SIGTERM its own shutdown handler
+    // expects.
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`demo did not boot in time.\nstdout:\n${stdout}\nstderr:\n${stderr}`)), 15_000);
+      const check = () => {
+        if (stdout.includes('dashboard on http://')) {
+          clearTimeout(timer);
+          resolve();
+        }
+      };
+      child.stdout.on('data', check);
+      child.once('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      child.once('exit', (code) => {
+        clearTimeout(timer);
+        reject(new Error(`demo exited early with code ${code}.\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+      });
+    });
+
+    expect(stdout).toMatch(/demo-fixture-catalog\s+PASS\s+NONE\s+RELEASE/);
+
+    child.kill('SIGTERM');
+    await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  }, 20_000);
+
+  it('the CLI never loads src/tenancy/crypto.js for an ordinary command', async () => {
+    const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+    const tsxBin = join(repoRoot, 'node_modules', '.bin', 'tsx');
+    const entrypoint = join(repoRoot, 'src', 'index.ts');
+
+    const { stderr } = await execFileAsync(tsxBin, [entrypoint, 'ledger', 'verify'], {
+      cwd: workDir,
+      env: { ...cleanEnv(), NODE_DEBUG: 'module' },
+    }).catch((err: { stdout?: string; stderr?: string }) => ({ stdout: err.stdout ?? '', stderr: err.stderr ?? '' }));
+
+    expect(stderr).not.toContain('tenancy/crypto');
+    expect(stderr).not.toContain('tenancy\\crypto');
   });
 });

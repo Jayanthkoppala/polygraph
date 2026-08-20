@@ -1,5 +1,21 @@
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
+import type Database from 'better-sqlite3';
+import { Ledger } from './ledger.js';
+import { Governor } from './policy.js';
+import type { RunnerContext } from './runner.js';
+import type { OutputSchema } from './types.js';
+import type { KeyExtractor } from './checks/identity.js';
+import type { BrightDataClient, PollOptions } from './brightdata.js';
+import type { AlertNotifier } from './alerts.js';
+// Type-only — erased at compile time, so this adds NO runtime import and the
+// CLI's module graph is unaffected (tenant-architecture.md §7 rule 3: the
+// CLI must never load src/tenancy/**). `TenantCollectorRow` is scope.ts's
+// own row shape (see src/tenancy/scope.ts) — `buildTenantContext` below
+// takes an already-loaded array of these rather than a `TenantScope`
+// itself, so this module never calls into src/tenancy/ at the type level
+// either, only at the value level via a dynamic import (see below).
+import type { TenantCollectorRow } from './tenancy/scope.js';
 
 export type Adapter = 'brightdata' | 'unlocker' | 'local';
 
@@ -162,4 +178,108 @@ function validateCollector(c: unknown, index: number): Collector {
 
 function numberOr(v: unknown, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+}
+
+// ---------------------------------------------------------------------------
+// buildTenantContext — the hosted-server seam (tenant-architecture.md §4/§7):
+// turns N `tenant_collectors` rows into ONE FleetConfig + ONE RunnerContext,
+// the identical types `runFleet` (runner.ts) already consumes from a
+// fleet.yaml-driven CLI run. Everything below `FleetConfig` — runner.ts,
+// policy.ts, checks/*, heal.ts, adapters.ts — never learns tenancy exists;
+// this function is the entire seam.
+//
+// Deliberately does NOT statically import anything under `src/tenancy/` —
+// `loadRunnerOverridesFor` (src/tenancy/onboarding.ts) is loaded via a
+// DYNAMIC import inside the function body instead, so `config.ts`'s own
+// module-load-time behavior (and therefore every CLI command's, since
+// index.ts imports config.ts unconditionally) is byte-for-byte unchanged:
+// nothing under src/tenancy/ is even parsed unless this function is actually
+// called, which only `src/tenancy/serve.ts`/`scheduler.ts` (the hosted path)
+// ever do.
+
+export interface BuildTenantContextInput {
+  db: Database.Database;
+  tenantId: string;
+  genesisHash: string;
+  displayName: string;
+  /** tenants.heal_enabled === 1, per row — still ANDed with the
+   * POLYGRAPH_HEAL_ENABLED env gate inside heal.ts's `isHealEnabled`
+   * regardless of this value (R6: hosted heal is structurally off because
+   * `serve` never sets that env var, not because this flag is hardcoded
+   * false). */
+  healEnabled: boolean;
+  client: BrightDataClient;
+  pollOptions?: PollOptions;
+  notifier?: AlertNotifier;
+  now?: () => string;
+}
+
+/**
+ * Builds `{ config, ctx }` from every row in `confirmedCollectors` (the
+ * caller loads these via `scope.collectors.listConfirmed()`, or a
+ * single-row array for the scheduler's one-collector-per-tick mini fleet —
+ * see tenant-architecture.md §5). Only `setup_state = 'confirmed'` rows
+ * should ever be passed in: an unconfirmed collector has no
+ * `output_schema_json` to build a real check against and — per §4's
+ * three-state UI — must never be scheduled or dashboarded as if it were.
+ *
+ * `ctx.ledger`/`ctx.governor` are freshly constructed `Ledger`/`Governor`
+ * instances scoped to `tenantId` (mirroring what `ScopedLedger`/
+ * `ScopedGovernor` do internally in src/tenancy/scope.ts) rather than reused
+ * from an existing `TenantScope` — `runFleet` needs the actual `Ledger`/
+ * `Governor` classes (it calls `ctx.ledger.append` and hands `ctx.governor`
+ * straight to `decideWithGovernor`), not the isolation-wrapped `Scoped*`
+ * variants those are for HTTP read paths, not the scheduler.
+ */
+export async function buildTenantContext(
+  confirmedCollectors: TenantCollectorRow[],
+  input: BuildTenantContextInput
+): Promise<{ config: FleetConfig; ctx: RunnerContext }> {
+  const { loadRunnerOverridesFor } = await import('./tenancy/onboarding.js');
+
+  const collectors: Collector[] = confirmedCollectors.map((row) => ({
+    id: row.collector_id,
+    name: row.name,
+    entity_key: row.entity_key ?? undefined,
+    canary_inputs: JSON.parse(row.canary_inputs_json) as string[],
+    adapter: 'brightdata',
+  }));
+
+  const config: FleetConfig = {
+    tenant: { name: input.displayName },
+    collectors,
+    policy: {
+      max_attempts_per_incident: 2,
+      cooldown_minutes: 30,
+      daily_heal_budget: 10,
+      heal_enabled: input.healEnabled,
+    },
+    // Hosted v1 has no per-tenant webhook (tenant-architecture.md §4 —
+    // `alerts.telegram_webhook` is a server-side POST to a user-controlled
+    // URL, an SSRF primitive not offered in v1).
+    alerts: {},
+  };
+
+  const schemas: Record<string, OutputSchema> = {};
+  const entityExtractors: Record<string, KeyExtractor> = {};
+  for (const row of confirmedCollectors) {
+    const overrides = loadRunnerOverridesFor(row);
+    if (overrides.schema) schemas[row.collector_id] = overrides.schema;
+    if (overrides.entityExtractor) entityExtractors[row.collector_id] = overrides.entityExtractor as KeyExtractor;
+  }
+
+  const ledger = new Ledger(input.db, { tenantId: input.tenantId, genesisHash: input.genesisHash });
+  const governor = new Governor(input.db, { tenantId: input.tenantId });
+
+  const ctx: RunnerContext = {
+    adapterContext: { client: input.client, pollOptions: input.pollOptions },
+    governor,
+    ledger,
+    schemas,
+    entityExtractors,
+    ...(input.notifier ? { notifier: input.notifier } : {}),
+    ...(input.now ? { now: input.now } : {}),
+  };
+
+  return { config, ctx };
 }

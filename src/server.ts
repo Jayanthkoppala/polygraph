@@ -258,34 +258,30 @@ export interface FleetState {
 }
 
 /** Builds the dashboard's fleet-wide state, per this module's docstring.
- * Reads the whole ledger once (`ledger.all()`) and groups in memory rather
- * than issuing one query per collector — fine at this project's scale (a
- * hackathon fleet, a handful of collectors), and keeps the "one source of
- * truth, no drift" property trivially true. */
+ *
+ * Reads only the LATEST event and latest non-ACKED event per collector
+ * (`ledger.latestPerCollector()` / `ledger.latestNonAckedPerCollector()`,
+ * both one indexed query apiece via idx_events_tenant_coll_id) plus a cheap
+ * per-collector run count (`ledger.runCountsByCollector()`) — never
+ * `ledger.all()`. tenant-architecture.md §5 flagged the previous
+ * full-table-scan-plus-JSON.parse-every-row version as fine for a single
+ * hackathon fleet but wrong at N tenants × many runs, polled concurrently;
+ * this function's OUTPUT is unchanged (same `FleetState` shape, same
+ * semantics — an acked collector still shows its underlying run's own
+ * `action`/`cause`/`evidence`, never the ACKED marker's own bookkeeping
+ * fields), only its data source is cheaper. */
 export function buildFleetState(config: FleetConfig, ledger: Ledger, governor: Governor, nowIso: string): FleetState {
-  const allEvents = ledger.all(); // oldest first
-  const byCollector = new Map<string, LedgerEventRow[]>();
-  for (const event of allEvents) {
-    let list = byCollector.get(event.collector);
-    if (!list) {
-      list = [];
-      byCollector.set(event.collector, list);
-    }
-    list.push(event);
-  }
+  const latestByCollector = new Map(ledger.latestPerCollector().map((e) => [e.collector, e]));
+  const latestRunByCollector = new Map(ledger.latestNonAckedPerCollector().map((e) => [e.collector, e]));
+  const runCounts = ledger.runCountsByCollector();
 
   const day = nowIso.slice(0, 10);
   const govSnapshot = governor.snapshotForDay(day);
   const govByCollector = new Map(govSnapshot.rows.map((r) => [r.collector, r]));
 
   const collectors: CollectorState[] = config.collectors.map((collector) => {
-    const events = byCollector.get(collector.id) ?? [];
-    // "Runs" excludes ACKED marker events (an ack isn't a new verification
-    // pass) — both for the displayed verdict/cause/action and for the
-    // learning run-count.
-    const runs = events.filter((e) => e.action !== 'ACKED');
-    const latestRun = runs.length > 0 ? runs[runs.length - 1] : undefined;
-    const latestEvent = events.length > 0 ? events[events.length - 1] : undefined;
+    const latestEvent = latestByCollector.get(collector.id);
+    const latestRun = latestRunByCollector.get(collector.id);
     const acked = !!(latestEvent && latestRun && latestEvent.action === 'ACKED' && latestEvent.id > latestRun.id);
 
     const { rows, fillPct, fillRates } = latestRun
@@ -304,7 +300,7 @@ export function buildFleetState(config: FleetConfig, ledger: Ledger, governor: G
       rows,
       fillPct,
       fillRates,
-      learning: { n: runs.length, of: 7 },
+      learning: { n: runCounts[collector.id] ?? 0, of: 7 },
       lastTs: latestRun?.ts ?? null,
       ledgerId: latestRun?.id ?? null,
       needsAck: !!(latestRun && isAckable(latestRun.verdict) && !acked),
@@ -370,7 +366,9 @@ function defaultWebDir(): string {
   return fileURLToPath(new URL('../web', import.meta.url));
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
+/** Exported so tenancy/http-routes.ts's own JSON responses use the exact
+ * same content-type/content-length framing as this module's routes. */
+export function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -379,9 +377,37 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(payload);
 }
 
-async function readRequestBody(req: IncomingMessage): Promise<string> {
+/** Upper bound on a request body this process will buffer, for ANY route —
+ * the CLI-only dashboard's own POST /api/ack body is tiny, but this same
+ * `readRequestBody` is reused by the hosted server's mutating routes
+ * (tenancy/http-routes.ts), which are reachable from the open internet.
+ * Without this, `readRequestBody` buffers an arbitrarily large body in
+ * memory before ever looking at it — a pre-existing DoS hole that only
+ * matters once a server is public (tenant-architecture.md §5's abuse-floor
+ * table: "Request body size: 64 KB"). */
+export const MAX_REQUEST_BODY_BYTES = 64 * 1024;
+
+export class RequestBodyTooLargeError extends Error {
+  constructor(limitBytes: number) {
+    super(`request body exceeds ${limitBytes} byte limit`);
+    this.name = 'RequestBodyTooLargeError';
+  }
+}
+
+/** Reads a request body into a string, aborting (throwing
+ * `RequestBodyTooLargeError`) the moment buffered bytes would exceed
+ * `limitBytes` — never buffers past the cap, so an oversized body can't even
+ * transiently balloon memory before being rejected. Exported so
+ * tenancy/http-routes.ts's mutating routes read bodies through the exact
+ * same bounded path as this module's own `POST /api/ack`. */
+export async function readRequestBody(req: IncomingMessage, limitBytes = MAX_REQUEST_BODY_BYTES): Promise<string> {
   const chunks: Buffer[] = [];
+  let total = 0;
   for await (const chunk of req) {
+    total += (chunk as Buffer).length;
+    if (total > limitBytes) {
+      throw new RequestBodyTooLargeError(limitBytes);
+    }
     chunks.push(chunk as Buffer);
   }
   return Buffer.concat(chunks).toString('utf8');
@@ -392,7 +418,9 @@ async function readRequestBody(req: IncomingMessage): Promise<string> {
  * correctly parameterized, no injection risk, but no size limit either). */
 export const MAX_LEDGER_LIMIT = 500;
 
-function parseLimit(raw: string | null, fallback: number): number {
+/** Exported so tenancy/http-routes.ts's own `GET /api/ledger` handler
+ * applies the identical cap without re-implementing the parsing rule. */
+export function parseLimit(raw: string | null, fallback: number): number {
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
@@ -474,6 +502,10 @@ async function handleRequest(
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('not found');
   } catch (err) {
+    if (err instanceof RequestBodyTooLargeError) {
+      sendJson(res, 413, { error: err.message });
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[server] request handler error: ${message}`);
     if (!res.headersSent) {

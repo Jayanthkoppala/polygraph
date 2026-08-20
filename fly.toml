@@ -1,0 +1,51 @@
+# Polygraph hosted deploy config — tenant-architecture.md §6.
+#
+# THE CRITICAL CONSTRAINT: SQLite on a volume means EXACTLY ONE machine,
+# ALWAYS running. Two machines would each mount their own volume and diverge
+# into two different databases. A stopped machine means no dispatcher tick
+# and no monitoring — for a monitoring product, that is a total outage, not
+# a cost saving. Never raise max_machines_running above 1 and never set
+# auto_stop_machines to true.
+
+app = "polygraph"
+primary_region = "iad" # pick the region nearest Bright Data's API for latency
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  POLYGRAPH_DB = "/data/polygraph.sqlite"
+  POLYGRAPH_PUBLIC_ORIGIN = "https://polygraph.fly.dev"
+  POLYGRAPH_CONCURRENCY = "4"
+  # POLYGRAPH_HEAL_ENABLED is deliberately ABSENT (R6 — hosted heal is
+  # structurally off; see src/tenancy/serve.ts's own docstring and
+  # test/tenancy.serve.test.ts's explicit assertion). Do not add it here.
+  #
+  # POLYGRAPH_MASTER_KEY (and, only during a rotation,
+  # POLYGRAPH_MASTER_KEY_PREVIOUS) are set via `fly secrets set`, never here —
+  # this file is not a secret store.
+
+[mounts]
+  source = "polygraph_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false   # a stopped machine means no dispatcher tick. Never true.
+  auto_start_machines = true
+  min_machines_running = 1
+  max_machines_running = 1     # SQLite + volume = EXACTLY ONE. Never raise this.
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "10s"
+  method = "GET"
+  path = "/healthz"

@@ -53,6 +53,43 @@ describe('Ledger', () => {
     ledger.close();
   });
 
+  it('latestNonAckedPerCollector returns the latest run, not a subsequent ACK marker', () => {
+    const { dir, path } = tempDbPath();
+    dirs.push(dir);
+    const ledger = new Ledger(path);
+
+    const run = ledger.append(baseEvent({ collector: 'c1', run_id: 'run-1', verdict: 'SUSPECT_UNEXPLAINED_ANOMALY', action: 'QUARANTINE' }));
+    ledger.append({ ...baseEvent({ collector: 'c1' }), verdict: run.verdict, cause: run.cause, evidence: run.evidence, action: 'ACKED', run_id: run.run_id });
+    ledger.append(baseEvent({ collector: 'c2', run_id: 'run-2', action: 'RELEASE' }));
+
+    const latestRuns = ledger.latestNonAckedPerCollector();
+    const byCollector = Object.fromEntries(latestRuns.map((r) => [r.collector, r]));
+    expect(byCollector.c1.action).toBe('QUARANTINE');
+    expect(byCollector.c1.verdict).toBe('SUSPECT_UNEXPLAINED_ANOMALY');
+    expect(byCollector.c2.action).toBe('RELEASE');
+
+    const latestOverall = ledger.latestPerCollector();
+    const overallByCollector = Object.fromEntries(latestOverall.map((r) => [r.collector, r]));
+    expect(overallByCollector.c1.action).toBe('ACKED');
+
+    ledger.close();
+  });
+
+  it('runCountsByCollector excludes ACKED marker rows', () => {
+    const { dir, path } = tempDbPath();
+    dirs.push(dir);
+    const ledger = new Ledger(path);
+
+    const run = ledger.append(baseEvent({ collector: 'c1', run_id: 'run-1' }));
+    ledger.append(baseEvent({ collector: 'c1', run_id: 'run-2' }));
+    ledger.append({ ...baseEvent({ collector: 'c1' }), verdict: run.verdict, cause: run.cause, evidence: run.evidence, action: 'ACKED', run_id: run.run_id });
+    ledger.append(baseEvent({ collector: 'c2', run_id: 'run-3' }));
+
+    expect(ledger.runCountsByCollector()).toEqual({ c1: 2, c2: 1 });
+
+    ledger.close();
+  });
+
   it('chains the genesis event off 64 zeros', () => {
     const { dir, path } = tempDbPath();
     dirs.push(dir);

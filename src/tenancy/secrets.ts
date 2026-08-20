@@ -197,3 +197,18 @@ export class ScopedSecrets {
     this.db.prepare(`DELETE FROM tenant_secrets WHERE tenant_id = ?`).run(this.tenantId);
   }
 }
+
+/**
+ * The sanctioned one-step shortcut for a call site that needs the plaintext
+ * immediately (constructing a BrightDataClient — the ONLY thing a plaintext
+ * key is ever for) instead of writing its own two-line unwrap. Keeps every
+ * consumer (Task 4's scheduler + HTTP routes + `admin rekey`) at a single
+ * call site each rather than duplicating the SecretString unwrap, which is
+ * also what keeps `grep -rn` for the underlying accessor a genuinely small,
+ * auditable number regardless of how many hosted call sites need a
+ * plaintext key. Returns undefined exactly when the underlying accessor
+ * would (no key saved, or undecryptable under either master key).
+ */
+export function revealPlaintext(secrets: ScopedSecrets): string | undefined {
+  return secrets.reveal()?.reveal();
+}

@@ -3,6 +3,15 @@ import { Ledger, GENESIS_HASH, type LedgerEventInput, type LedgerEventRow, type 
 import { Governor, type GovernorGate, type GovernorSnapshot } from '../policy.js';
 import type { Policy } from '../config.js';
 import { LOCAL_TENANT_ID, tenantGenesis } from './genesis.js';
+// Type-only: secrets.ts itself imports `assertOwned` from THIS module, so a
+// runtime import here would be circular. `TenantScope.secrets` only ever
+// needs the TYPE at this file's own scope — the actual `ScopedSecrets`
+// instance is constructed by the caller (serve.ts's bootstrap) and assigned
+// in, never built inside this class (mirrors Task 2's own documented
+// ruling: "wiring `scope.secrets = new ScopedSecrets(...)` is a one-line
+// addition for whichever task next touches TenantScope's construction
+// site, once a master key is available at that call site").
+import type { ScopedSecrets } from './secrets.js';
 
 /**
  * Tenant isolation, per tenant-architecture.md §3: five layers, a bug has to
@@ -247,6 +256,16 @@ export class TenantScope {
   readonly ledger: ScopedLedger;
   readonly governor: ScopedGovernor;
   readonly collectors: ScopedCollectors;
+  /** Absent until the caller wires it in — `TenantScope`'s own constructor
+   * has no master key to build one with (Task 1's construction sites never
+   * had one available). Task 4's serve bootstrap is the one call site that
+   * does: `const scope = scopeFor(writer, tenantId, genesisHash); scope.secrets
+   * = new ScopedSecrets(writer, tenantId, masterKey, previousMasterKey);`.
+   * Public and mutable (not `readonly`) specifically so that one-liner
+   * type-checks without a constructor change that would break every
+   * existing `new TenantScope(db, tenantId)` / `scopeFor(db, tenantId)`
+   * call site across Tasks 1-3. */
+  secrets?: ScopedSecrets;
 
   constructor(private readonly db: Database.Database, tenantId: string, genesisHash?: string) {
     this.tenantId = tenantId;
@@ -295,8 +314,15 @@ export function scopeFor(db: Database.Database, tenantId: string, genesisHash?: 
  * methods (Task 3) — a showcase route reading collectors read-only must not
  * gain the ability to onboard/confirm collectors on the public tenant. (See
  * test/tenancy.scope.test.ts's ReadOnlyTenantScope typecheck proof.)
+ *
+ * `secrets` is omitted ENTIRELY (not narrowed) — Task 4's `ScopedSecrets`
+ * has no read-only-safe subset worth exposing here (`status()` is harmless,
+ * but `reveal()`/`save()`/`wipe()` on the PUBLIC showcase tenant's own
+ * credential is not something any read-only route should even be able to
+ * reference, let alone call). A showcase handler that tries `scope.secrets`
+ * is a compile error, not a runtime check someone has to remember to add.
  */
-export type ReadOnlyTenantScope = Omit<TenantScope, 'governor' | 'ledger' | 'collectors'> & {
+export type ReadOnlyTenantScope = Omit<TenantScope, 'governor' | 'ledger' | 'collectors' | 'secrets'> & {
   ledger: Omit<ScopedLedger, 'append'>;
   collectors: Omit<ScopedCollectors, 'createDraft' | 'confirmSetup'>;
 };

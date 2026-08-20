@@ -503,4 +503,136 @@ ledger
     }
   });
 
+// ---------------------------------------------------------------------------
+// Hosted commands — tenant-architecture.md §7 rule 3: `serve` is the ONLY
+// command that touches src/tenancy/, via a DYNAMIC import. This is what
+// keeps every other command (`run`/`watch`/`demo`/`ack`/`ledger verify`)
+// fully unchanged and offline-safe: POLYGRAPH_MASTER_KEY is required by
+// src/tenancy/crypto.ts, so a static import here would make every CLI
+// invocation — including `polygraph demo` — require a master key it has no
+// reason to need. See test/cli.clean-env.smoke.test.ts.
+
+program
+  .command('serve')
+  .description('Run the hosted multi-tenant server (requires POLYGRAPH_MASTER_KEY)')
+  .option('-p, --port <port>', 'HTTP port (default 8080, or PORT env)')
+  .option('--host <address>', 'bind address (default 0.0.0.0)')
+  .action(async (opts: { port?: string; host?: string }) => {
+    try {
+      const { startServer, MasterKeyMismatchError } = await import('./tenancy/serve.js');
+      const running = await startServer({
+        port: opts.port ? Number.parseInt(opts.port, 10) : undefined,
+        host: opts.host,
+      });
+      process.stdout.write(`polygraph serve: listening on http://${running.host}:${running.port}\n`);
+
+      const shutdown = () => {
+        process.stdout.write('\npolygraph serve: shutting down\n');
+        void running.stop().then(() => process.exit(0));
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+
+      // Re-exported purely so `MasterKeyMismatchError` stays reachable for
+      // anyone importing this module's action in a test — the catch block
+      // below is what actually handles it at runtime.
+      void MasterKeyMismatchError;
+    } catch (err) {
+      process.stderr.write(`${(err as Error).message}\n`);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('migrate')
+  .description('Run the hosted database migration against a local database — safe to run repeatedly')
+  .action(async () => {
+    try {
+      const { openWriter } = await import('./tenancy/db.js');
+      const { migrate: runMigrate } = await import('./tenancy/migrate.js');
+      const dbPath = resolveDbPath();
+      const db = openWriter(dbPath);
+      runMigrate(db, dbPath);
+      db.close();
+      process.stdout.write(`polygraph migrate: ${dbPath} is up to date\n`);
+    } catch (err) {
+      process.stderr.write(`polygraph migrate: ${(err as Error).message}\n`);
+      process.exitCode = 1;
+    }
+  });
+
+const admin = program.command('admin').description('Hosted administration commands');
+
+admin
+  .command('rekey')
+  .description(
+    'Re-encrypt every tenant Bright Data key from POLYGRAPH_MASTER_KEY_PREVIOUS to POLYGRAPH_MASTER_KEY (master-key rotation, tenant-architecture.md §2)'
+  )
+  .action(async () => {
+    try {
+      const { openWriter } = await import('./tenancy/db.js');
+      const { migrate: runMigrate } = await import('./tenancy/migrate.js');
+      const { loadMasterKey, loadPreviousMasterKey } = await import('./tenancy/crypto.js');
+      const { rekeyTenantSecrets } = await import('./tenancy/admin.js');
+
+      const dbPath = resolveDbPath();
+      const db = openWriter(dbPath);
+      runMigrate(db, dbPath);
+
+      const masterKey = loadMasterKey();
+      const previousMasterKey = loadPreviousMasterKey();
+      if (!previousMasterKey) {
+        process.stderr.write(
+          'polygraph admin rekey: POLYGRAPH_MASTER_KEY_PREVIOUS is not set — nothing to rotate from\n'
+        );
+        process.exitCode = 1;
+        db.close();
+        return;
+      }
+
+      const { rotated, unreadable } = rekeyTenantSecrets(db, masterKey, previousMasterKey);
+      db.close();
+      process.stdout.write(
+        `polygraph admin rekey: rotated ${rotated} tenant secret(s)` +
+          (unreadable > 0 ? `, ${unreadable} unreadable under either key (marked 'unreadable')\n` : '\n')
+      );
+      if (unreadable > 0) process.exitCode = 1;
+    } catch (err) {
+      process.stderr.write(`polygraph admin rekey: ${(err as Error).message}\n`);
+      process.exitCode = 1;
+    }
+  });
+
+admin
+  .command('set-public <tenant-id> <on-or-off>')
+  .description('Mark (or unmark) a tenant as the public read-only showcase (tenant-architecture.md §1)')
+  .action(async (tenantId: string, onOrOff: string) => {
+    try {
+      if (onOrOff !== 'on' && onOrOff !== 'off') {
+        process.stderr.write('polygraph admin set-public: second argument must be "on" or "off"\n');
+        process.exitCode = 1;
+        return;
+      }
+      const { openWriter } = await import('./tenancy/db.js');
+      const { migrate: runMigrate } = await import('./tenancy/migrate.js');
+      const { setTenantPublic } = await import('./tenancy/admin.js');
+      const dbPath = resolveDbPath();
+      const db = openWriter(dbPath);
+      runMigrate(db, dbPath);
+
+      const { changed } = setTenantPublic(db, tenantId, onOrOff === 'on');
+      db.close();
+
+      if (!changed) {
+        process.stderr.write(`polygraph admin set-public: no tenant with id "${tenantId}"\n`);
+        process.exitCode = 1;
+        return;
+      }
+      process.stdout.write(`polygraph admin set-public: ${tenantId} is now ${onOrOff === 'on' ? 'the public showcase' : 'private'}\n`);
+    } catch (err) {
+      process.stderr.write(`polygraph admin set-public: ${(err as Error).message}\n`);
+      process.exitCode = 1;
+    }
+  });
+
 program.parse(process.argv);

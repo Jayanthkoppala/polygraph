@@ -341,6 +341,44 @@ export class Ledger {
     return rows.map(deserializeRow);
   }
 
+  /** Latest NON-ACKED event per collector, for this tenant — the second half
+   * of `buildFleetState`'s O(collector count) hot-path fix (server.ts):
+   * `latestPerCollector()` alone can't tell "the newest row IS the ACK
+   * marker" apart from "the newest row is a fresh run", and the dashboard
+   * needs the underlying run's own `action` (e.g. QUARANTINE) even when the
+   * very latest row for that collector is its ACKED copy. Same index as
+   * `latestPerCollector()` (idx_events_tenant_coll_id), with an
+   * `action != 'ACKED'` predicate folded into the per-collector MAX(id)
+   * subquery rather than filtered in application code. */
+  latestNonAckedPerCollector(): LedgerEventRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT e.* FROM events e
+           JOIN (
+             SELECT collector, MAX(id) AS max_id
+               FROM events
+              WHERE tenant_id = ? AND action != 'ACKED'
+              GROUP BY collector
+           ) latest ON latest.max_id = e.id
+          WHERE e.tenant_id = ?`
+      )
+      .all(this.tenantId, this.tenantId) as RawRow[];
+    return rows.map(deserializeRow);
+  }
+
+  /** Per-collector count of non-ACKED events (real verification runs) for
+   * this tenant — the cheap `GROUP BY` replacement for `buildFleetState`'s
+   * `learning: n/7` run count, which previously required the full
+   * per-collector event list from `all()`. Collectors with zero runs are
+   * simply absent from the returned map (never a `0` entry needing a
+   * separate existence check). */
+  runCountsByCollector(): Record<string, number> {
+    const rows = this.db
+      .prepare(`SELECT collector, COUNT(*) AS runs FROM events WHERE tenant_id = ? AND action != 'ACKED' GROUP BY collector`)
+      .all(this.tenantId) as Array<{ collector: string; runs: number }>;
+    return Object.fromEntries(rows.map((r) => [r.collector, r.runs]));
+  }
+
   /**
    * Walks this tenant's chain from its genesis, verifying each event_hash
    * and prev_hash link, stopping at the first row where either check fails.
@@ -357,8 +395,15 @@ export class Ledger {
     let prevHash = this.genesisHash;
     let checked = 0;
 
-    const rows = this.db.prepare('SELECT * FROM events WHERE tenant_id = ? ORDER BY id ASC').all(this.tenantId) as RawRow[];
-    for (const raw of rows) {
+    // `.iterate()` rather than `.all()` (tenant-architecture.md §5): a chain
+    // walk never needs more than one row in memory at a time, so this stays
+    // O(1) memory regardless of chain length instead of materializing the
+    // whole table up front. Same query, same row order, same result shape —
+    // this is a memory-bound change, not a behavior change. Callers must
+    // never run this on a request thread (see server.ts/tenancy/scheduler.ts
+    // for the scheduled/on-demand job that does).
+    const stmt = this.db.prepare('SELECT * FROM events WHERE tenant_id = ? ORDER BY id ASC');
+    for (const raw of stmt.iterate(this.tenantId) as IterableIterator<RawRow>) {
       checked++;
       const row = deserializeRow(raw);
       const { id, prev_hash, event_hash, tenant_id, ...payload } = row;
