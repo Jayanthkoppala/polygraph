@@ -86,6 +86,42 @@ export function ThreeFailures() {
           ))}
         </div>
       </BlurFade>
+
+      {/* S2's closing block: the heal-promotion finding, assigned by the
+          team lead ("the strongest instance of exactly what S2 is about: a
+          failure that reports success"). Every claim is grounded in
+          docs/FINDING-heal-promotion.md and ships with its hedges — an
+          observed, dated, reproducible result, never a general claim about
+          Bright Data's product. It sits on the warm-archive surface
+          (--color-archive) because it is a record, not live state
+          (ui-system §1.2). */}
+      <BlurFade>
+        <div className="mx-auto mt-8 max-w-4xl rounded-2xl border border-[#272727] bg-[var(--color-archive)] p-4">
+          <div className="flex flex-wrap items-baseline gap-3">
+            <h3 className="text-base font-semibold text-[#EDEDED]">We caught a repair lying, too.</h3>
+            <span className="font-mono text-xs text-[#9B9B9B]">observed 2026-08-20, on a real collector</span>
+          </div>
+          <p className="mt-2 text-pretty text-sm text-[#B4B4B4]">
+            We ran <span className="font-mono text-[#EDEDED]">bdata scraper heal --auto-approve</span> against
+            the vendor&rsquo;s self-healing API, live. The job reported{' '}
+            <span className="font-mono text-[#EDEDED]">status: &quot;done&quot;</span> in about 105 seconds, with
+            the approval step completed. The change landed in a draft; the production{' '}
+            <span className="font-mono text-[#EDEDED]">output_schema</span> was unchanged. No endpoint in the
+            documented <span className="font-mono text-[#EDEDED]">/dca/*</span> surface promotes a draft to
+            production — so an unattended self-healing loop cannot complete on that platform today.
+          </p>
+          <p className="mt-2 text-pretty text-sm text-[#B4B4B4]">
+            Polygraph&rsquo;s answer is built in: it snapshots the schema before and after a repair, and refuses
+            to report recovery when they are identical — even when the re-grade reads PASS.
+          </p>
+          <a
+            href="https://github.com/jayanth137/polygraph/blob/main/docs/FINDING-heal-promotion.md"
+            className="mt-3 inline-block font-mono text-sm text-[#9B9B9B] underline underline-offset-2 hover:text-[#EDEDED]"
+          >
+            Read the finding →
+          </a>
+        </div>
+      </BlurFade>
     </section>
   );
 }
