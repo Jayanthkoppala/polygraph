@@ -75,4 +75,52 @@ describe('checkContract', () => {
     expect(evidence.metrics?.requiredViolationRate).toBe(0);
     expect(evidence.metrics?.errorRowRate).toBe(0);
   });
+
+  describe('default_value edge cases (structural equality, not truthiness)', () => {
+    it('treats a value equal to default_value: false as UNFILLED, and true as FILLED', () => {
+      const schema = { fields: { active: { type: 'boolean', default_value: false } } };
+      const run = { collector: 'x', run_id: 'r1', rows: [{ active: false }, { active: true }] };
+
+      const evidence = checkContract(run, schema);
+      expect(evidence.metrics?.fillRates).toEqual({ active: 0.5 });
+    });
+
+    it('treats a value equal to default_value: null as UNFILLED, and a real value as FILLED', () => {
+      const schema = { fields: { note: { type: 'string', default_value: null } } };
+      const run = { collector: 'x', run_id: 'r1', rows: [{ note: null }, { note: 'hello' }] };
+
+      const evidence = checkContract(run, schema);
+      expect(evidence.metrics?.fillRates).toEqual({ note: 0.5 });
+    });
+
+    it('treats a value equal to default_value: [] as UNFILLED (deep-equal, not reference-equal), and a non-empty array as FILLED', () => {
+      const schema = { fields: { tags: { type: 'array', default_value: [] } } };
+      const run = { collector: 'x', run_id: 'r1', rows: [{ tags: [] }, { tags: ['sale'] }] };
+
+      const evidence = checkContract(run, schema);
+      expect(evidence.metrics?.fillRates).toEqual({ tags: 0.5 });
+    });
+
+    it('counts a literal null as FILLED when the field has no declared default_value', () => {
+      const schema = { fields: { note: { type: 'string' } } };
+      const run = { collector: 'x', run_id: 'r1', rows: [{ note: null }, { note: 'hello' }] };
+
+      const evidence = checkContract(run, schema);
+      // Locks in the documented design: absence of a declared default_value
+      // means only key-absence (undefined) can make a field UNFILLED — an
+      // explicit null with no matching default is a real value, not a
+      // fallback, so it counts as filled.
+      expect(evidence.metrics?.fillRates).toEqual({ note: 1 });
+    });
+
+    it('does not treat false as equal to default_value: 0 (type-guarded, no loose/coercive equality)', () => {
+      const schema = { fields: { count: { type: 'number', default_value: 0 } } };
+      const run = { collector: 'x', run_id: 'r1', rows: [{ count: false }] };
+
+      const evidence = checkContract(run, schema);
+      // false == 0 loosely, but they are not structurally equal — this
+      // field's value doesn't match its declared default, so it's FILLED.
+      expect(evidence.metrics?.fillRates).toEqual({ count: 1 });
+    });
+  });
 });

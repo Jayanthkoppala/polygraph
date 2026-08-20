@@ -23,14 +23,45 @@ describe('checkCoherence', () => {
     expect(evidence.ok).toBe(false);
   });
 
-  it('does not flag a field whose fill rate is low but not below the relative AND absolute thresholds', () => {
-    // Every field sits at 0.6 — well below no median (all equal), and above
-    // the 0.5 absolute floor, so nothing should collapse.
-    const fillRates = { a: 0.6, b: 0.6, c: 0.6 };
+  it('does not flag when every field is uniformly low (median drops with it, relative test cannot fire)', () => {
+    // Every field sits at 0.3 — below the 0.5 absolute floor on its own, but
+    // the median of "every other field" is also 0.3, so 0.5 * median = 0.15
+    // and no field's rate (0.3) is below that. Proves BOTH conditions must
+    // hold: a systemic, uniformly-low run is not the "one field collapsed"
+    // shape this check targets, even though every field fails the absolute
+    // test in isolation.
+    const fillRates = { a: 0.3, b: 0.3, c: 0.3 };
     const run = { collector: 'x', run_id: 'r1', rows: [{}] };
     const evidence = checkCoherence(run, fillRates);
 
     expect(evidence.metrics?.collapsedFields).toEqual([]);
+  });
+
+  it('cannot flag a single-field schema (no other fields to compare against)', () => {
+    const fillRates = { a: 0.05 };
+    const run = { collector: 'x', run_id: 'r1', rows: [{}] };
+    const evidence = checkCoherence(run, fillRates);
+
+    expect(evidence.metrics?.collapsedFields).toEqual([]);
+    expect(evidence.ok).toBe(true);
+  });
+
+  it('two-field schema: median degenerates to the single other field\'s own rate', () => {
+    const run = { collector: 'x', run_id: 'r1', rows: [{}] };
+
+    // b sits at 0.2 in both cases; only a (b's sole comparison partner)
+    // changes, which flips whether b crosses the relative threshold —
+    // locking in that "median of the others" with one other field IS that
+    // field's rate, not some separately-computed statistic.
+    const flagged = checkCoherence(run, { a: 1.0, b: 0.2 });
+    // median(others for b) = a = 1.0; 0.5*1.0=0.5; 0.2 < 0.5 and < 0.5 absolute -> flag b.
+    // median(others for a) = b = 0.2; 0.5*0.2=0.1; 1.0 is not < 0.1 -> a not flagged.
+    expect(flagged.metrics?.collapsedFields).toEqual(['b']);
+
+    const notFlagged = checkCoherence(run, { a: 0.2, b: 0.2 });
+    // median(others for b) = a = 0.2; 0.5*0.2=0.1; 0.2 is not < 0.1 -> b not flagged.
+    // Symmetric for a -> neither flagged.
+    expect(notFlagged.metrics?.collapsedFields).toEqual([]);
   });
 
   it('flags zero-rows when meta.lines > 0 but no rows came back (history-free — no baseline needed)', () => {
