@@ -100,7 +100,17 @@ function keyExtractorFromRegistry(entityKeyFn: EntityKeyFn, rows: Record<string,
   };
 }
 
-async function evaluateCollector(
+/**
+ * Exported (as of task 6) so `heal.ts` can re-run + re-grade a just-healed
+ * collector WITHOUT going through `decideWithGovernor` — a second governed
+ * decision on the same incident would let a re-grade that finds the
+ * collector still broken silently mint a second REPAIR and consume a
+ * second governor attempt for one real heal cycle. `heal.ts` calls this
+ * directly, then `policy.decide()` (ungoverned) on the result, instead of
+ * calling `runFleet`. See heal.ts's own module docstring and
+ * task-6-report.md's "Fix round 1" section for the incident this fixed.
+ */
+export async function evaluateCollector(
   collector: Collector,
   ctx: RunnerContext
 ): Promise<{ result: RunResult; evidence: Evidence[]; cause: Cause }> {

@@ -375,6 +375,15 @@ export class BrightDataClient {
   }
 
   /**
+   * ⚠️ PAID, LIVE-MUTATING ENDPOINT. Starts an AI Self-Healing job against
+   * the real collector on Bright Data's infrastructure — it costs money and
+   * changes the collector's template. Its ONLY gate in this codebase is
+   * `heal.ts`'s `healCollector` (via `assertHealEnabled` — both
+   * `policy.heal_enabled` AND env `POLYGRAPH_HEAL_ENABLED=1` required).
+   * Do NOT call this (or `resumeAutomationJob` / `pollRefactorTemplateProgress`
+   * below) directly from anywhere else — route every heal through
+   * `healCollector` so the flag gate is never bypassed.
+   *
    * POST /dca/collectors/{id}/refactor_template — starts a Self-Healing job:
    * a plain-language prompt describing what's broken and what to fix
    * (<=1000 chars — policy.ts's composeHealPrompt enforces the cap when it
@@ -403,6 +412,11 @@ export class BrightDataClient {
   }
 
   /**
+   * ⚠️ Polls a PAID, LIVE Self-Healing job. Only meant to be called as part
+   * of a heal already started via `refactorTemplate` — see that method's
+   * warning: route every heal through `heal.ts`'s `healCollector`, never
+   * call this directly.
+   *
    * Polls refactor_template/progress every `intervalMs` until the job
    * reaches a terminal success state, halts at the diff-approval gate (see
    * `isAwaitingApproval` — returned as-is so the caller can decide whether
@@ -434,7 +448,13 @@ export class BrightDataClient {
     }
   }
 
-  /** POST /dca/collectors/{id}/resume_automation_job — approves
+  /**
+   * ⚠️ PAID, LIVE-MUTATING ENDPOINT. Approving here commits the proposed
+   * diff to the real collector. Same rule as `refactorTemplate` above:
+   * this method's only sanctioned caller is `heal.ts`'s `healCollector` —
+   * never call it directly.
+   *
+   * POST /dca/collectors/{id}/resume_automation_job — approves
    * ({message: true}) or rejects ({message: false}) a Self-Healing job
    * paused at pending_answer. Returns 200 OK with no body per Bright
    * Data's docs — this resolves to void rather than parsing a response. */

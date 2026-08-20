@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import Database from 'better-sqlite3';
 import { healCollector, isHealEnabled, PolygraphHealDisabled } from '../src/heal.js';
 import { decideWithGovernor, Governor } from '../src/policy.js';
 import { Ledger } from '../src/ledger.js';
-import { BrightDataClient, BrightDataError } from '../src/brightdata.js';
+import { BrightDataClient, BrightDataError, BrightDataPollTimeoutError } from '../src/brightdata.js';
 import type { Collector, Policy } from '../src/config.js';
 import type { RunnerContext } from '../src/runner.js';
 import type { Evidence } from '../src/types.js';
@@ -386,6 +387,113 @@ describe('healCollector — 500 retry on refactor_template', () => {
     ).rejects.toBeInstanceOf(BrightDataError);
 
     expect(fetchImpl).toHaveBeenCalledTimes(2); // 1 initial + exactly 1 retry, never a 3rd
+    // Fix round 1, Finding A: a throw between RECOVERY_PENDING and the
+    // terminal event must never leave RECOVERY_PENDING as the last row.
+    const events = ctx.ledger.all();
+    expect(events.map((e) => e.verdict)).toEqual(['RECOVERY_PENDING', 'RECOVERY_FAILED']);
+    expect(events.at(-1)?.heal_job_id).toBeTruthy();
+  });
+});
+
+describe('healCollector — ledger completeness on failure (Fix round 1, Finding A)', () => {
+  const prevEnv = process.env.POLYGRAPH_HEAL_ENABLED;
+
+  beforeEach(() => {
+    process.env.POLYGRAPH_HEAL_ENABLED = '1';
+  });
+
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.POLYGRAPH_HEAL_ENABLED;
+    else process.env.POLYGRAPH_HEAL_ENABLED = prevEnv;
+  });
+
+  it('a poll timeout still appends a terminal RECOVERY_FAILED before rethrowing — RECOVERY_PENDING is never the last row', async () => {
+    let now = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_timeout', status: 'started' }))
+      .mockImplementation(async () => {
+        now += 6000;
+        return jsonResponse(200, { id: 'ai_job_timeout', status: 'building' });
+      });
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: instantSleep });
+    const ctx = newRunnerContext();
+    const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
+
+    try {
+      await expect(
+        healCollector('acme-catalog', prompt, {
+          client,
+          policy: HEAL_POLICY,
+          tenant: 'acme-corp',
+          collector,
+          runnerCtx: ctx,
+          poll: { intervalMs: 5000, deadlineMs: 10000 },
+        })
+      ).rejects.toBeInstanceOf(BrightDataPollTimeoutError);
+    } finally {
+      vi.restoreAllMocks();
+    }
+
+    const events = ctx.ledger.all();
+    expect(events.map((e) => e.verdict)).toEqual(['RECOVERY_PENDING', 'RECOVERY_FAILED']);
+  });
+
+  it('a resume_automation_job failure still appends a terminal RECOVERY_FAILED before rethrowing', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_resume_fail', status: 'started' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_resume_fail', status: 'pending_answer' }))
+      .mockResolvedValueOnce(jsonResponse(500, { error: 'internal' })); // resume_automation_job itself fails
+    const client = new BrightDataClient({
+      apiKey: 'k',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: instantSleep,
+      maxRetries: 0, // isolate: no generic client retry muddying the call count
+    });
+    const ctx = newRunnerContext();
+    const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
+
+    await expect(
+      healCollector('acme-catalog', prompt, {
+        client,
+        policy: HEAL_POLICY,
+        tenant: 'acme-corp',
+        collector,
+        runnerCtx: ctx,
+        autoApprove: true,
+      })
+    ).rejects.toBeInstanceOf(BrightDataError);
+
+    const events = ctx.ledger.all();
+    expect(events.map((e) => e.verdict)).toEqual(['RECOVERY_PENDING', 'RECOVERY_FAILED']);
+  });
+
+  it('the re-grade step itself throwing still appends a terminal RECOVERY_FAILED before rethrowing', async () => {
+    // Heal completes cleanly, but the re-run (local adapter) has no
+    // registered extractor for this collector -> evaluateCollector's own
+    // adapter.run throws synchronously, which must still be caught here.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_regrade_throw', status: 'started' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_regrade_throw', status: 'done' }));
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: instantSleep });
+    const ctx = newRunnerContext({ adapterContext: {} }); // deliberately no extractors registered
+    const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
+
+    await expect(
+      healCollector('acme-catalog', prompt, {
+        client,
+        policy: HEAL_POLICY,
+        tenant: 'acme-corp',
+        collector,
+        runnerCtx: ctx,
+      })
+    ).rejects.toThrow(/no extractor registered/);
+
+    const events = ctx.ledger.all();
+    expect(events.map((e) => e.verdict)).toEqual(['RECOVERY_PENDING', 'RECOVERY_FAILED']);
   });
 });
 
@@ -451,5 +559,62 @@ describe('healCollector — governor integration', () => {
     if (second.action.type === 'QUARANTINE') {
       expect(second.action.reason).toMatch(/governor/i);
     }
+  });
+});
+
+describe('healCollector — governor attempt accounting (Fix round 1, Finding B)', () => {
+  const prevEnv = process.env.POLYGRAPH_HEAL_ENABLED;
+
+  beforeEach(() => {
+    process.env.POLYGRAPH_HEAL_ENABLED = '1';
+  });
+
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.POLYGRAPH_HEAL_ENABLED;
+    else process.env.POLYGRAPH_HEAL_ENABLED = prevEnv;
+  });
+
+  it('records exactly ONE governor attempt for a full heal cycle, even when the re-grade still finds the collector broken', async () => {
+    // Read governor state directly off its own sqlite table, not inferred
+    // via canHeal's allow/deny — that would only prove "blocked or not",
+    // not the actual attempts count the bug doubled.
+    const db = new Database(':memory:');
+    const governor = new Governor(db);
+    const ctx = newRunnerContext({ governor });
+
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_double_count', status: 'started' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_double_count', status: 'done' }))
+      // re-run still broken: price never comes back -> re-grade cause is
+      // STRUCTURAL again, which is exactly the shape decideWithGovernor
+      // would mint a second REPAIR from if heal.ts still called it here.
+      .mockResolvedValueOnce(new Response('still broken', { status: 200, headers: { 'content-type': 'text/html' } }));
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: instantSleep });
+    ctx.adapterContext.fetchImpl = fetchImpl as unknown as typeof fetch;
+    ctx.adapterContext.extractors = { 'acme-catalog': () => ({ sku: 'SKU-1' }) }; // price still missing
+    ctx.schemas = {
+      'acme-catalog': { fields: { sku: { type: 'string', required: true }, price: { type: 'number', required: true, default_value: 0 } } },
+    };
+
+    const prompt = mintHealPrompt(governor, HEAL_POLICY, '2026-08-20T10:00:00Z');
+
+    const outcome = await healCollector('acme-catalog', prompt, {
+      client,
+      policy: HEAL_POLICY,
+      tenant: 'acme-corp',
+      collector,
+      runnerCtx: ctx,
+    });
+
+    expect(outcome.status).toBe('failed'); // re-grade is still STRUCTURAL/broken
+    expect(outcome.regrade?.cause).toBe('STRUCTURAL');
+
+    const row = db
+      .prepare('SELECT attempts FROM governor WHERE collector = ? AND day = ?')
+      .get('acme-catalog', '2026-08-20') as { attempts: number } | undefined;
+    expect(row?.attempts).toBe(1); // the ONE attempt decideWithGovernor recorded minting the original REPAIR — not 2
+
+    db.close();
   });
 });
