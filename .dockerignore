@@ -1,0 +1,35 @@
+# Keep the build context to SOURCE ONLY.
+#
+# The Dockerfile runs `npm ci` for BOTH trees (root and app/) inside a
+# linux/amd64 build stage, and better-sqlite3 + Vite's bundler ship native
+# binaries. A host-built node_modules/ is macOS/arm64, so letting it into the
+# context would have `COPY app ./app` overwrite the correctly-built Linux
+# modules with unusable ones — the image would build and then fail at runtime.
+node_modules
+app/node_modules
+web/node_modules
+
+# Build outputs are produced inside the image, never copied from the host.
+dist
+app/dist
+
+# A local dev database must never end up baked into the image: it would ship
+# one developer's tenants and encrypted secrets to every deploy, and then be
+# shadowed by the Fly volume mounted at /data anyway.
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+.git
+.github
+.superpowers
+docs
+reference
+test
+gates
+fixture
+*.tgz
+.env
+.env.*
+npm-debug.log*
+.DS_Store

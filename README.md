@@ -374,21 +374,76 @@ no scheduler tick, i.e. a total outage for a monitoring product, not a cost savi
 `test/deploy.config.test.ts` lints both files specifically so a future "helpful"
 cost/scale edit fails CI loudly instead of shipping either failure mode silently.
 
+### Two deployments, two different things
+
+This repo ships to two hosts, and they are not interchangeable. Which one you want
+depends on whether you are looking at Polygraph or actually using it.
+
+| | **Fly** | **Vercel** |
+|---|---|---|
+| What it is | The full product | The landing page and an in-browser sandbox |
+| Can you sign up? | Yes — you get your own tenant | No |
+| Can you connect your own Bright Data key? | Yes | **No.** There is no server to hold it and no key to encrypt it with |
+| Where the data goes | SQLite on a persistent volume, per tenant | Nowhere — the sandbox runs entirely in your tab against canned fixtures and keeps nothing |
+| Does it monitor anything? | Yes, a scheduler ticks every 60s | No |
+
+The split is forced, not a preference. `polygraph serve` needs a SQLite file that
+survives between requests and a master key to encrypt each tenant's Bright Data
+credential under. A static/serverless host gives you neither, so the Vercel build is
+honestly a brochure with a working toy attached — it demonstrates the verdict model
+against fixtures, and that is all it can do. **If a page is asking you for an API key,
+you are on the Fly URL; the Vercel one will never ask, because it would have nowhere to
+put the answer.**
+
+### Deploying to Fly
+
+`fly auth login` is interactive and cannot be scripted. Everything after it is:
+
 ```
-fly launch --no-deploy                      # first time only, creates the app + fly.toml is already written
-fly volumes create polygraph_data --size 1   # the SQLite mount
-fly secrets set POLYGRAPH_MASTER_KEY="$(openssl rand -base64 32)"
-fly deploy
+fly auth login                  # opens a browser — a human has to do this
+./scripts/deploy-fly.sh         # or: ./scripts/deploy-fly.sh <app-name>
 ```
+
+`scripts/deploy-fly.sh` creates the app, creates the `polygraph_data` volume, generates
+a 32-byte master key with `openssl rand -base64 32` and sets it as a Fly **secret**
+(never in `fly.toml`, never printed, never committed), deploys with `--remote-only`,
+asserts `POLYGRAPH_HEAL_ENABLED` is absent, and then runs `scripts/verify-fly.sh`
+against the live URL. Pass an app name if `polygraph` is taken — Fly app names are one
+global namespace. The script rewrites `fly.toml`'s `app` and `POLYGRAPH_PUBLIC_ORIGIN`
+together when you do, because that env var is what the CSRF gate compares the `Origin`
+header against: if it does not match the hostname the browser actually loaded, every
+mutating route starts rejecting real requests and the onboarding wizard breaks.
+
+`scripts/verify-fly.sh <url>` can be run on its own against any deploy. It signs up a
+throwaway fleet, follows the one-time token through `/t/:token`, and confirms the
+resulting session reads a tenant-scoped route — and that the same route without a
+cookie does not.
 
 To rotate the master key later: `fly secrets set POLYGRAPH_MASTER_KEY_PREVIOUS=<old>
 POLYGRAPH_MASTER_KEY=<new>`, then run `polygraph admin rekey` against the running
 machine (`fly ssh console -C "node dist/index.js admin rekey"`) before unsetting
 `POLYGRAPH_MASTER_KEY_PREVIOUS`.
 
-**Nothing above has actually been run against a real Fly (or any public) host by this
-repo's own commits.** Deploying is a deliberate call for whoever runs it, not something
-automated here — see Current limits for exactly what has and hasn't been verified.
+The public showcase is not seeded automatically — `/api/showcase/state` returns 404
+until an operator runs `polygraph admin set-public <tenant-id> on` against a real
+fleet, because inventing one would violate the rule the rest of this project is built
+on.
+
+### What is actually live
+
+**Neither URL is filled in below yet, and this section will say so until one is.**
+
+- **Fly (full product):** _not yet deployed._ The deploy is staged and blocked only on
+  `fly auth login`, which needs a human at a browser.
+- **Vercel (landing + sandbox):** _URL pending from the Vercel build._
+
+What *has* been verified first-hand: `fly.toml` still passes `test/deploy.config.test.ts`
+after every subsequent commit, and the exact server binary that the image runs
+(`node dist/index.js serve`) was booted locally and driven through the real path —
+`/healthz` 200, `/` 200 serving the built React app, `POST /api/signup` 200 returning a
+live token, `GET /t/:token` 302, `GET /api/state` 200 with that session and 401 without
+one. That is the product working; it is not a claim that it is working *on Fly*, which
+nobody can say until the login happens.
 
 ## Current limits
 
