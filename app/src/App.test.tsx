@@ -87,7 +87,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('heading', { name: /your scrapers return 200/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /your scraper says 200 OK/i })).toBeInTheDocument();
   });
 
   it('an unknown path redirects to the landing page, never a raw 404 shell', () => {
@@ -96,7 +96,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('heading', { name: /your scrapers return 200/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /your scraper says 200 OK/i })).toBeInTheDocument();
   });
 
   it('/app for an anonymous visitor bounces to the landing page, not a bare 401', async () => {
@@ -107,7 +107,7 @@ describe('AppRoutes', () => {
       </MemoryRouter>,
     );
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: /your scrapers return 200/i })).toBeInTheDocument(),
+      expect(screen.getByRole('heading', { name: /your scraper says 200 OK/i })).toBeInTheDocument(),
     );
   });
 
@@ -208,7 +208,7 @@ describe('AppRoutes', () => {
     await waitFor(() => expect(screen.getByTestId('session-unavailable')).toBeInTheDocument());
     // The landing page's hero must NOT be what a transient blip shows an
     // authenticated user mid-session.
-    expect(screen.queryByRole('heading', { name: /your scrapers return 200/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /your scraper says 200 OK/i })).not.toBeInTheDocument();
   });
 
   it('retrying from the unreachable screen recovers the real session without a reload', async () => {

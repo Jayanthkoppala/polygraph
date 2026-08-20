@@ -19,6 +19,8 @@
  * left card never remounts and never animates.
  */
 import { useEffect, useRef, useState } from 'react';
+import { useReducedMotion } from 'motion/react';
+import { BlurFade } from '@/components/ui/blur-fade';
 import { VerdictCard } from '@/components/fleet/VerdictCard';
 import type { CollectorState } from '@/lib/api';
 
@@ -98,14 +100,22 @@ export function ProofMoment() {
     return () => io.disconnect();
   }, []);
 
+  const reducedMotion = useReducedMotion();
+
   return (
     <section className="bg-[#000000] px-6 py-24">
+      {/* ui-system.md §4.2: "blur-fade staggers the two cards in at 0.15s
+          and 0.3s on first view" — the real MU `BlurFade` (inView, fires
+          once), with a static render under prefers-reduced-motion since the
+          stock component has no fallback of its own. The replay-on-reentry
+          logic below is separate and unchanged: BlurFade owns the cards'
+          first arrival, the bumped `key` owns the WRONG_TARGET replay. */}
       <div ref={sectionRef} className="mx-auto grid max-w-4xl grid-cols-1 gap-2 sm:grid-cols-2">
-        <div className="flex flex-col gap-2">
+        <Arrival reduced={reducedMotion} delay={0.15}>
           <HttpTag />
           <VerdictCard collector={WRONG_SHAPE_CARD} density="hero" onSelect={noop} onRepair={noop} onAcknowledge={noop} />
-        </div>
-        <div className="flex flex-col gap-2">
+        </Arrival>
+        <Arrival reduced={reducedMotion} delay={0.3}>
           <HttpTag />
           <VerdictCard
             key={replayKey}
@@ -116,12 +126,30 @@ export function ProofMoment() {
             onAcknowledge={noop}
             animateEntrance={replayKey > 0}
           />
-        </div>
+        </Arrival>
       </div>
       <p className="mx-auto mt-6 max-w-4xl text-center text-base text-[#9B9B9B]">
         Same status code. Same shaped JSON. Only one of these can be repaired.
       </p>
     </section>
+  );
+}
+
+function Arrival({
+  reduced,
+  delay,
+  children,
+}: {
+  reduced: boolean | null;
+  delay: number;
+  children: React.ReactNode;
+}) {
+  const className = 'flex flex-col gap-2';
+  if (reduced) return <div className={className}>{children}</div>;
+  return (
+    <BlurFade inView delay={delay} direction="up" offset={8} className={className}>
+      {children}
+    </BlurFade>
   );
 }
 

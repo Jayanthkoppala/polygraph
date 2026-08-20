@@ -40,6 +40,16 @@ export function LandingPage() {
 
       <TopNav />
 
+      {/* positioning.md §3 (controller-final, 2026-08-20): TaglineReveal,
+          Benefits, HowItWorks and FleetScale are deleted sections, all four
+          stubbed to `return null` (9c5d924's convention; TaglineReveal's
+          stub notes where its two artifacts were re-homed). They stay
+          MOUNTED here — rendering null — so the composition diff stays
+          reversible and the physical removal is the controller's call. The
+          surviving order (Hero → ProofMoment → ThreeFailures/S2 →
+          Receipt/S4 → FAQ/S6 → FinalCTA) is unchanged: the final order —
+          including whether ProofMoment keeps its place beside a
+          live-sandbox hero — is explicitly deferred to the controller. */}
       <main id="main">
         <Hero sandbox={sandbox} />
         <ProofMoment />

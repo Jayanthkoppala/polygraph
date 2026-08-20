@@ -23,7 +23,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { FinalCTA } from './sections/FinalCTA';
 import { Hero } from './sections/Hero';
 import { useSandboxEngine } from './sandbox/useSandboxEngine';
@@ -163,12 +163,15 @@ describe('Hero — the copy control acknowledges the click (§1.9: a click IS an
   }
 
   it('writes the real command to the clipboard and says so, then reverts', async () => {
+    // The control moved with the self-host band: hero → FinalCTA.tsx's S5
+    // `RunItYourself` (positioning.md S1: "the self-host footnote + copy
+    // command (moves to S5)"). Same invariant, surviving control.
     vi.useFakeTimers();
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
 
-    render(<HeroHarness />);
-    const button = screen.getByTestId('hero-copy-command');
+    render(<FinalCTA />);
+    const button = screen.getByTestId('selfhost-copy-command');
 
     expect(button).toHaveAttribute('data-copied', 'false');
     expect(button).toHaveTextContent('copy');
@@ -180,21 +183,41 @@ describe('Hero — the copy control acknowledges the click (§1.9: a click IS an
     expect(button).toHaveTextContent('copied');
 
     // It reverts on its own — a control stuck in "copied" is as uninformative
-    // as one that never acknowledged at all.
-    await vi.advanceTimersByTimeAsync(2000);
+    // as one that never acknowledged at all. (act(): the revert is a state
+    // update fired from inside a faked timer callback, not an event.)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
     expect(button).toHaveAttribute('data-copied', 'false');
     expect(button).toHaveTextContent('copy');
   });
 
-  it('holds the headline at the size and column width the two-line break was measured against', () => {
+  it("the hero's secondary CTA anchors to the S5 band that actually exists", () => {
+    // `#run-it-yourself` is rendered by FinalCTA's RunItYourself section —
+    // built there specifically as this link's target. If either half is
+    // renamed alone, the hero's only self-host affordance silently 404s
+    // into a no-op scroll.
+    render(<HeroHarness />);
+    const link = screen.getByRole('link', { name: /run it yourself, offline/i });
+    expect(link).toHaveAttribute('href', '#run-it-yourself');
+    cleanup();
+    render(<FinalCTA />);
+    expect(document.getElementById('run-it-yourself')).not.toBeNull();
+  });
+
+  it('holds the headline at the size and column the measured break was verified against', () => {
     const hero = readFileSync(path.join(SECTIONS_DIR, 'Hero.tsx'), 'utf8');
-    // Measured in a real browser at 1512x805 with the shipped Geist build:
-    // line two needs 1023px at text-5xl and 1278px at text-6xl. `max-w-6xl`
-    // is 1152px. Change either half of this pair and the spec's deliberate
-    // two-line break silently becomes a five-line pyramid again — re-measure
-    // rather than re-guess.
-    expect(hero).toMatch(/md:text-5xl/);
-    expect(hero).toMatch(/max-w-6xl/);
-    expect(hero).not.toMatch(/md:text-6xl/);
+    // Re-measured 2026-08-20 for the two-column S1 hero (positioning.md §3,
+    // controller-final) in a real browser at 1512x800 with the shipped
+    // Geist 700: "Your scraper says 200 OK." needs 464px at text-4xl and
+    // 515px at text-5xl's neighbor 40px; the left grid column
+    // (max-w-7xl, 2fr/3fr, gap-8) is ~499px. So text-4xl is the largest
+    // type-scale step where headline line one holds unbroken; one step up
+    // breaks it. Change any half of this triple (heading size, grid cap,
+    // column split) and RE-MEASURE in a browser — do not re-guess.
+    expect(hero).toMatch(/md:text-4xl/);
+    expect(hero).toMatch(/max-w-7xl/);
+    expect(hero).toMatch(/md:grid-cols-\[2fr_3fr\]/);
+    expect(hero).not.toMatch(/md:text-5xl|md:text-6xl/);
   });
 });
