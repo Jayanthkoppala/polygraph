@@ -174,6 +174,85 @@ run from a checkout of this repo (or `npm run build && node dist/index.js <comma
 if you'd rather type the short form literally, run `npm link` once from the repo
 checkout first (see [`docs/demo.md`](docs/demo.md) for the full explanation).
 
+## Hosted (multi-tenant)
+
+Everything above this section is the CLI tool, unchanged: `polygraph demo` still runs
+entirely offline, with no account, no API key, and no `POLYGRAPH_MASTER_KEY` — verified
+by running it in a clean environment while writing this section (`env -i` with the
+master key unset). Nothing in this section is required to use the CLI.
+
+The hosted product is the same verification engine (`runner.ts`, `checks/*.ts`,
+`policy.ts`, `ledger.ts`, all completely unchanged) wrapped in a signup-token-per-tenant
+web app, so more than one fleet can run against one server with a hard isolation
+boundary between them — no shared filesystem paths, no shared Bright Data credential,
+no cross-tenant SQL query anywhere in the codebase (`test/tenancy.no-raw-sql.test.ts`
+enforces the last one). Full design: `docs/design/tenant-architecture.md`.
+
+**The flow, end to end:**
+
+1. `POST /api/signup` with a fleet name → a one-time capability token, shown exactly
+   once.
+2. `GET /t/:token` exchanges it for a session cookie and redirects into `/app` — the
+   token itself never appears again after this one request (never logged, never in a
+   Referer header, never reusable).
+3. Paste a Bright Data API key (`POST /api/settings/key`). It's verified live against
+   `GET /dca/collectors_list` at save time: a 401 refuses to store it; a 403 or any
+   network failure — Bright Data's collectors-list endpoint being gated for a given
+   account is a real, observed state, not hypothetical — stores it anyway, honestly
+   marked `unverified` rather than silently reported as confirmed.
+4. Onboard a collector through infer → probe → confirm (`POST
+   /api/collectors/:id/{infer,probe,confirm}`) — the same schema-derivation flow the
+   onboarding wizard UI drives, with explicit consent required before the probe step
+   ever touches the network.
+5. The scheduler (`src/tenancy/scheduler.ts`) picks confirmed, enabled collectors up on
+   a 60-second dispatch tick, one collector per tenant per tick (a slow or misbehaving
+   tenant can never starve every other tenant's runs), with exponential backoff and
+   auto-disable at 10 consecutive failures.
+6. Every run's verdict lands in that tenant's own hash-chained ledger and shows up on
+   `/app`'s live dashboard (`GET /api/state`, `/api/ledger`, `POST /api/ack`). `Verify
+   chain` (`POST /api/ledger/verify`) walks the tenant's whole chain from genesis on
+   demand — the dashboard's own polling never runs that walk itself; it only ever
+   displays the last cached result, so a large ledger can't stall anyone else's request.
+
+**Hosted-only CLI commands** (all require `POLYGRAPH_MASTER_KEY`; none of them are
+touched by `run`/`watch`/`demo`, which never load anything under `src/tenancy/` — see
+`test/cli.clean-env.smoke.test.ts`'s `NODE_DEBUG=module` assertion):
+
+```
+polygraph serve [--port <port>] [--host <address>]   # the hosted server itself
+polygraph migrate                                     # run the hosted schema migration standalone
+polygraph admin rekey                                  # re-encrypt every tenant's key onto a new master key
+polygraph admin set-public <tenant-id> on|off           # mark/unmark the public read-only showcase tenant
+```
+
+**Environment variables `polygraph serve` reads:**
+
+| Variable | Required | Notes |
+|---|---|---|
+| `POLYGRAPH_MASTER_KEY` | Yes | 32 bytes, base64-encoded. Encrypts every tenant's Bright Data API key at rest (AES-256-GCM). **If it's lost, every stored credential is unrecoverable by design** — there is no backdoor, no recovery flow, nothing to page anyone about. Each tenant just has to paste their key in again. Generate one with `openssl rand -base64 32`. |
+| `POLYGRAPH_MASTER_KEY_PREVIOUS` | Only mid-rotation | Lets decryption fall back to the old key while `polygraph admin rekey` re-encrypts everything onto the new one. |
+| `POLYGRAPH_DB` | No (default `./polygraph.sqlite`) | SQLite file path. |
+| `PORT` | No (default `8080`) | HTTP port. |
+| `POLYGRAPH_PUBLIC_ORIGIN` | No (default `http://localhost:<port>`) | Compared against the `Origin` header on every mutating request (CSRF defense-in-depth on top of the session cookie's `SameSite=Lax`). Set this to your real public origin in production — a mismatch here fails every write with a 403. |
+| `POLYGRAPH_HEAL_ENABLED` | Never set it | Deliberately absent from everything `serve` touches. Hosted heal is structurally off, not just defaulted off — see Current limits. |
+
+At boot, `serve` runs the migration, then asserts a master-key canary against the
+database and **refuses to start** if `POLYGRAPH_MASTER_KEY` doesn't match the key the
+database was last encrypted with (`src/tenancy/crypto.ts`'s `assertMasterKeyCanary`) —
+loud and immediate, not a silent pile of undecryptable rows discovered later.
+
+**Running the web app locally:**
+
+```
+cd app && npm install
+npm run dev      # Vite dev server against a separately-running `polygraph serve`
+# or, for a single process serving both API and built app:
+npm run build && cd .. && node dist/index.js serve
+```
+
+**Deploying:** see the Deploy section below. Nothing described there has actually been
+deployed by this repo's own commits — see Current limits.
+
 ## Judges' checklist
 
 **Create-and-run flow, with a Collector ID as proof.** Our Bright Data account's AI
@@ -204,8 +283,40 @@ gated and debounced), and `polygraph watch`'s per-collector cron schedule (curre
 fixed daily time; see Current limits).
 
 **Reproducible setup.** `npm install && npx tsx src/index.ts demo` is the entire setup —
-no account, no API key, no external service. `npm test` (342 passing, 1 skipped live
-integration test) and `npm run typecheck` both run clean from a fresh checkout.
+no account, no API key, no external service. Two separate npm/vitest projects exist now
+(the root CLI/backend and `app/`, the hosted web frontend) — `npm run test:all` runs
+both correctly (`npx vitest run` for the root, `npm --prefix app run test` for `app/`)
+and fails if either does. `npm run typecheck` covers the root only; `cd app && npm run
+typecheck` covers the frontend. See `PROGRESS.md`'s live metrics block for current pass
+counts (refreshed by `npm run progress`, not hand-maintained).
+
+## Deploy (hosted)
+
+`Dockerfile` and `fly.toml` (both `docs/design/tenant-architecture.md` §6) build a single
+image containing the backend (`dist/`) and the built React app (`app/dist/`), served by
+one `polygraph serve` process. **The critical constraint: SQLite on a mounted volume
+means exactly one machine, always running** — `fly.toml` deliberately pins
+`max_machines_running = 1` and `auto_stop_machines = false` (two machines would each
+mount their own volume and diverge into two different databases; a stopped machine means
+no scheduler tick, i.e. a total outage for a monitoring product, not a cost saving).
+`test/deploy.config.test.ts` lints both files specifically so a future "helpful"
+cost/scale edit fails CI loudly instead of shipping either failure mode silently.
+
+```
+fly launch --no-deploy                      # first time only, creates the app + fly.toml is already written
+fly volumes create polygraph_data --size 1   # the SQLite mount
+fly secrets set POLYGRAPH_MASTER_KEY="$(openssl rand -base64 32)"
+fly deploy
+```
+
+To rotate the master key later: `fly secrets set POLYGRAPH_MASTER_KEY_PREVIOUS=<old>
+POLYGRAPH_MASTER_KEY=<new>`, then run `polygraph admin rekey` against the running
+machine (`fly ssh console -C "node dist/index.js admin rekey"`) before unsetting
+`POLYGRAPH_MASTER_KEY_PREVIOUS`.
+
+**Nothing above has actually been run against a real Fly (or any public) host by this
+repo's own commits.** Deploying is a deliberate call for whoever runs it, not something
+automated here — see Current limits for exactly what has and hasn't been verified.
 
 ## Current limits
 
@@ -263,6 +374,31 @@ Said plainly, because honest limits are part of this project's pitch:
   override field yet).
 - **`polygraph status` is a stub.** It prints "not implemented" and exits 1; `run`,
   `watch`, `log`, `ack`, `chaos`, `demo`, and `ledger verify` are all implemented.
+
+### Hosted-specific limits
+
+- **The landing page's "Verify chain" sandbox is a client-side simulation, not the
+  server pipeline.** `app/src/landing/sandbox/engine.ts` runs a real SHA-256 hash chain
+  in the browser (genuinely tamper-detecting, not a canned animation) so a visitor can
+  see the mechanism before signing up — but it never calls the backend. The signed-in
+  dashboard's own "Verify chain" button (`POST /api/ledger/verify`) is the real thing,
+  walking that tenant's actual ledger in `src/ledger.ts`.
+- **Heal has still never run live against Bright Data** (same 403-gated account as the
+  CLI — see above), and is additionally structurally disabled for every hosted tenant
+  regardless: `polygraph serve` never reads, sets, or forwards
+  `POLYGRAPH_HEAL_ENABLED`, so `heal.ts`'s existing AND-gate blocks every live heal
+  attempt fleet-wide no matter what an individual tenant's `heal_enabled` setting says
+  (`test/tenancy.serve.test.ts`'s explicit assertion, checked both before and after a
+  real request).
+- **The Bright Data adapter path is still mock-tested only** in the hosted scheduler
+  too — `createDefaultRunOne` (`src/tenancy/scheduler.ts`) calls the same unverified
+  `src/adapters.ts` path the CLI does; nothing about running it per-tenant on a
+  schedule changes that it has never executed against a live account.
+- **Peer corroboration remains unwired** in the hosted pipeline for the same reason it
+  is in the CLI — `checkPeers` is never called from `runner.ts`, hosted or not.
+- **Nothing is deployed unless someone actually runs `fly deploy`.** No hosted instance
+  of this product exists as a side effect of writing this documentation — the Deploy
+  section above is instructions, not a status report.
 
 ## License
 
