@@ -65,28 +65,28 @@ const OUTCOMES: {
     id: 'release',
     Glyph: SealCheck,
     label: 'Release it',
-    gloss: 'the data held up — let it through',
+    gloss: 'the data held up',
     color: 'var(--color-verdict-pass)',
   },
   {
     id: 'hold',
     Glyph: SealQuestion,
     label: 'Hold it',
-    gloss: 'something is off — a person looks first',
+    gloss: 'a person looks first',
     color: 'var(--color-verdict-suspect)',
   },
   {
     id: 'repair',
     Glyph: Wrench,
     label: 'Repair the scraper',
-    gloss: 'a field broke — that is fixable',
+    gloss: 'a field broke, and it is fixable',
     color: 'var(--color-verdict-shape)',
   },
   {
     id: 'refuse',
     Glyph: Prohibit,
     label: 'Refuse repair',
-    gloss: 'it fetched the wrong thing — no fix can help',
+    gloss: 'wrong thing fetched — no fix helps',
     color: 'var(--color-verdict-target)',
   },
 ];
@@ -95,10 +95,10 @@ const OUTCOMES: {
  * in mono — this is where "contract", "identity" and "canary" get their
  * one-line gloss before the rest of the site uses them. */
 const CHECKS: { key: string; label: string; gloss: string }[] = [
-  { key: 'contract', label: 'Shape', gloss: 'did every field come back filled?' },
-  { key: 'coherence', label: 'Consistency', gloss: 'did one value collapse while the rest look fine?' },
-  { key: 'identity', label: 'Identity', gloss: 'is this the thing we actually asked for?' },
-  { key: 'canary', label: 'Canary', gloss: 'fetch it once more to confirm before deciding' },
+  { key: 'contract', label: 'Shape', gloss: 'every field come back filled?' },
+  { key: 'coherence', label: 'Consistency', gloss: 'one value collapsed, rest fine?' },
+  { key: 'identity', label: 'Identity', gloss: 'is this what we asked for?' },
+  { key: 'canary', label: 'Canary', gloss: 'fetch once more to confirm' },
 ];
 
 type CheckResult = 'pass' | 'fail' | 'skipped';
@@ -377,7 +377,7 @@ function CheckRow({
     <li
       data-testid={`flowchart-check-${check.key}`}
       data-result={revealed ? result : examining ? 'examining' : ''}
-      className="flex items-baseline gap-2 rounded-sm border px-2 py-1 transition-colors duration-[180ms]"
+      className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-sm border px-2 py-1 transition-colors duration-[180ms]"
       style={{
         borderColor: failed ? failColor : '#272727',
         backgroundColor: examining ? '#272727' : 'transparent',
@@ -414,7 +414,7 @@ function CheckRow({
       <span className="font-mono text-xs text-[#6E7681]" aria-hidden>
         {check.key}
       </span>
-      <span className="min-w-0 flex-1 truncate text-right text-xs text-[#9B9B9B]">{check.gloss}</span>
+      <span className="basis-full text-left text-xs leading-snug text-[#9B9B9B]">{check.gloss}</span>
     </li>
   );
 }
@@ -445,7 +445,7 @@ function DecisionRow({
           ? { duration: 0.12 }
           : { duration: 0.26, delay: BEAT.decision, ease: [0.32, 0.72, 0, 1] }
       }
-      className="flex items-baseline gap-2 rounded-sm border px-2 py-1"
+      className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-sm border px-2 py-1"
       style={{
         borderColor: chosen ? color : '#272727',
         backgroundColor: chosen ? '#272727' : 'transparent',
@@ -455,7 +455,7 @@ function DecisionRow({
       <span className="text-xs font-medium" style={{ color: chosen ? color : '#EDEDED' }}>
         {label}
       </span>
-      <span className="min-w-0 flex-1 truncate text-right text-xs text-[#9B9B9B]">{gloss}</span>
+      <span className="basis-full text-left text-xs leading-snug text-[#9B9B9B]">{gloss}</span>
     </motion.li>
   );
 }
