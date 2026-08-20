@@ -204,6 +204,16 @@ Said plainly, because honest limits are part of this project's pitch:
   endpoints — the account is 403-gated. One specific unverified assumption is called out
   in `heal.ts`: whether an approved heal promotes straight to production or lands in a
   draft state needing a separate step Bright Data's docs don't describe.
+- **The core `brightdata` adapter path is equally unverified end-to-end against a live
+  account, for the same 403-gate reason.** `trigger` → `pollDataset` → `jobLog` →
+  `hpErrors` (`src/adapters.ts`) is implemented and covered by unit tests, all of them
+  against a mocked HTTP layer — this has never run against a real Scraper Studio
+  collector. `test/brightdata.live-smoke.test.ts` is skipped by default (only runs with
+  `POLYGRAPH_LIVE=1` set), and even then only proves auth + connectivity by asserting a
+  bogus job id 404s cleanly — it does not exercise a real trigger/poll/dataset cycle. The
+  adapter's `hp_errors`-may-404-on-a-regular-trigger-job tolerance and its
+  rows/errors/`jobLog` reconciliation logic (the `partial_failure` synthesis) are both
+  written to Bright Data's documented behavior, not confirmed against a live response.
 - **Drift detection was deliberately cut.** The dashboard's "learning: n/7" indicator is
   a plain run-count display, not a trend — v1 does not compute or display any drift
   signal over history. No fake trend line is shown in its place.

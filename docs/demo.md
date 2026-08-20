@@ -7,12 +7,20 @@ Bright Data account, no API key, no network access required. One terminal runs
 ## Setup (before you start talking)
 
 ```
-mkdir polygraph-demo && cd polygraph-demo
-npx polygraph demo
+cd path/to/polygraph      # a checkout of this repo
+npm install                # first time only
+npx tsx src/index.ts demo
 ```
 
-(If you're running from a source checkout instead of the published package: `npx tsx
-path/to/polygraph/src/index.ts demo`.)
+This is the same command as the README's quickstart. `demo` seeds `./fleet.yaml` and
+`./polygraph.sqlite` in whatever directory you run it from (both are gitignored, so
+running it straight from a repo checkout is safe) — use a separate empty directory
+instead if you'd rather keep the checkout untouched, substituting the full path to
+`src/index.ts` in the command above.
+
+This package is **not published to npm** — `npx polygraph demo` will NOT work; there is
+no `polygraph` package to fetch. The `tsx` form above runs the CLI directly from source,
+which is the only way to run it today.
 
 This does four things, in order:
 
@@ -34,6 +42,13 @@ first run" (nothing invented — they genuinely haven't run yet).
 
 Leave that terminal running. Everything below happens in a **second terminal**, in
 the same directory.
+
+Every `polygraph <command>` below is shorthand for `npx tsx path/to/polygraph/src/index.ts
+<command>`, run from that same directory (so it reads the `fleet.yaml`/`polygraph.sqlite`
+the first terminal just seeded) — same substitution as the setup step above. If you'd
+rather type the short form literally, run `npm link` once from the repo checkout first
+(puts a `polygraph` binary on `PATH` pointing at this source tree via `dist/index.js`,
+so build it first with `npm run build`).
 
 ## The script
 
