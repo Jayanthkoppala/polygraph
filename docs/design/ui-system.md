@@ -30,15 +30,19 @@ So the entire visual system is built backwards from one requirement: **wrong sha
 wrong target must be tellable apart across a room, with the text unreadable, in
 grayscale.** Everything else (palette, density, motion, landing page) follows from that.
 
-Three channels carry state, and each one works alone:
+Four channels carry state, and each one works alone:
 
 | Channel | Purpose |
 |---|---|
-| **Rail form** (the left edge geometry) | Primary. Works in grayscale, at any size, with motion disabled. |
+| **Rail form** (the left edge geometry) | Primary. Works in grayscale, at any size, with motion disabled. Says what *kind* of failure this is. |
+| **Repair slot** (raised versus sunken) | Co-primary, and more immediate. A fixed rectangle holding a live button or a struck out one. Says what the system will *do*. |
 | **Glyph** | Secondary. Works at a glance, survives color blindness. |
 | **Color** | Redundant reinforcement only. Never the sole carrier. |
 
 Plus a plain English label on every state, always rendered, never truncated.
+
+The two most important sections are **2.3 (the rail)** and **2.8 (the repair slot)**. If
+only two things survive review, those are the two.
 
 ---
 
@@ -490,7 +494,7 @@ and it gets its own mark.
 | VERIFIED | `#4ADE80` | on the ramp |
 | UNEXPLAINED | `#FBBF24` | on the ramp |
 | WRONG SHAPE | `#F85149` | on the ramp |
-| WRONG TARGET | `#C084FC` | **deliberately off the ramp** |
+| WRONG TARGET | `#E879F9` | **deliberately off the ramp** |
 | NOT CHECKED | `#8B949E` | achromatic, no position |
 
 Green, amber, red is a **severity** ramp. Every operator on earth reads it as "fine,
@@ -499,10 +503,16 @@ red, only more so", and the instinct that follows from "more red" is "try harder
 it". That instinct is precisely wrong, and it is the exact mistake the engine is built to
 prevent at the type level.
 
-So WRONG TARGET leaves the ramp entirely. Violet is not a worse red. It is not on the
+So WRONG TARGET leaves the ramp entirely. Magenta is not a worse red. It is not on the
 scale at all, which is the point: this is a different *kind* of problem, not a more
 severe amount of the same problem. The color says "stop reading this as a severity" a
-moment before the label says "wrong target" and the badge says "repair refused".
+moment before the label says "wrong target" and the slot says "repair refused".
+
+**Never two shades of red.** A dark red for structural and a bright red for identity
+would encode the distinction as *severity*, which is the one reading that must not
+happen, and it collapses entirely under a squint or on a projector. If a future change
+proposes tuning these two toward each other for harmony, it is proposing to delete the
+product's argument.
 
 NOT CHECKED is achromatic for a related reason. It is not a judgement, so it gets no hue.
 In a grid of forty cards the eye picks out chroma long before it picks out luminance, so
@@ -549,11 +559,18 @@ completely still and stays that way.
    position, same size, same weight, different value. A clean substitution.
 3. `200 → 440ms`: the second rail line slides out from behind the first and lands 8px
    offset, `springSettle`. The single line becomes two lines that do not agree.
-4. `520 → 600ms`: the `Prohibit` badge and "Repair refused" fade in, `--dur-instant`.
+4. `520 → 820ms`: **the repair slot withdraws the repair.** The live Repair button
+   de-elevates from `--shadow-e2` to `--shadow-e0`, its border and label crossfade red to
+   magenta, a strikethrough draws left to right across the word "Repair", and " refused"
+   fades in behind it. Full choreography in section 2.8.
 
 Beat four is late on purpose. You read "the target is wrong", and only then "and we will
 not repair it". Firing them together makes the refusal look like a system limitation.
 Firing the refusal second makes it look like a conclusion, which is what it is.
+
+Beat four is also a *removal*, not an arrival. The button was already there and standing
+up; it gets pressed into the surface and crossed out while you watch. Fading a new "not
+allowed" badge into empty space would be the same information and a far weaker claim.
 
 Nothing about this transition is a shake, a flash, or a shudder. Damage motion would be a
 lie: nothing is damaged, something was swapped.
@@ -610,7 +627,13 @@ export function toVerdictState(c: CollectorState): VerdictState {
 import { Prohibit } from "@phosphor-icons/react";
 import { VERDICT, type VerdictState } from "@/lib/verdict";
 
-export function VerdictChip({ state }: { state: VerdictState }) {
+export function VerdictChip({
+  state,
+  showRefusal = false, // true only at `row` density, where RepairSlot is dropped
+}: {
+  state: VerdictState;
+  showRefusal?: boolean;
+}) {
   const { label, glyph: Glyph, color, refusesRepair } = VERDICT[state];
   return (
     <span className="flex items-center gap-2">
@@ -621,7 +644,7 @@ export function VerdictChip({ state }: { state: VerdictState }) {
         <Glyph size={12} weight="regular" aria-hidden />
         {label}
       </span>
-      {refusesRepair && (
+      {refusesRepair && showRefusal && (
         <span
           className="flex items-center gap-1 rounded-full px-2 py-[2px] text-xs font-medium"
           style={{ color: "var(--color-verdict-target)", background: "var(--color-raised)" }}
@@ -637,6 +660,201 @@ export function VerdictChip({ state }: { state: VerdictState }) {
 
 `py-[2px]` is on the spacing scale (Spacing-25 = 2px). It is written as an arbitrary
 value only because Tailwind's `py-*` steps are 4px based; the *value* is compliant.
+
+The chip's "Repair refused" badge renders **only at `row` density**, where there is no
+room for the repair slot. At `card` and `hero` density the slot below carries the refusal,
+and repeating it in the chip is noise. Pass `showRefusal={density === "row"}`.
+
+## 2.8 The repair slot
+
+Co-equal with the rail, and the more immediate of the two. The rail tells you *what kind*
+of failure this is. The slot tells you *what the system will do about it*, and it does so
+by contrast rather than by reading.
+
+**The rule: the slot is a fixed rectangle that is always present on every card, in every
+state.** It is never conditionally removed, never resized, never reflowed. Same position,
+same 32px height, same full content width, on all five states. Because the rectangle is
+constant, the only thing the eye compares between two cards is what is *inside* it.
+
+| State | Slot contains | Physically |
+|---|---|---|
+| VERIFIED | "Released" label, no control | flat, inert |
+| UNEXPLAINED | **Acknowledge** button, live (`POST /api/ack`) | raised |
+| WRONG SHAPE | **Repair** button, live and enabled | **raised** |
+| WRONG TARGET | **Repair** struck through, "refused", disabled | **sunken** |
+| NOT CHECKED | "Run checks" button, disabled with a reason | flat, inert |
+
+### Why raised versus sunken
+
+Color and strikethrough both fail somewhere. Color fails for a colorblind operator and
+under a projector. Strikethrough fails at 3 metres and is invisible to a screen reader.
+
+Elevation fails nowhere. The enabled Repair button carries `--shadow-e2`, whose inset
+top hairline makes it a lit, raised, pressable object. The refused one carries
+`--shadow-e0`, an inset *bottom* hairline, which makes it a sunken plate with light
+falling on its lower lip. That is the same physical cue a real recessed button gives, it
+is pure luminance geometry, and it survives grayscale, squinting, and every form of color
+blindness. Put the two cards side by side and one button is standing up and the other has
+been pressed into the surface and left there.
+
+The strikethrough crosses **only the word "Repair"**, never the word "refused". The action
+is cancelled; the explanation is not. `Repair refused` with the first word struck reads,
+correctly, as "this specific thing was taken away".
+
+### The motion, which is the point
+
+When a card flips to WRONG TARGET, the button in the slot **does not appear**. It is
+already there, because the slot is fixed. Instead it is taken away in front of you, as
+beat four of the WRONG TARGET transition (section 2.6):
+
+1. `520 → 700ms`: the button de-elevates, `--shadow-e2` → `--shadow-e0` over 180ms,
+   `--ease-fluid`, and the border and label crossfade red → magenta.
+2. `560 → 740ms`: the strikethrough line draws left to right, `scaleX` 0 → 1 with
+   `transform-origin: left`, 180ms, `--ease-snap`.
+3. `700 → 820ms`: " refused" fades in after the strike lands.
+
+You watch the repair option get withdrawn. That is a stronger statement than fading in a
+new badge, and it is the single most important 300ms in the product.
+
+### Code
+
+```tsx
+// src/components/verdict/RepairSlot.tsx
+import { motion } from "motion/react";
+import { Wrench, Prohibit, Check, ArrowClockwise, SealCheck } from "@phosphor-icons/react";
+import type { VerdictState } from "@/lib/verdict";
+
+const REFUSAL_REASON =
+  "Repair is refused because this run returned well formed data for the wrong entity. " +
+  "Re-deriving a field selector cannot fix fetching the wrong target.";
+
+export function RepairSlot({
+  state,
+  collectorId,
+  onRepair,
+  onAcknowledge,
+}: {
+  state: VerdictState;
+  collectorId: string;
+  onRepair: (id: string) => void;
+  onAcknowledge: (id: string) => void;
+}) {
+  // Fixed rectangle. Every branch below fills exactly this box.
+  const box =
+    "flex h-8 w-full items-center justify-center gap-2 rounded-sm border text-xs font-medium " +
+    "transition-all duration-[180ms] ease-[var(--ease-fluid)]";
+
+  if (state === "WRONG_SHAPE") {
+    return (
+      <button
+        type="button"
+        onClick={() => onRepair(collectorId)}
+        className={`${box} border-[var(--color-verdict-shape)] bg-[#272727] text-[var(--color-verdict-shape)]
+                    shadow-[var(--shadow-e2)] hover:bg-[#313131] active:translate-y-px active:shadow-[var(--shadow-e0)]
+                    focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]`}
+      >
+        <Wrench size={12} weight="regular" aria-hidden />
+        Repair
+      </button>
+    );
+  }
+
+  if (state === "WRONG_TARGET") {
+    return (
+      <>
+        <button
+          type="button"
+          disabled
+          aria-disabled="true"
+          aria-describedby={`refusal-${collectorId}`}
+          className={`${box} cursor-not-allowed border-[var(--color-verdict-target)] bg-[#1F1F1F]
+                      text-[var(--color-verdict-target)] shadow-[var(--shadow-e0)]`}
+        >
+          <Prohibit size={12} weight="regular" aria-hidden />
+          <span className="relative">
+            Repair
+            <motion.span
+              aria-hidden
+              initial={{ scaleX: 0 }}
+              animate={{ scaleX: 1 }}
+              transition={{ duration: 0.18, delay: 0.04, ease: [0.16, 1, 0.3, 1] }}
+              style={{ transformOrigin: "left" }}
+              className="absolute inset-x-0 top-1/2 h-px bg-[var(--color-verdict-target)]"
+            />
+          </span>
+          <motion.span
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.12, delay: 0.22 }}
+          >
+            refused
+          </motion.span>
+        </button>
+        <span id={`refusal-${collectorId}`} className="sr-only">{REFUSAL_REASON}</span>
+      </>
+    );
+  }
+
+  if (state === "UNEXPLAINED") {
+    return (
+      <button
+        type="button"
+        onClick={() => onAcknowledge(collectorId)}
+        className={`${box} border-[var(--color-verdict-suspect)] bg-[#272727] text-[var(--color-verdict-suspect)]
+                    shadow-[var(--shadow-e2)] hover:bg-[#313131] active:translate-y-px active:shadow-[var(--shadow-e0)]
+                    focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]`}
+      >
+        <Check size={12} weight="regular" aria-hidden />
+        Acknowledge
+      </button>
+    );
+  }
+
+  if (state === "NOT_CHECKED") {
+    return (
+      <div
+        className={`${box} cursor-not-allowed border-[#272727] bg-[#1F1F1F] text-[#8B949E]`}
+        title="No COLLECTOR_REGISTRY entry, so contract, coherence, and identity could not run."
+      >
+        <ArrowClockwise size={12} weight="regular" aria-hidden />
+        Checks skipped
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${box} border-[#272727] bg-[#1F1F1F] text-[#9B9B9B]`}>
+      <SealCheck size={12} weight="regular" aria-hidden />
+      Released
+    </div>
+  );
+}
+```
+
+Radius check: the card is `rounded-2xl` (16) with 12px padding, so the slot is
+`rounded-sm` (16 − 12 = 4), consistent with every other inner element.
+
+### Accessibility of the slot
+
+- The refused control is a real `<button disabled>` with `aria-disabled="true"`, not a
+  styled `<div>`. It stays in the accessibility tree so it is discoverable.
+- Strikethrough is decorative and `aria-hidden`. It is never the only carrier: the visible
+  word "refused", the disabled state, and `aria-describedby` all say it independently.
+- `aria-describedby` points at the full refusal reason in an `sr-only` span. A screen
+  reader user gets the *argument*, not just the fact. This is the one place in the product
+  where a long explanation is worth reading aloud.
+- The disabled button keeps 6.70:1 contrast. Do **not** apply the usual `opacity-50`
+  disabled treatment; it would drop it below AA. Sunken elevation communicates the
+  disabled state instead of dimming.
+
+### Where the slot appears
+
+- `hero` and `card` density: always, as the last row of the card.
+- `row` density (n ≥ 13): the slot is dropped for space, and `VerdictChip` renders its
+  "Repair refused" badge instead. The refusal is never invisible at any density.
+- Evidence panel: a full width version of the same slot, 40px tall, with the exact
+  `bdata scraper heal <collector> "<prompt>"` command in Geist Mono beside the enabled
+  variant, and the refusal reason as body copy beside the refused one.
 
 ---
 
@@ -670,19 +888,22 @@ exactly right: a scroll pinned, typed, mono log with per row status dots and an
 
 ## 3.2 Surface by surface
 
-| Surface | shadcn primitives | Magic UI / ReactBits | Notes |
+| Surface | shadcn primitives | Magic UI (MU) / ReactBits (RB) | Notes |
 |---|---|---|---|
-| **Landing hero** | `button` | `text-animate` (heading, `animation="blurInUp"`, `by="word"`), `blur-fade` (subhead + CTA), `dot-pattern` | Gradient is on the heading text only |
+| **Landing hero** | `button` | MU `text-animate` (heading, `animation="blurInUp"`, `by="word"`), MU `blur-fade` (subhead + CTA), MU `dot-pattern` | Gradient is on the heading text only |
 | **Landing proof moment** | — | none | Two real `VerdictCard`s, live data, no wrapper effect. See 4.2 |
-| **Tagline reveal (B11)** | — | `text-reveal` | Mandatory section. Corrected props in 3.6 |
-| **Landing "how it works"** | — | `terminal` with `AnimatedSpan` + `TypingAnimation` | Replays the actual demo transcript |
-| **Landing proof of chain** | `hover-card` | `animated-list` (static entries, safe here) | Ledger rows with hashes |
-| **Onboarding / key paste** | `form`, `input`, `label`, `button`, `alert`, `progress` | `border-beam` on the active step only | See 3.3 |
-| **Fleet grid card** | `card`, `tooltip`, `context-menu` | `VerdictCardShell` (3.4), `number-ticker` | See 3.4 |
+| **Landing fleet scale** | — | **RB `Threads`** (the one WebGL) | See 3.9 |
+| **Tagline reveal (B11)** | — | MU `text-reveal` | Mandatory section. Corrected props in 3.6 |
+| **Landing "how it works"** | — | MU `terminal` with `AnimatedSpan` + `TypingAnimation` | Replays the actual demo transcript |
+| **Landing proof of chain** | `hover-card` | MU `animated-list` (static entries, safe here) | Ledger rows with hashes |
+| **Onboarding / key paste** | `form`, `input`, `label`, `alert`, `progress` | **RB `Stepper`**, MU `border-beam` on the active step only | See 3.3 |
+| **Fleet grid card** | `card`, `tooltip`, `context-menu` | `VerdictCardShell` (3.4), MU `number-ticker` | See 3.4 |
+| **Repair slot** | `button`, `tooltip` | none | Fixed rectangle, raised vs sunken. See 2.8 |
 | **Ledger stream** | `scroll-area`, `badge` | corrected `data-stream` structure | See 3.5 |
+| **App header counter** | — | **RB `Counter`** | Odometer for the append only ledger total |
 | **Evidence panel** | `sheet` (n≥4) or inline panel (n≤3), `accordion`, `table`, `separator`, `collapsible` | none | Data only, zero effects |
-| **Live demo control** | `toggle-group`, `button`, `tooltip`, `alert-dialog` | `border-beam` while a run is in flight | See 3.7 |
-| **App shell** | `resizable`, `scroll-area`, `dropdown-menu`, `sonner` | — | `resizable` gives the three region split |
+| **Live demo control** | `toggle-group`, `button`, `tooltip`, `alert-dialog` | MU `border-beam` while a run is in flight | See 3.7 |
+| **App shell** | `resizable`, `scroll-area`, `dropdown-menu`, `sonner` | MU `noise-texture` at 3% over surfaces | `resizable` gives the three region split |
 | **Empty / loading** | `skeleton` | — | Skeletons shaped like real cards, never spinners |
 
 Install:
@@ -700,11 +921,23 @@ npx shadcn@latest add "https://magicui.design/r/blur-fade.json"
 npx shadcn@latest add "https://magicui.design/r/dot-pattern.json"
 npx shadcn@latest add "https://magicui.design/r/terminal.json"
 npx shadcn@latest add "https://magicui.design/r/animated-list.json"
+npx shadcn@latest add "https://magicui.design/r/noise-texture.json"
 
-npm i @phosphor-icons/react motion
+# ReactBits, TS + Tailwind variant
+npx shadcn@latest add @react-bits/Threads
+npx shadcn@latest add @react-bits/Stepper
+npx shadcn@latest add @react-bits/Counter
+
+npm i @phosphor-icons/react motion ogl
 ```
 
-`magic-card` and `data-stream` are deliberately absent.
+`magic-card`, `data-stream`, ReactBits `SpotlightCard`, `ScrollReveal`, `Noise`, `PillNav`,
+and `DecryptedText` are all deliberately absent. Reasons in 3.1 and 3.8.
+
+**GSAP is not installed and must not be.** `motion/react` is the single animation runtime,
+and `ogl` is the single graphics dependency, used by exactly one component on the landing
+page. If a pull request adds `gsap`, it is adding a second runtime for something already
+covered; send it back.
 
 ## 3.3 Onboarding / key paste
 
@@ -811,6 +1044,7 @@ import { NumberTicker } from "@/components/ui/number-ticker";
 import { VerdictCardShell } from "./VerdictCardShell";
 import { VerdictRail } from "@/components/verdict/VerdictRail";
 import { VerdictChip } from "@/components/verdict/VerdictChip";
+import { RepairSlot } from "@/components/verdict/RepairSlot";
 import { VERDICT, toVerdictState } from "@/lib/verdict";
 import type { CollectorState } from "@/lib/api";
 import { relativeAge } from "@/lib/time";
@@ -819,10 +1053,14 @@ export function VerdictCard({
   collector,
   density = "card",
   onSelect,
+  onRepair,
+  onAcknowledge,
 }: {
   collector: CollectorState;
   density?: "hero" | "card" | "row";
   onSelect: (id: string) => void;
+  onRepair: (id: string) => void;
+  onAcknowledge: (id: string) => void;
 }) {
   const state = toVerdictState(collector);
   const meta = VERDICT[state];
@@ -832,7 +1070,7 @@ export function VerdictCard({
   const jolt = state === "WRONG_SHAPE" ? { x: [0, -2, 0] } : {};
 
   return (
-    <VerdictCardShell accent={meta.color} className={density === "row" ? "h-14" : "h-[132px]"}>
+    <VerdictCardShell accent={meta.color} className={density === "row" ? "h-14" : "h-44"}>
       <motion.button
         type="button"
         onClick={() => onSelect(collector.id)}
@@ -852,7 +1090,7 @@ export function VerdictCard({
         </div>
 
         <div className="pl-3">
-          <VerdictChip state={state} />
+          <VerdictChip state={state} showRefusal={density === "row"} />
         </div>
 
         {density !== "row" && (
@@ -865,6 +1103,18 @@ export function VerdictCard({
           </dl>
         )}
       </motion.button>
+
+      {/* Fixed slot. Outside the button so its controls are independently focusable. */}
+      {density !== "row" && (
+        <div className="px-3 pb-3">
+          <RepairSlot
+            state={state}
+            collectorId={collector.id}
+            onRepair={onRepair}
+            onAcknowledge={onAcknowledge}
+          />
+        </div>
+      )}
     </VerdictCardShell>
   );
 }
@@ -1049,6 +1299,279 @@ error code. A local fixture cannot produce one." Per the README, that mode canno
 one that is honestly disabled. `alert-dialog` confirms `wrong_entity`, since it is the
 demo's climax and should not fire on a stray click.
 
+## 3.8 ReactBits
+
+166 components across four categories, verified against the repository rather than from
+memory: **Animations** (37), **Backgrounds** (53), **Components** (44), **TextAnimations**
+(32).
+
+Four source variants ship per component: JS-CSS, JS-TW, TS-CSS, TS-TW. **Use TS-TW**
+(TypeScript plus Tailwind) throughout, matching the stack.
+
+```bash
+npx shadcn@latest add @react-bits/Threads
+npx shadcn@latest add @react-bits/Stepper
+npx shadcn@latest add @react-bits/Counter
+npm i ogl
+```
+
+### The selection rule
+
+ReactBits components split cleanly by animation runtime. Some use `motion/react`, which is
+already a dependency because Magic UI needs it. Others require **GSAP plus ScrollTrigger**,
+and a few additionally require `react-router-dom`.
+
+**The rule: a ReactBits component that needs only `motion/react`, `ogl`, or nothing is
+eligible. A component that would drag GSAP into the bundle is used only if nothing
+motion based covers the same need.** Nothing in this product clears that second bar, so
+GSAP is not installed. This is a bundle and consistency decision, not a quality judgement
+about GSAP.
+
+### Accepted
+
+**`Threads`** (Backgrounds, WebGL) — the one canvas moment. Full ruling in 3.9.
+Dependency: `ogl` only.
+
+**`Stepper`** (Components) — the onboarding and key paste flow. Uses `motion/react` and
+`AnimatePresence`, with directional slide between steps. Real props:
+
+```tsx
+<Stepper
+  initialStep={1}
+  onStepChange={(step) => track(step)}
+  onFinalStepCompleted={() => navigate("/fleet")}
+  backButtonText="Back"
+  nextButtonText="Continue"
+  disableStepIndicators={false}
+  stepCircleContainerClassName="!rounded-2xl !border-[#272727] bg-[#1F1F1F] shadow-[var(--shadow-e3)]"
+  contentClassName="text-[#EDEDED]"
+  renderStepIndicator={({ step, currentStep, onStepClick }) => (
+    <StepDot step={step} currentStep={currentStep} onClick={() => onStepClick(step)} />
+  )}
+>
+  <Step><PasteKey /></Step>
+  <Step><PointAtCollector /></Step>
+  <Step><FirstPass /></Step>
+</Stepper>
+```
+
+Two required overrides after installing:
+
+1. It hardcodes `style={{ border: '1px solid #222' }}` inline. `#222222` is not on the
+   permitted background list. Change the inline style to `#272727`.
+2. Its wrapper carries `sm:aspect-[4/3] md:aspect-[2/1]` and `rounded-4xl`. Drop the
+   aspect ratios (arbitrary values, and they distort a three step flow) and use
+   `rounded-2xl` for consistency with every other panel.
+
+**`Counter`** (Components) — the ledger event total in the app header. `motion/react`
+spring driven odometer digits that roll rather than spring to a value. This is not a
+duplicate of `NumberTicker`: the ledger is append only and can only ever increase, and an
+odometer is the one numeric display that can only roll upward. The form states an
+invariant about the data.
+
+```tsx
+<Counter
+  value={ledgerCount}
+  fontSize={12}                 /* pinned to text-xs; the prop is a raw number, so it
+                                   bypasses the type scale unless you pin it */
+  gap={2}
+  horizontalPadding={4}
+  borderRadius={4}              /* rounded-sm */
+  textColor="#EDEDED"
+  fontWeight={500}
+  containerStyle={{ fontFamily: "var(--font-mono)" }}
+/>
+```
+
+`fontSize` and `borderRadius` are raw numbers, not classes, so they escape Tailwind's
+scales by default. Pin them to scale values as above and note it in review.
+
+### Rejected, with reasons
+
+**`SpotlightCard`** (Components) — paints
+`background: radial-gradient(circle at ...)` across the card interior, and its container
+is `bg-neutral-900` (`#171717`), which is not on the permitted background list. This is
+the same B4 violation as Magic UI's `magic-card`, independently confirmed. Two libraries
+converging on the same illegal pattern is why `VerdictCardShell` (3.4) exists.
+
+**`ScrollReveal`** (TextAnimations) — a genuinely close call for the mandatory B11
+section. It does word by word activation correctly (`stagger: 0.05` with
+`scrub: true`, so words activate on scroll position rather than all at once). Rejected on
+three counts: it requires GSAP and ScrollTrigger, adding a second animation runtime for
+one section; its `baseOpacity` default of `0.1` is below B11's 25 to 35 percent floor; and
+its text is set in `text-[clamp(1.6rem,4vw,3rem)]`, an arbitrary value that bypasses the
+type scale. Magic UI's `text-reveal` does the same job on `motion/react`, which is already
+installed. If GSAP ever enters the bundle for another reason, revisit this: `ScrollReveal`
+with `baseOpacity={0.3} baseRotation={0} enableBlur blurStrength={4}` is the better
+component of the two.
+
+**`Noise`** (Animations) — the *technique* is right and is exactly the "material, tactile"
+cue this palette needs: a 2 to 3 percent grain over flat dark surfaces is what stops them
+reading as digital voids. But this implementation is a canvas that repaints on a
+`patternRefreshInterval`, so it burns GPU forever on a dashboard that sits open all day
+next to a scraper fleet. **Use Magic UI's `noise-texture` instead**, which is a static SVG
+`feTurbulence` layer: same look, painted once, zero ongoing cost. Apply at 3 percent over
+`#1F1F1F` and `#131209`. It is a filter layer, not a gradient, so B4 is unaffected.
+
+**`PillNav`** and **`StaggeredMenu`** (Components) — both map onto B7's fluid island nav
+requirement, and both require GSAP; `PillNav` additionally hard imports `react-router-dom`,
+which the landing page has no other use for. B7 specifies the behavior precisely enough
+(`mt-6 mx-auto w-max rounded-full`, hamburger lines rotating to an X via `rotate-45` and
+`-rotate-45`, `backdrop-blur-3xl bg-black/80` overlay, per item `delay-100` / `delay-150` /
+`delay-200` stagger) that hand rolling it in `motion/react` is roughly forty lines and
+avoids two dependencies.
+
+**`DecryptedText`** (TextAnimations) — resolves scrambled characters into real text, and
+is tempting for the ledger hash column. Rejected on principle: this product exists because
+data can look correct while being wrong, so it must never render real data as decorative
+noise, not even for 500ms. A hash that scrambles is a hash you cannot read while it
+animates.
+
+**`AnimatedContent`**, **`FadeContent`**, **`GlareHover`**, **`CountUp`**,
+**`AnimatedList`**, **`DotGrid`**, **`StarBorder`** — all duplicate a Magic UI component
+already specified. Pick one library per job. Where they overlap, Magic UI wins here purely
+because more of this spec's code is already written against it.
+
+**Everything else** — `BlobCursor`, `SplashCursor`, `Crosshair`, `TargetCursor`,
+`GhostCursor`, `ImageTrail`, `StickerPeel`, `Lanyard`, `FlyingPosters`, `DomeGallery`,
+`Ballpit`, `MetaBalls`, `Ferrofluid`, and the rest of the cursor, gallery, and physics
+families. None has a job in a verification tool. Do not add one because a surface looks
+quiet; a quiet surface in this product means the fleet is healthy.
+
+## 3.9 WebGL: one moment, and where it is not
+
+### The ruling
+
+**Zero WebGL in the product.** The dashboard, onboarding, cards, evidence panel, and
+ledger contain no canvas of any kind. A verification tool's surfaces must be legible,
+cheap, and boring; a GPU composited layer behind live data is a failure mode with no
+upside, on an app that runs on loopback beside a scraper fleet already competing for the
+machine.
+
+**Exactly one WebGL moment on the landing page:** ReactBits **`Threads`**, in the fleet
+scale section, below the fold. Not the hero.
+
+### Why `Threads`, specifically
+
+It is the only one in the catalog that means something here rather than merely looking
+expensive.
+
+`Threads` renders a field of parallel horizontal lines that drift, bend, and separate. Its
+shader hardcodes `const int u_line_count = 40;` and computes each line's vertical position
+from a `distance` term that spreads them apart plus Perlin noise that makes individual
+lines wander off the bundle. Forty parallel lines, most of them tracking together, some
+diverging.
+
+That is the rail language at fleet scale. By the time a reader reaches this section they
+have already learned that a line is a collector, that a straight line is a contract
+holding, and that lines which fail to coincide mean a wrong target. The canvas is the same
+idea drawn at 40 collectors instead of one. It is not decoration that happens to sit
+nearby; it is the same sentence in a larger typeface.
+
+Cost, from the source rather than from reputation: it imports
+`Renderer, Program, Mesh, Triangle, Color` from `ogl` and draws **one full screen triangle
+with one fragment shader**. No geometry, no textures, no post processing, no physics, and
+no three.js. That is about as cheap as a shader gets and it holds 60fps on integrated
+graphics comfortably.
+
+```tsx
+// src/components/landing/FleetScale.tsx
+import { useEffect, useRef, useState } from "react";
+import Threads from "@/components/ui/Threads";
+
+export function FleetScale() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [live, setLive] = useState(false);
+
+  useEffect(() => {
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const gl = document.createElement("canvas").getContext("webgl2")
+            ?? document.createElement("canvas").getContext("webgl");
+    if (reduced || !gl || !ref.current) return;
+
+    // Gate (a): never render while offscreen.
+    const io = new IntersectionObserver(
+      ([e]) => setLive(e.isIntersecting),
+      { threshold: 0.1 },
+    );
+    io.observe(ref.current);
+    return () => io.disconnect();
+  }, []);
+
+  return (
+    <section className="bg-[#000000] py-24">
+      <h2 className="mx-auto mb-12 max-w-[680px] text-balance px-6 text-3xl font-semibold text-[#EDEDED]">
+        One collector or forty. The same four checks run on every run.
+      </h2>
+
+      {/* Gate (c): the canvas has no text over it. The heading is above, outside. */}
+      <div
+        ref={ref}
+        aria-hidden
+        className="relative mx-auto h-[420px] w-full max-w-6xl overflow-hidden rounded-2xl border border-[#272727] opacity-20"
+      >
+        {live ? (
+          <Threads
+            color={[1, 1, 1]}
+            amplitude={0.9}
+            distance={0.35}
+            enableMouseInteraction={false}
+          />
+        ) : (
+          <StaticThreads />
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** Gate (b): reduced motion, or no WebGL context. Forty straight lines, flat ground. */
+function StaticThreads() {
+  return (
+    <svg className="h-full w-full bg-[#000000]" preserveAspectRatio="none" viewBox="0 0 100 40">
+      {Array.from({ length: 40 }, (_, i) => (
+        <line key={i} x1="0" x2="100" y1={i + 0.5} y2={i + 0.5} stroke="#FFFFFF" strokeWidth="0.08" />
+      ))}
+    </svg>
+  );
+}
+```
+
+`color` takes normalized RGB, not hex, so `[1, 1, 1]` is white and the container's
+`opacity-20` does the dimming. Neutral white keeps the canvas out of the verdict palette
+entirely, so it can never be misread as a state.
+
+### The four gates, satisfied
+
+| Gate | How |
+|---|---|
+| (a) 60fps on an integrated GPU | One triangle, one fragment shader, 40 lines, no textures or geometry. Plus an `IntersectionObserver` that stops rendering when the section is offscreen. |
+| (b) Degrades gracefully | `prefers-reduced-motion` **or** a failed WebGL context probe renders `StaticThreads`: 40 straight SVG lines on flat `#000000`. Same composition, zero motion, zero GPU. |
+| (c) Never behind readable text | The heading sits above the canvas in its own block. Nothing is set over the canvas, and it is `aria-hidden`. |
+| (d) Not a background gradient | It is a contained 420px canvas element with a full border, not a surface fill. Every card, panel, and page ground in the product stays flat and on the permitted list. |
+
+### Rejected canvases, and why plainly
+
+From ReactBits Backgrounds: `Iridescence`, `LiquidChrome`, `Aurora`, `SoftAurora`, `Silk`,
+`Dither`, `Plasma`, `PlasmaWave`, `Prism`, `PrismaticBurst`, `DarkVeil`, `LiquidEther`,
+`MoltenMetal`, `Balatro`, `Galaxy`, `Hyperspeed`, `Ballpit`, `LightRays`, `Lightning`,
+`FaultyTerminal`. From Magic UI: `globe`.
+
+They are texture, not meaning. Several are also genuinely expensive: `Galaxy`,
+`Hyperspeed`, and `Ballpit` carry three.js and physics, which is a different cost class
+from one `ogl` triangle.
+
+The deciding argument is not performance though. **Polygraph's entire pitch is that
+impressive looking output can be silently wrong.** A landing page that opens on a
+shimmering chrome gradient meaning nothing is that failure mode, performed by the product
+itself, above the fold. The hero earns attention with two real cards showing a real
+contradiction. Nothing behind them should compete for it.
+
+`FaultyTerminal` and `LetterGlitch` deserve a specific note, because they are thematically
+tempting: they depict corruption and glitching. They are the wrong metaphor. This product
+is about failures that produce **no** visible glitch. Rendering silent corruption as loud
+visual corruption teaches the reader the opposite of the thesis.
+
 ---
 
 # 4. Landing page visual spec
@@ -1129,46 +1652,57 @@ Two real `VerdictCard`s side by side, at `hero` density, 8px apart, both fed rea
 data. Not a screenshot, not a mockup, the actual component.
 
 ```
-┌─ same HTTP 200 ─────────────────┐  ┌─ same HTTP 200 ────────────────┐
-│ ┃                                │  │ ╻┃                              │
-│ ┃  books-prices      [LinkBreak] │  │ ┃╹ books-detail        [Swap]  │
-│ ┃  ● Wrong shape                 │  │ ╻┃ ● Wrong target              │
-│ ┃                                │  │ ┃╹   ⃠ Repair refused          │
-│ ┃  price   0.00  ← collapsed     │  │ ╻┃                             │
-│ ┃  FILL 62%   ROWS 20            │  │ ┃╹ requested  a-light-in-      │
-│ ┃                                │  │ ╻┃            the-attic        │
-│ ┃  Repair offered                │  │ ┃╹ returned   tipping-the-     │
-│ ┃  bdata scraper heal ...        │  │ ╻┃            velvet           │
-│ ┃                                │  │ ┃╹ FILL 100%  ROWS 20          │
-└─────────────────────────────────┘  └────────────────────────────────┘
-        red, fractured rail                violet, doubled rail
+┌──────────────────────────────────┐  ┌──────────────────────────────────┐
+│ ┃  books prices      [LinkBreak] │  │ ╻┃ books detail          [Swap]  │
+│ ┃  ● Wrong shape                 │  │ ┃╹ ● Wrong target                │
+│ ┃                                │  │ ╻┃                               │
+│ ┃  price    0.00   ← collapsed   │  │ ┃╹ requested   a light in        │
+│ ┃                                │  │ ╻┃             the attic         │
+│ ┃  FILL  62%    ROWS  20         │  │ ┃╹ returned    tipping the       │
+│ ┃                                │  │ ╻┃             velvet            │
+│ ┃  ┌────────────────────────┐    │  │ ┃╹                               │
+│ ┃  │  ⚙  Repair             │◀── │  │ ╻┃ FILL 100%     ROWS  20        │
+│ ┃  └────────────────────────┘ ▲  │  │ ┃╹ ┌────────────────────────┐    │
+│ ┃      raised, live, clickable│  │  │ ╻┃ │  ⃠  R̶e̶p̶a̶i̶r̶  refused   │◀── │
+└──────────────────────────────│──┘  └─┴──└────────────────────────┘─│──┘
+   red, fractured rail         │        magenta, doubled rail        │
+                               └──── same rectangle, same place ─────┘
+                                     one stands up, one is pressed in
 ```
+
+The two repair slots are the same rectangle in the same position at the same size. That is
+deliberate and it is the whole point: with the rectangle held constant, the only difference
+the eye has to process is that one button is standing up and live and the other has been
+pressed into the surface and crossed out. Nothing has to be read for that to land.
+
+Note also `FILL 100%` on the right card. Every field present, schema perfect, nothing
+missing. That single number is the argument, because by every measure a status monitor
+has, that card is passing.
 
 Caption below, centered, `text-base`, `--text-muted`:
 
 ```
-Same status code. Same shaped JSON. One of these can be repaired.
+Same status code. Same shaped JSON. Only one of these can be repaired.
 ```
 
-Note what the right card shows: **fill 100%**. Every field present, schema perfect,
-nothing missing. That single number is the argument. The reader understands in about two
-seconds that status monitoring cannot catch this, because by every measure a status
-monitor has, that card is passing.
-
 Motion: `blur-fade` staggers the two cards in at 0.15s and 0.3s on first view. Then, once
-per viewport entry, the right card replays the WRONG TARGET substitution from 2.6, so a
-visitor sees the entity key flip and the second rail slide out. Once. It does not loop.
+per viewport entry, the right card replays the full WRONG TARGET substitution from 2.6:
+the entity key flips, the second rail slides out, and **the repair button de-elevates and
+gets struck through**. A visitor watches the repair option be withdrawn. Once. It does not
+loop, and the left card never animates, so the contrast between a live button and a dead
+one is the only thing moving on the screen.
 
 ## 4.3 Below the fold
 
 | Order | Section | Ground | Component |
 |---|---|---|---|
-| 3 | Tagline reveal (B11, mandatory) | `#000000` | `TextReveal`, 3.6 |
+| 3 | Tagline reveal (B11, mandatory) | `#000000` | MU `TextReveal`, 3.6 |
 | 4 | Benefits, four outcome bullets | `#181818` | plain grid, Phosphor glyphs |
-| 5 | How it works, three steps | `#000000` | `terminal`, real demo transcript |
-| 6 | The ledger, chain proof | `#181818` | `animated-list`, static rows with hashes |
-| 7 | FAQ, eight questions | `#000000` | `accordion` |
-| 8 | Final CTA, identical to hero | `#181818` | same button |
+| 5 | How it works, three steps | `#000000` | MU `terminal`, real demo transcript |
+| 6 | **Fleet scale** | `#000000` | **RB `Threads`**, the one WebGL, 3.9 |
+| 7 | The ledger, chain proof | `#181818` | MU `animated-list`, static rows with hashes |
+| 8 | FAQ, eight questions | `#000000` | `accordion` |
+| 9 | Final CTA, identical to hero | `#181818` | same button |
 
 Section 5 uses `terminal` with `AnimatedSpan` and `TypingAnimation` replaying the real
 `npx tsx src/index.ts demo` output. `startOnView` is already true by default and `sequence`
@@ -1239,12 +1773,12 @@ The card never resizes to fill space. The container changes what it holds.
 spanning FLEET + FOCUS, with its evidence inline rather than in a separate panel. LEDGER
 stays. Zero empty regions.
 
-**n = 2 to 3.** FLEET is a single column of `card` density cards, 132px tall, 8px gaps.
+**n = 2 to 3.** FLEET is a single column of `card` density cards, 176px tall, 8px gaps.
 FOCUS shows the selected collector, defaulting to the worst ranked one on load rather than
 to an empty "select a collector" state. LEDGER stays.
 
 **n = 4 to 12.** FLEET becomes the primary region and takes the FOCUS width:
-`grid-cols-3`, `gap-2` (8px), 132px cards. FOCUS becomes a `sheet` that slides in from the
+`grid-cols-3`, `gap-2` (8px), 176px cards. FOCUS becomes a `sheet` that slides in from the
 right over the LEDGER when a card is selected, `--dur-slow`, `--ease-fluid`.
 
 **n = 13 to 40.** Cards switch to `row` density: 56px tall, `grid-cols-2`. Rail, name,
@@ -1284,7 +1818,7 @@ These are what separate "looks done" from "looks like a prototype":
 7. **Optical alignment on the rail.** The rail is inset 8px top and bottom, not flush.
    Flush reads as a rendering artifact; inset reads as a designed mark.
 8. **One accent per screen.** The only saturated color on a healthy dashboard is the
-   green rails. When something breaks, the red or violet has the screen to itself and
+   green rails. When something breaks, the red or magenta has the screen to itself and
    therefore reads instantly.
 
 ---
@@ -1305,7 +1839,7 @@ Every value against `#1F1F1F` (cards) and `#131209` (archive). `#131209` is dark
 | `#4ADE80` verified | 9.46:1 | pass | pass |
 | `#FBBF24` unexplained | 9.87:1 | pass | pass |
 | `#F85149` wrong shape | 4.92:1 | pass | fail |
-| `#C084FC` wrong target | 6.24:1 | pass | fail |
+| `#E879F9` wrong target | 6.24:1 | pass | fail |
 | `#8B949E` not checked | 5.36:1 | pass | fail |
 
 `#6E7681` is decoration only and is never used for text. Enforce it in review.
@@ -1318,14 +1852,14 @@ Luminance contrast between the five state colors, every pair:
 |---|---|
 | Verified / Unexplained | **1.04:1** |
 | Verified / Wrong shape | 1.92:1 |
-| Verified / Wrong target | 1.52:1 |
+| Verified / Wrong target | 1.41:1 |
 | Verified / Not checked | 1.76:1 |
 | Unexplained / Wrong shape | 2.01:1 |
-| Unexplained / Wrong target | 1.58:1 |
+| Unexplained / Wrong target | 1.47:1 |
 | Unexplained / Not checked | 1.84:1 |
-| Wrong shape / Wrong target | 1.27:1 |
+| Wrong shape / Wrong target | **1.36:1** |
 | Wrong shape / Not checked | 1.09:1 |
-| Wrong target / Not checked | 1.16:1 |
+| Wrong target / Not checked | 1.25:1 |
 
 Read that table honestly: the best pair is 2.01:1 and the worst is 1.04:1. **No pair of
 state colors is distinguishable by luminance alone.** Green and amber are within 4% of
@@ -1347,12 +1881,16 @@ Redundant encoding, per state, three independent channels plus text:
 |---|---|---|---|---|
 | Verified | solid continuous | `ShieldCheck` | green | "Verified" |
 | Unexplained | dashed | `SealQuestion` | amber | "Unexplained" |
-| Wrong shape | one gap at mid height | `LinkBreak` | red | "Wrong shape" |
-| Wrong target | two offset lines | `Swap` | violet | "Wrong target" + "Repair refused" |
+| Wrong shape | one gap at mid height | `LinkBreak` | red | "Wrong shape" + a **raised, live** Repair button |
+| Wrong target | two offset lines | `Swap` | magenta | "Wrong target" + a **sunken, struck through** Repair button |
 | Not checked | hairline at 40% | `EyeSlash` | gray | "Not checked" |
 
 The verdict label is always rendered and never truncated, at any density. It is the one
 element that may not be dropped to save space.
+
+The two lying states have a **fourth** redundant channel the others do not: the repair
+slot's physical state, raised versus sunken (section 2.8). That channel is pure
+luminance geometry and survives grayscale, squinting, and total color blindness.
 
 ## 6.3 Focus
 
@@ -1431,10 +1969,33 @@ Visual:
 Verdict language:
 
 - [ ] Five rail geometries are distinct in a grayscale screenshot.
-- [ ] `WRONG_TARGET` always renders the "Repair refused" badge.
 - [ ] `unverified` outranks every other state.
 - [ ] No state is identifiable by color alone.
 - [ ] Nothing animates while a fleet is healthy and idle.
+- [ ] Wrong shape is red and wrong target is magenta. Never two shades of red.
+
+Repair slot:
+
+- [ ] The slot is the same rectangle, same position, same size, in all five states.
+- [ ] `WRONG_SHAPE` renders a real enabled button that actually calls the repair action.
+- [ ] `WRONG_TARGET` renders the refusal in that same rectangle, sunken, never removed.
+- [ ] The strikethrough crosses "Repair" only, never "refused".
+- [ ] The refused button keeps 6.70:1 contrast. No `opacity-50` disabled treatment.
+- [ ] `aria-describedby` carries the full refusal reason, not just the word "refused".
+- [ ] At `row` density the slot is gone and the chip carries the refusal instead.
+- [ ] The two proof cards side by side read correctly in grayscale, squinted, at 3 metres.
+
+ReactBits and WebGL:
+
+- [ ] TS + Tailwind variant used for every ReactBits component.
+- [ ] `gsap` is not in `package.json`.
+- [ ] `Stepper`'s inline `1px solid #222` changed to `#272727`.
+- [ ] `Counter`'s `fontSize` and `borderRadius` pinned to scale values.
+- [ ] Exactly one WebGL canvas exists, on the landing page, below the fold.
+- [ ] Zero canvases in the dashboard, onboarding, cards, ledger, or evidence panel.
+- [ ] `Threads` stops rendering when scrolled offscreen.
+- [ ] Reduced motion and a missing WebGL context both fall back to `StaticThreads`.
+- [ ] No text is set over the canvas.
 
 Finish:
 

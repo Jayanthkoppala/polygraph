@@ -34,7 +34,7 @@ export function HealthyRow({ collectors }: { collectors: CollectorState[] }) {
         <span className="font-mono tabular-nums text-[#EDEDED]">{collectors.length}</span>
         {` collector${collectors.length === 1 ? '' : 's'} passing`}
       </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-xs text-[#6E7681]">
+      <span className="min-w-0 flex-1 truncate font-mono text-xs text-[#9B9B9B]">
         {shown.join(' · ')}
         {remaining > 0 ? ` · +${remaining}` : ''}
       </span>

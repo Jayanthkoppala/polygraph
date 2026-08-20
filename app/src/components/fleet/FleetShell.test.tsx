@@ -134,3 +134,47 @@ describe('FleetShell — n>=4: overlay mode, FOCUS is a slide-in panel', () => {
     expect(screen.getByTestId('focus-overlay')).toBeInTheDocument();
   });
 });
+
+/**
+ * Regression for docs/design/critique.md #2: selecting the broken collector
+ * on the primary path (headline -> red card -> click) let the FOCUS panel's
+ * unwrappable heal command force the grid to 2349px wide, pushing LEDGER
+ * fully off-screen — a CSS grid child's implicit `min-width: auto` lets its
+ * content dictate track width unless the child (and the thing overflowing
+ * inside it) both explicitly opt out with `min-w-0`. jsdom has no real
+ * layout engine, so this asserts the structural fix (the classes that
+ * prevent the blowout) rather than a measured pixel width — real-width
+ * confirmation is the visual re-screenshot in the fix report.
+ */
+describe('FleetShell — the docked grid never lets a region blow out past its column (critique.md #2)', () => {
+  it('the FLEET, FOCUS, and LEDGER region wrappers all opt out of grid auto-sizing with min-w-0', () => {
+    render(
+      <FleetShell
+        fleet={fleetState([makeCollector('a', 'PASS'), makeCollector('b', 'FAILED_STRUCTURAL')])}
+        ledgerRows={[]}
+        onRepair={noop}
+        onAcknowledge={noop}
+      />,
+    );
+    expect(screen.getByTestId('fleet-region').className).toContain('min-w-0');
+    expect(screen.getByTestId('focus-region').className).toContain('min-w-0');
+    expect(screen.getByTestId('ledger-region').className).toContain('min-w-0');
+    // Belt-and-braces: the grid itself never lets the page page-scroll
+    // horizontally even if a future region forgets its own min-w-0.
+    expect(screen.getByTestId('fleet-shell-grid').className).toContain('overflow-x-hidden');
+  });
+
+  it('the heal-command control inside FOCUS can actually shrink and truncate, rather than forcing its column wide', () => {
+    const collector = makeCollector('demo-fixture-catalog-with-a-long-name', 'FAILED_STRUCTURAL', {
+      suggestedHealCommand: 'bdata scraper heal demo-fixture-catalog-with-a-long-name "re-derive the price selector"',
+    });
+    render(
+      <FleetShell fleet={fleetState([collector])} ledgerRows={[]} onRepair={noop} onAcknowledge={noop} />,
+    );
+    const healButton = screen.getByLabelText('Copy heal command');
+    expect(healButton.className).toContain('min-w-0');
+    const code = healButton.querySelector('code')!;
+    expect(code.className).toContain('truncate');
+    expect(code.className).toContain('min-w-0');
+  });
+});

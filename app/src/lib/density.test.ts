@@ -130,4 +130,29 @@ describe('computeHeadline — one sentence, the worst true thing, exact preceden
   it('zero collectors is its own sentence, not "0 collectors..."', () => {
     expect(computeHeadline([])).toEqual({ sentence: 'No collectors connected yet.', worstState: 'NONE' });
   });
+
+  /**
+   * Regression for docs/design/critique.md next-tier #3: `worstState` was
+   * hardcoded to 'WRONG_SHAPE' for any lying fleet, so a fleet whose only
+   * failure is WRONG_TARGET got a red headline over magenta cards — the
+   * exact severity-ramp confusion §2.5 forbids (WRONG_TARGET is
+   * deliberately off the red ramp, not a "worse" WRONG_SHAPE).
+   */
+  it('a fleet lying only via WRONG_TARGET takes the WRONG_TARGET (magenta) headline colour, never WRONG_SHAPE red', () => {
+    const collectors = [
+      collector({ id: 'a', verdict: 'FAILED_IDENTITY', cause: 'IDENTITY' }),
+      collector({ id: 'b', verdict: 'PASS' }),
+    ];
+    const { sentence, worstState } = computeHeadline(collectors);
+    expect(sentence).toBe('1 collector is lying to you.');
+    expect(worstState).toBe('WRONG_TARGET');
+  });
+
+  it('WRONG_SHAPE still wins the headline colour when both lying states coexist', () => {
+    const collectors = [
+      collector({ id: 'a', verdict: 'FAILED_IDENTITY', cause: 'IDENTITY' }),
+      collector({ id: 'b', verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL' }),
+    ];
+    expect(computeHeadline(collectors).worstState).toBe('WRONG_SHAPE');
+  });
 });

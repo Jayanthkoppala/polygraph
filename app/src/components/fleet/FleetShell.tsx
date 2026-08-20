@@ -139,7 +139,7 @@ function ShellHeader({ fleet, ledgerRows }: { fleet: FleetState; ledgerRows: Led
           ? `heal ${fleet.governor.totalAttemptsToday}/${fleet.governor.daily_heal_budget}`
           : 'Repairs: OFF'}
       </span>
-      <span className="font-mono text-xs tabular-nums text-[#6E7681]">
+      <span className="font-mono text-xs tabular-nums text-[#9B9B9B]">
         {fleet.ts ? new Date(fleet.ts).toLocaleTimeString() : '—'}
       </span>
     </header>

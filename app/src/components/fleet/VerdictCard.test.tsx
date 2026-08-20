@@ -163,3 +163,111 @@ describe('VerdictCard — reduced motion (§6.5)', () => {
     expect(screen.getByText('Wrong target')).toBeInTheDocument();
   });
 });
+
+/**
+ * Regression for docs/design/critique.md #1: the repair slot rendered as a
+ * 1px sliver on every card because the shell was NOT a flex column and the
+ * button took `h-full` (the shell's whole fixed height) with the slot as a
+ * sibling after it — button + slot together always exceeded the shell's
+ * `overflow-hidden` height by exactly the slot's own height. jsdom does not
+ * do real layout, so this can't assert a rendered pixel height (that's
+ * covered by the visual re-screenshot in the fix report); it instead
+ * asserts the structural invariant that prevents the overflow: the shell
+ * stacks as a column and the button shrinks to make room for a
+ * never-shrinking slot, rather than both claiming the full height.
+ */
+describe('VerdictCard — the repair slot has room inside the shell (critique.md #1)', () => {
+  it('the card button is a flexed, shrinkable region, not a fixed h-full sibling of the slot', () => {
+    stubMatchMedia(false);
+    const collector = baseCollector({ verdict: 'FAILED_CONTRACT', cause: 'STRUCTURAL' });
+    render(<VerdictCard collector={collector} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    const button = screen.getByRole('button', { name: /amazon-prices/ });
+    expect(button.className).toContain('flex-1');
+    expect(button.className).toContain('min-h-0');
+    expect(button.className).not.toMatch(/\bh-full\b/);
+  });
+
+  it('the slot wrapper never shrinks to make room for the button (shrink-0)', () => {
+    stubMatchMedia(false);
+    const collector = baseCollector({ verdict: 'FAILED_CONTRACT', cause: 'STRUCTURAL' });
+    const { container } = render(
+      <VerdictCard collector={collector} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    const slotWrapper = screen.getByRole('button', { name: 'Repair' }).parentElement;
+    expect(slotWrapper).not.toBeNull();
+    expect(slotWrapper!.className).toContain('shrink-0');
+    // And the shell itself must stack them in a column, never overlap them.
+    const shell = container.querySelector('[data-testid="verdict-card-shell"]')!;
+    expect(shell.className).toContain('flex-col');
+  });
+});
+
+/**
+ * Regression for docs/design/critique.md next-tier #1: `useSkipEntrance`
+ * alone treats every remount as indistinguishable from first paint, so
+ * ProofMoment's key-bump replay could never actually play the WRONG_TARGET
+ * choreography. `animateEntrance` is the explicit override that fixes it.
+ */
+describe('VerdictCard — animateEntrance overrides the mount-based motion gate (critique.md next-tier #1)', () => {
+  it('animateEntrance={false} suppresses the entity-key rotation even though this is a fresh mount', () => {
+    stubMatchMedia(false);
+    const collector = baseCollector({
+      verdict: 'FAILED_IDENTITY',
+      cause: 'IDENTITY',
+      evidence: [
+        {
+          check: 'identity',
+          ok: false,
+          detail: 'x',
+          metrics: { compared: 1, mismatched: 1, mismatches: [{ input: 'x', requestedKey: 'A', extractedKey: 'B' }] },
+        },
+      ],
+    });
+    render(
+      <VerdictCard
+        collector={collector}
+        density="card"
+        onSelect={noop}
+        onRepair={noop}
+        onAcknowledge={noop}
+        animateEntrance={false}
+      />,
+    );
+    const received = screen.getByText('B').closest('div')!;
+    // initial={false} means motion/react never assigns a starting
+    // rotateX/opacity keyframe — the row renders directly in its settled
+    // position, so its transform is either unset or the identity "none".
+    expect(['', 'none']).toContain(received.style.transform);
+  });
+
+  it('animateEntrance={true} plays the rotation on a fresh mount, which the natural mount-based gate alone would suppress', () => {
+    stubMatchMedia(false);
+    const collector = baseCollector({
+      verdict: 'FAILED_IDENTITY',
+      cause: 'IDENTITY',
+      evidence: [
+        {
+          check: 'identity',
+          ok: false,
+          detail: 'x',
+          metrics: { compared: 1, mismatched: 1, mismatches: [{ input: 'x', requestedKey: 'A', extractedKey: 'B' }] },
+        },
+      ],
+    });
+    render(
+      <VerdictCard
+        collector={collector}
+        density="card"
+        onSelect={noop}
+        onRepair={noop}
+        onAcknowledge={noop}
+        animateEntrance
+      />,
+    );
+    const received = screen.getByText('B').closest('div')!;
+    // initial={{ rotateX: 90, opacity: 0 }} means motion/react assigns a
+    // starting transform inline style immediately on mount, before the
+    // animation runs — proof the entrance keyframe actually fired.
+    expect(received.style.transform).not.toBe('');
+  });
+});

@@ -95,7 +95,7 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
           entirely in your browser — it is not the hosted, server-side
           runner pipeline a real account uses. Said plainly, on the page,
           not just in a code comment. */}
-      <p className="relative mb-3 text-xs text-[#6E7681]">
+      <p className="relative mb-3 text-xs text-[#9B9B9B]">
         Runs entirely in your browser: real verdicts, a real SHA-256 ledger chain — not the
         hosted server pipeline your account would use.
       </p>
