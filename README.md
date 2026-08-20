@@ -107,9 +107,26 @@ setting that turns it on.
 
 ---
 
-## What's real and what isn't
+## Where this actually is
 
-Stated plainly, because a verification tool that overstates itself is self-defeating:
+This is a hackathon build and still moving. Stated plainly, because a verification tool
+that overstates its own progress is self-defeating:
+
+| Piece | State | What that means |
+|---|---|---|
+| Verdict engine — four checks, classifier, policy | **Done** | Tested, drives both the local and hosted paths |
+| Hash-chained ledger + `ledger verify` | **Done** | Per-account chains, tamper-evident |
+| Bright Data integration | **Done** | Proven against a live collector, not mocks |
+| Offline demo | **Done** | `npm run demo`, no account, no network |
+| Multi-tenancy — isolation, key custody, onboarding | **Built, not live** | Code and tests are in; no public instance is running, so it is unproven at any real scale |
+| Dashboard — fleet view, evidence, ledger stream | **Built, polishing** | Works; density and keyboard nav are unfinished |
+| Front end / landing page | **In progress** | Actively being rebuilt as of this commit |
+| Published to npm | **Not yet** | Package name reserved as `polygraph-data`, not pushed |
+| Hosted service anyone can sign up for | **Not yet** | You run it yourself today |
+| Peer corroboration between collectors | **Not wired** | Built, but needs 3+ same-purpose collectors to say anything |
+| Drift / trend detection | **Not built** | No trend signal exists; a chart drawn from nothing would be a lie |
+
+And the specifics behind those rows:
 
 - **The verdict engine, the ledger, tenancy, and key custody are real and tested.**
   1,022 tests, typecheck clean.
