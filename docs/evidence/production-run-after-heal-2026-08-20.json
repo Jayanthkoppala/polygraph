@@ -1,0 +1,587 @@
+[
+  {
+    "title": "Os8088.com: IBM XT OS now has a Browser, CP/M 2.2 with Z80 core and MS Word 1.1a",
+    "url": "https://os8088.com/spotlight/",
+    "points": 108,
+    "author": "jggonz",
+    "comment_count": 1646,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "The Chauffeur Problem",
+    "url": "https://engines.egr.uh.edu/episode/1495",
+    "points": 38,
+    "author": "leowoo91",
+    "comment_count": 621,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Go 1.27",
+    "url": "https://go.dev/blog/go1.27",
+    "points": 705,
+    "author": "database64128",
+    "comment_count": 18214,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Show HN: I trained a 125M model to autocomplete piano on-device",
+    "url": "https://simedw.com/2026/08/20/midi-autocomplete/",
+    "points": 69,
+    "author": "simedw",
+    "comment_count": 117,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Geolocating a random island using geometry and CUDA programming",
+    "url": "https://yassa9.github.io/osint/gralhix-004/",
+    "points": 499,
+    "author": "yassa9",
+    "comment_count": 180,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Manabu Kosaka's Handmade Paper Sculptures",
+    "url": "https://coca11272000.wixsite.com/manabukosaka",
+    "points": 161,
+    "author": "surprisetalk",
+    "comment_count": 1419,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "OpenRouter is joining Stripe",
+    "url": "https://openrouter.ai/blog/announcements/openrouter-is-joining-stripe/",
+    "points": 905,
+    "author": "rvz",
+    "comment_count": 19464,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Casio F-B100W-1A",
+    "url": "https://www.casio.com/uk/watches/casio/product.F-B100W-1A/",
+    "points": 419,
+    "author": "__fst__",
+    "comment_count": 21349,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Browser De-Slop",
+    "url": "https://www.sacredheartsc.com/blog/browser-de-slop/",
+    "points": 18,
+    "author": "cullumsmith",
+    "comment_count": 110,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Sectorforth is a 16-bit x86 Forth that fits in a 512-byte boot sector (2020)",
+    "url": "https://github.com/cesarblum/sectorforth",
+    "points": 43,
+    "author": "sigalor",
+    "comment_count": 1111,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Australia passes law to levy tech giants that fail to pay for local news",
+    "url": "https://www.reuters.com/legal/litigation/australia-passes-law-levy-tech-giants-that-fail-pay-local-news-2026-08-20/",
+    "points": 28,
+    "author": "thm",
+    "comment_count": 212,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Seeing beyond BMI: Estimating cardiometabolic risk with smartphone imagery",
+    "url": "https://research.google/blog/seeing-beyond-bmi-estimating-cardiometabolic-risk-with-smartphone-imagery/",
+    "points": 17,
+    "author": "leanderjanssen",
+    "comment_count": 21,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Risk Engineering",
+    "url": "https://risk-engineering.org/",
+    "points": 17,
+    "author": "throwaw12",
+    "comment_count": 32,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Unlocking a locked/deactivated e-waste Cricut Maker",
+    "url": "https://sprocketfox.io/xssfox/2026/07/01/cricut-unlock/",
+    "points": 239,
+    "author": "1e1a",
+    "comment_count": 1857,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Show HN: Streambench – Native Mac Client for Kafka and NATS",
+    "url": "https://streambench.app/",
+    "points": 5,
+    "author": "valentinprgnd",
+    "comment_count": 21,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "A joke domain purchase turned in geopolitical warfare",
+    "url": "https://sprocketfox.io/xssfox/2026/08/19/sondehub-and-war/",
+    "points": 962,
+    "author": "kareiva",
+    "comment_count": 1154,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Mathematics in the age of AI",
+    "url": "https://arxiv.org/abs/2608.16753",
+    "points": 193,
+    "author": "jonbaer",
+    "comment_count": 22228,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "fx :Tiny, open, native coding agent.",
+    "url": "https://fx.sh/",
+    "points": 297,
+    "author": "handfuloflight",
+    "comment_count": 1126,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "PostgreSQL for Everything",
+    "url": "https://www.raphaelbauer.com/posts/postgresql-everything/",
+    "points": 405,
+    "author": "karlmush",
+    "comment_count": 1237,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Don't Paste the AI, please",
+    "url": "https://dontpastetheai.com/",
+    "points": 699,
+    "author": "pjerem",
+    "comment_count": 5346,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Unsloth Dynamic 3.0 GGUFs",
+    "url": "https://unsloth.ai/docs/basics/dynamic-3.0-ggufs",
+    "points": 299,
+    "author": "jonesy827",
+    "comment_count": 18103,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Turns are Better than Radians (2022)",
+    "url": "https://www.computerenhance.com/p/turns-are-better-than-radians",
+    "points": 258,
+    "author": "mayoff",
+    "comment_count": 11137,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "A faster way to calculate the day of the week",
+    "url": "https://www.benjoffe.com/fast-day-of-week",
+    "points": 199,
+    "author": "gavide",
+    "comment_count": 1147,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Sol loves to cheat",
+    "url": "https://jumploops.com/blog/sol-loves-to-cheat/",
+    "points": 201,
+    "author": "jumploops",
+    "comment_count": 16161,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Windows brings out the Rorschach test in everyone (2003)",
+    "url": "https://devblogs.microsoft.com/oldnewthing/20030825-00/?p=42803",
+    "points": 260,
+    "author": "luu",
+    "comment_count": 797,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Google has stopped pushing Git tags for some Android source code",
+    "url": "https://grapheneos.social/@GrapheneOS/117057099753905023",
+    "points": 697,
+    "author": "Animux",
+    "comment_count": 19271,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "A decades-old bug in Knuth's long division (TAOCP Vol II, Algorithm 4.3.1D)",
+    "url": "https://kolja.rs/algorithm-d/",
+    "points": 219,
+    "author": "nk_kolja",
+    "comment_count": 150,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "The little-known winstart.bat batch file",
+    "url": "https://devblogs.microsoft.com/oldnewthing/20260811-00/?p=112605",
+    "points": 122,
+    "author": "ingve",
+    "comment_count": 1837,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Launch HN: OneCLI (YC S26) – OSS sandboxed agent harness for teams",
+    "url": "https://github.com/onecli/onecli",
+    "points": 83,
+    "author": "guyb3",
+    "comment_count": 2024,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Moderna reports first positive Phase 3 for mRNA neoantigen therapy in melanoma",
+    "url": "https://twitter.com/NoubarAfeyan/status/2090050162441752787",
+    "points": 574,
+    "author": "heydenberk",
+    "comment_count": 23270,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Filtered Vector Search: What Acorn Fixes, and What Fixes Acorn",
+    "url": "https://qdrant.tech/articles/filtered-vector-search-acorn/",
+    "points": 6,
+    "author": "softwaredoug",
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Devices with GrapheneOS support should be available in 2027",
+    "url": "https://grapheneos.social/@GrapheneOS/117078064184215730",
+    "points": 610,
+    "author": "exceptione",
+    "comment_count": 1390,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "MicroGPT-C in pure C hits 10M TPS on Apple M5",
+    "url": "https://github.com/vixhal-baraiya/microgpt-c",
+    "points": 133,
+    "author": "dhorthy",
+    "comment_count": 2348,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Pixel 11 Pro Fold feels like the end of an era",
+    "url": "https://www.theverge.com/tech/981956/google-pixel-11-pro-fold-review",
+    "points": 80,
+    "author": "animalcule",
+    "comment_count": 17219,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Pressed Penny Machine Map",
+    "url": "https://pennypresses.net/home/map.php",
+    "points": 67,
+    "author": "willmeyers",
+    "comment_count": 1751,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Simulacra and Simulation",
+    "url": "https://en.wikipedia.org/wiki/Simulacra_and_Simulation",
+    "points": 78,
+    "author": "soupspaces",
+    "comment_count": 1335,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Why Microsoft Entertainment Pack had a sticker announcing that it had Tetris?",
+    "url": "https://devblogs.microsoft.com/oldnewthing/20260818-00/?p=112621",
+    "points": 66,
+    "author": "tybulewicz",
+    "comment_count": 841,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Universality of Gradient Descent Neural Network Training",
+    "url": "https://arxiv.org/abs/2007.13664",
+    "points": 34,
+    "author": "E-Reverance",
+    "comment_count": 132,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Proof of Human (YC S23) Is Hiring a Member of Technical Staff",
+    "url": "https://www.ycombinator.com/companies/proof-of-human/jobs/ZTZHEbb-member-of-technical-staff",
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Netherlands lists Israel as a threat to its national security for the first time",
+    "url": "https://www.trtworld.com/article/911b7ff6c075",
+    "points": 31,
+    "author": "robtherobber",
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "A portable, sensitive, low power, analog Geiger counter (2025)",
+    "url": "https://ludens.cl/Electron/geiger2/geiger2.html",
+    "points": 49,
+    "author": "crorella",
+    "comment_count": 173,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "RAPx: A static analysis tool for Rust programs",
+    "url": "https://github.com/safer-rust/RAPx",
+    "points": 8,
+    "author": "rendaw",
+    "comment_count": 52,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Supersonic Trebuchet [video]",
+    "url": "https://www.youtube.com/watch?v=Co57SfcT-h0",
+    "points": 249,
+    "author": "CharlesW",
+    "comment_count": 1109,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Claude writing a macOS driver for my obscure HP printer built only for Windows",
+    "url": "https://twitter.com/kuberwastaken/status/2089377982536388964",
+    "points": 328,
+    "author": "porridgeraisin",
+    "comment_count": 2222,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Remote workers report the highest well-being in study of 7,700 employees",
+    "url": "https://www.colorado.edu/today/2026/08/12/remote-workers-report-highest-well-being-study-7700-employees",
+    "points": 593,
+    "author": "downbad_",
+    "comment_count": 21305,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Pacing model development in an era of cyber-critical capabilities",
+    "url": "https://openai.com/index/pacing-model-development-cyber-capabilities/",
+    "points": 157,
+    "author": "j4mie",
+    "comment_count": 1257,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "OpenLogi",
+    "url": "https://openlogi.org/en",
+    "points": 1567,
+    "author": "amatheus",
+    "comment_count": 1418,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Children's stunted lungs show recovery in ultra low emission zone",
+    "url": "https://www.bbc.com/news/articles/c1l1r1zne1ro",
+    "points": 401,
+    "author": "dabinat",
+    "comment_count": 1391,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "YACS 2.0 – Yet Another Curta Simulator",
+    "url": "https://satadorus.eu/x_ite/yacs_2_0/yacs_2_0.html",
+    "points": 5,
+    "author": "neom",
+    "comment_count": 41,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "IDE Nostalgia (2022)",
+    "url": "https://davidsmaynard.com/blog/keyset",
+    "points": 52,
+    "author": "dmaynard",
+    "comment_count": 163,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "What's missing to have reproducible builds on PyPI",
+    "url": "https://snarky.ca/whats-missing-to-have-reproducible-builds-on-pypi/",
+    "points": 21,
+    "author": "Ravencentric",
+    "comment_count": 78,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Xorshift Generators",
+    "url": "https://www.alanzucconi.com/2026/08/15/xorshift-generators/",
+    "points": 95,
+    "author": "tobr",
+    "comment_count": 1544,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Ornith-1.5: From Self-Scaffolding to Self-Improvement",
+    "url": "https://ornith.ai/ornith_1_5.html",
+    "points": 200,
+    "author": "CommonGuy",
+    "comment_count": 2270,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "DFlash 2: Keep Drafting Parallel",
+    "url": "https://inco.ai/blog/dflash2/",
+    "points": 89,
+    "author": "mike-the-brain",
+    "comment_count": 1617,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Air Theremin – A browser theremin you play by waving at your webcam",
+    "url": "https://theremin.bizibah.com/",
+    "points": 288,
+    "author": "gurov",
+    "comment_count": 196,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Extensible Software in the age of LLMs",
+    "url": "https://jeremymorrell.dev/blog/extensible-software-in-the-age-of-llms/",
+    "points": 158,
+    "author": "coloneltcb",
+    "comment_count": 2168,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Rings forged from meteorites may have been fashionable among ancient Greek elite",
+    "url": "https://phys.org/news/2026-08-forged-meteorites-fashionable-ancient-greek.html",
+    "points": 129,
+    "author": "pseudolus",
+    "comment_count": 153,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Activation Energy is a good model for a lot of things",
+    "url": "https://homosabiens.substack.com/p/activation-energy-is-a-good-model",
+    "points": 179,
+    "author": "surprisetalk",
+    "comment_count": 152,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  },
+  {
+    "title": "Feature Request: Support AGENTS.md",
+    "url": "https://github.com/anthropics/claude-code/issues/6235",
+    "points": 320,
+    "author": "fg137",
+    "comment_count": 16196,
+    "input": {
+      "url": "https://news.ycombinator.com"
+    }
+  }
+]

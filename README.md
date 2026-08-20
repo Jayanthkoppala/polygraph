@@ -295,10 +295,13 @@ rather than asserted:
 
 **Create-and-run flow, with a Collector ID as proof.** `c_mt1dsu9fdtdtx3uhf` — Hacker
 News top stories (`title`, `url`, `points`, `author`, `comment_count`), built by
-`bdata scraper create` against `https://news.ycombinator.com` and run live. It is
-pinned with its full provenance, its schema, and the exact commands to re-run it in
-[`CLAUDE.md`](CLAUDE.md#collector-id-pin), and you can confirm it resolves yourself
-with one `GET /dca/collectors_list` call (the command is in that section).
+`bdata scraper create` against `https://news.ycombinator.com`. Its most recent live
+run returned **59 real records**, committed row-for-row at
+[`docs/evidence/production-run-after-heal-2026-08-20.json`](docs/evidence/production-run-after-heal-2026-08-20.json).
+The ID is pinned with its full provenance, its schema, and the exact commands to
+re-run it in [`CLAUDE.md`](CLAUDE.md#collector-id-pin), and you can confirm it
+resolves yourself with one `GET /dca/collectors_list` call (the command is in that
+section).
 
 This account's AI collector-generation feature was 403-gated for most of this build —
 `gates/t2/create*.json` holds six consecutive `"error": "Automation not allowed"`

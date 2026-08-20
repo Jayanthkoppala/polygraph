@@ -102,8 +102,26 @@ fetch returned rows without a `rank` field, confirming the schema read was not m
 a stale listing — the production collector genuinely still runs the pre-heal
 extractor.
 
-**3. Repeat.** Both checks were performed twice on the day, and check 1 again here,
-after the heal reported done. The result did not change.
+**3. Repeat, independently.** Both checks were performed twice on the day. Both were
+then run again from scratch while writing this document, hours after the heal, by a
+different operator against the same live account:
+
+```
+bdata scraper run c_mt1dsu9fdtdtx3uhf https://news.ycombinator.com
+```
+
+That produced batch job `j_mt1k1gj924tf700peh` and **59 records** of real Hacker News
+data. The union of every key across all 59 rows is:
+
+```
+author · comment_count · input · points · title · url
+```
+
+No `rank`, in any row. The raw responses are committed alongside this document:
+`docs/evidence/production-run-after-heal-2026-08-20.json` (all 59 rows) and
+`docs/evidence/collectors-list-after-heal-2026-08-20.json` (the collector's production
+schema as returned by `collectors_list`). The heal reported `"done"` and the
+production collector still returns exactly the five pre-heal content fields.
 
 ## What the documentation says
 

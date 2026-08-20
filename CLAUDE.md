@@ -53,7 +53,12 @@ curl -s -H "Authorization: Bearer $(cat ~/.brightdata_admin_key)" \
 ```
 
 Last verified 2026-08-20: `total: 2`, both IDs above present, `c_mt1dsu9fdtdtx3uhf`
-active. Never echo the key itself.
+active. A live `bdata scraper run` on the same date returned 59 real records
+(`docs/evidence/production-run-after-heal-2026-08-20.json`). Never echo the key
+itself.
+
+Note that a `run` against Hacker News currently exceeds the realtime page limit and
+the CLI falls back to batch mode, so expect a few minutes rather than seconds.
 
 > **Unresolved:** a third ID, `c_mt0ta1py1iknyb09xc` (reported as a hand-built
 > `jobs.ashbyhq.com` collector), does **not** appear in `collectors_list` on this

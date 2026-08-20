@@ -1,0 +1,107 @@
+{
+  "id": "c_mt1dsu9fdtdtx3uhf",
+  "name": "cli-scraper-1787221943",
+  "active": true,
+  "last_run": "2026-08-20T10:44:55.337Z",
+  "deliver": {
+    "type": "webhook",
+    "format": "json"
+  },
+  "output_schema": {
+    "type": "object",
+    "fields": {
+      "title": {
+        "type": "text",
+        "active": true
+      },
+      "url": {
+        "type": "url",
+        "active": true
+      },
+      "points": {
+        "type": "number",
+        "active": true
+      },
+      "author": {
+        "type": "text",
+        "active": true
+      },
+      "comment_count": {
+        "type": "number",
+        "active": true
+      },
+      "timestamp": {
+        "type": "timestamp",
+        "active": false
+      },
+      "requested_timestamp": {
+        "type": "requested_timestamp",
+        "active": false
+      },
+      "input": {
+        "type": "input",
+        "active": true
+      },
+      "prime_input": {
+        "type": "prime_input",
+        "active": false
+      },
+      "status_code": {
+        "type": "status_code",
+        "active": false
+      },
+      "warning": {
+        "type": "warning",
+        "active": true
+      },
+      "warning_code": {
+        "type": "warning_code",
+        "active": true
+      },
+      "error": {
+        "type": "error",
+        "active": true
+      },
+      "error_code": {
+        "type": "error_code",
+        "active": true
+      },
+      "screenshot": {
+        "type": "screenshot_snapshot",
+        "active": false
+      },
+      "html": {
+        "type": "html_snapshot",
+        "active": false
+      },
+      "warc": {
+        "type": "warc_snapshot",
+        "active": false
+      },
+      "page_id": {
+        "type": "page_id",
+        "active": false
+      },
+      "job_id": {
+        "type": "job_id",
+        "active": false
+      },
+      "collector_id": {
+        "type": "collector_id",
+        "active": false
+      },
+      "collector_queue": {
+        "type": "collector_queue",
+        "active": false
+      },
+      "reparse_file": {
+        "type": "reparse_file",
+        "active": false
+      },
+      "crawl_type": {
+        "type": "crawl_type",
+        "active": false
+      }
+    }
+  }
+}
