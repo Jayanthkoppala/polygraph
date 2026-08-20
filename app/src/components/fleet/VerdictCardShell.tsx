@@ -52,7 +52,7 @@ export function VerdictCardShell({ accent, className, children }: VerdictCardShe
       onPointerMove={onPointerMove}
       onPointerLeave={onPointerLeave}
       className={cn(
-        'group relative isolate overflow-hidden rounded-2xl border border-transparent',
+        'group relative isolate flex flex-col overflow-hidden rounded-2xl border border-transparent',
         'transition-shadow duration-[180ms] ease-[var(--ease-fluid)]',
         'hover:shadow-[var(--shadow-e2)]',
         'focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[#EDEDED]',

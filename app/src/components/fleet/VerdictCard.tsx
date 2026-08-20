@@ -73,8 +73,8 @@ export function VerdictCard({
         data-roving-item
         className={
           isRow
-            ? 'relative flex h-full w-full items-center gap-3 p-3 text-left outline-none'
-            : 'relative flex h-full w-full flex-col justify-between p-3 text-left outline-none'
+            ? 'relative flex min-h-0 w-full flex-1 items-center gap-3 p-3 text-left outline-none'
+            : 'relative flex min-h-0 w-full flex-1 flex-col justify-between p-3 text-left outline-none'
         }
       >
         <VerdictRail state={state} onFractureSettle={handleFractureSettle} />
@@ -116,7 +116,7 @@ export function VerdictCard({
       </motion.button>
 
       {!isRow && (
-        <div className="px-3 pb-3">
+        <div className="shrink-0 px-3 pb-3">
           <RepairSlot state={state} collectorId={collector.id} onRepair={onRepair} onAcknowledge={onAcknowledge} />
         </div>
       )}

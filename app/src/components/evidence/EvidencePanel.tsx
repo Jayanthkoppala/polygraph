@@ -195,9 +195,9 @@ function HealCommand({ command }: { command: string }) {
         type="button"
         onClick={onCopy}
         aria-label={copied ? 'Command copied' : 'Copy heal command'}
-        className="flex items-center justify-between gap-2 rounded-sm border border-[#272727] bg-[#000000] px-3 py-2 text-left font-mono text-xs text-[#EDEDED] outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]"
+        className="flex min-w-0 max-w-full items-center justify-between gap-2 rounded-sm border border-[#272727] bg-[#000000] px-3 py-2 text-left font-mono text-xs text-[#EDEDED] outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]"
       >
-        <code className="truncate">{command}</code>
+        <code className="min-w-0 truncate">{command}</code>
         <span className="flex shrink-0 items-center gap-1 text-[#9B9B9B]">
           {copied ? <Check size={12} weight="regular" aria-hidden /> : <Copy size={12} weight="regular" aria-hidden />}
           {copied ? 'Copied' : 'Copy'}

@@ -36,6 +36,18 @@
 }
 
 /* ---------------------------------------------------------------------- */
+/* Page ground. Without this, `body` computes to browser-default          */
+/* transparent/white and any route that doesn't paint its own full-bleed  */
+/* background (onboarding, session-loading) shows a dark panel floating   */
+/* on a white page. One rule, future-proofs every route. */
+/* ---------------------------------------------------------------------- */
+
+body {
+  background-color: var(--color-void);
+  color: #ededed;
+}
+
+/* ---------------------------------------------------------------------- */
 /* §1.2 Surfaces — flat backgrounds only, no gradients anywhere.          */
 /* ---------------------------------------------------------------------- */
 

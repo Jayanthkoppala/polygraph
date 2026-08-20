@@ -52,10 +52,10 @@ export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: Fleet
       <div
         data-testid="fleet-shell-grid"
         data-shell-mode={shellMode}
-        className="grid min-h-0 flex-1 gap-4 p-4"
+        className="grid min-h-0 flex-1 gap-4 overflow-x-hidden p-4"
         style={{ gridTemplateColumns: gridCols }}
       >
-        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto" data-testid="fleet-region">
+        <div className="flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto" data-testid="fleet-region">
           <Headline collectors={collectors} lastSweepTs={fleet.ts} />
 
           {collectors.length === 0 ? (
@@ -84,12 +84,12 @@ export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: Fleet
         </div>
 
         {shellMode === 'docked' && (
-          <div className="min-h-0" data-testid="focus-region">
+          <div className="min-h-0 min-w-0" data-testid="focus-region">
             <EvidencePanel collector={selected} />
           </div>
         )}
 
-        <div className="min-h-0" data-testid="ledger-region">
+        <div className="min-h-0 min-w-0" data-testid="ledger-region">
           <LedgerStream rows={ledgerRows} />
         </div>
       </div>
