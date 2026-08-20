@@ -28,8 +28,8 @@ const LIES: {
         The page loads, the run reports success, and one field comes back empty on every row. The
         proof is a comparison:{' '}
         <span className="font-mono text-[#EDEDED]">price filled on 0% of rows. Every other field: 100%.</span>{' '}
-        One collapsed field against healthy neighbours means a broken extractor, and a broken
-        extractor can be repaired.
+        One collapsed field against healthy neighbours means a broken extractor, and for that one
+        failure Polygraph hands you the exact repair.
       </>
     ),
   },

@@ -38,7 +38,7 @@ type VerifyStatus = 'idle' | 'checking' | 'ok' | 'broken';
 const CUSTODY_FACTS = [
   'Your key is AES-256-GCM encrypted per tenant. There is no endpoint that shows it back.',
   'Your fleet, your ledger — every tenant’s chain starts from its own genesis.',
-  'Repairs are off until you turn them on. A repair spends your credits; nothing here spends them without you.',
+  'Repairs are off in the hosted product — structurally, not as a default. A repair would spend your Bright Data credits, and nothing here can spend them.',
 ];
 
 export function Receipt({ sandbox }: { sandbox: UseSandboxEngineResult }) {
