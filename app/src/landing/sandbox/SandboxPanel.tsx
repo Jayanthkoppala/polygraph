@@ -13,6 +13,17 @@
 import { useEffect, useState } from 'react';
 import { VerdictCard } from '@/components/fleet/VerdictCard';
 import { NoiseTexture } from '@/components/ui/noise-texture';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { translateEvidence } from '@/lib/evidence';
 import { relativeAge } from '@/lib/time';
 import type { UseSandboxEngineResult } from './useSandboxEngine';
@@ -24,6 +35,12 @@ const BUTTONS: { mode: SandboxMode; label: string; breakingLabel: string }[] = [
   { mode: 'wrong_entity', label: 'Serve the wrong product', breakingLabel: 'Breaking…' },
   { mode: 'healthy', label: 'Put it back', breakingLabel: 'Releasing…' },
 ];
+
+const BREAK_BUTTON_CLASS =
+  'rounded-lg border border-[#272727] bg-[#272727] px-3 py-2 text-sm font-semibold text-[#EDEDED] ' +
+  'outline-none transition-colors duration-[var(--dur-fast)] ease-[var(--ease-fluid)] ' +
+  'hover:bg-[#313131] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ' +
+  'focus-visible:outline-[#EDEDED] disabled:cursor-wait disabled:opacity-60';
 
 export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
   const { fleet, phase, actionsRemaining, limitReached, trigger } = sandbox;
@@ -74,6 +91,15 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
         </span>
       </header>
 
+      {/* Honesty pass (Task 10a): this sandbox is genuinely computed, but
+          entirely in your browser — it is not the hosted, server-side
+          runner pipeline a real account uses. Said plainly, on the page,
+          not just in a code comment. */}
+      <p className="relative mb-3 text-xs text-[#6E7681]">
+        Runs entirely in your browser: real verdicts, a real SHA-256 ledger chain — not the
+        hosted server pipeline your account would use.
+      </p>
+
       <div
         role="list"
         aria-label="Sandbox fleet"
@@ -115,21 +141,53 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
           <div className="flex flex-col gap-2">
             <span className="text-xs font-medium uppercase tracking-wide text-[#9B9B9B]">Break it</span>
             <div className="flex flex-wrap gap-2">
-              {BUTTONS.map((b) => (
-                <button
-                  key={b.mode}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => handleClick(b.mode)}
-                  data-testid={`sandbox-break-${b.mode}`}
-                  className="rounded-lg border border-[#272727] bg-[#272727] px-3 py-2 text-sm font-semibold text-[#EDEDED]
-                             outline-none transition-colors duration-[var(--dur-fast)] ease-[var(--ease-fluid)]
-                             hover:bg-[#313131] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
-                             focus-visible:outline-[#EDEDED] disabled:cursor-wait disabled:opacity-60"
-                >
-                  {pendingMode === b.mode ? (phase === 'breaking' ? b.breakingLabel : 'Re-verifying…') : b.label}
-                </button>
-              ))}
+              {BUTTONS.map((b) =>
+                // ui-system.md §3.7: "alert-dialog confirms wrong_entity,
+                // since it is the demo's climax and should not fire on a
+                // stray click." The other two modes stay one click — this
+                // is the one break button whose consequence (the identity
+                // substitution + refused-repair choreography) is worth a
+                // beat of friction before it fires.
+                b.mode === 'wrong_entity' ? (
+                  <AlertDialog key={b.mode}>
+                    <AlertDialogTrigger asChild>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        data-testid={`sandbox-break-${b.mode}`}
+                        className={BREAK_BUTTON_CLASS}
+                      >
+                        {pendingMode === b.mode ? (phase === 'breaking' ? b.breakingLabel : 'Re-verifying…') : b.label}
+                      </button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Serve the wrong product?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          The fleet will return a well-formed, fully-filled page for a different
+                          product than the one requested. Polygraph will refuse to repair it — this is
+                          the one failure the product will not try to fix.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => handleClick(b.mode)}>Serve it</AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                ) : (
+                  <button
+                    key={b.mode}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => handleClick(b.mode)}
+                    data-testid={`sandbox-break-${b.mode}`}
+                    className={BREAK_BUTTON_CLASS}
+                  >
+                    {pendingMode === b.mode ? (phase === 'breaking' ? b.breakingLabel : 'Re-verifying…') : b.label}
+                  </button>
+                ),
+              )}
             </div>
             <span className="font-mono text-xs text-[#6E7681]">{actionsRemaining} sandbox actions left</span>
           </div>

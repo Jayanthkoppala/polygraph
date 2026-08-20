@@ -6,13 +6,20 @@
  *
  * How: compiles app.css with the real `@tailwindcss/postcss` plugin (the
  * same engine `@tailwindcss/vite` uses under the hood) against this
- * project's real content — including token-usage.fixture.tsx, whose sole
- * job is to reference every token via the exact arbitrary-value syntax
+ * project's real content, scanned directly off disk. Tailwind v4
+ * tree-shakes any `@theme` variable it never sees referenced in scanned
+ * content, so this only stays green because real components reference
+ * every token via the exact arbitrary-value syntax
  * (`bg-[var(--color-void)]`, `shadow-[var(--shadow-e2)]`, etc.) the
- * ui-system.md spec's own component snippets use. Tailwind v4 tree-shakes
- * any `@theme` variable it never sees referenced in scanned content, so
- * without that fixture most of this file's assertions would fail even
- * though the tokens are declared correctly — see the file's own docstring.
+ * ui-system.md spec's own component snippets use.
+ *
+ * `token-usage.fixture.tsx` (Task 5's placeholder for tokens with no real
+ * consumer yet) was deleted in Task 10a: by then every token this file
+ * asserts on, including the two static-class spellings
+ * (`text-[var(--color-verdict-pass)]`, `duration-[var(--dur-fast)]`) that
+ * were still fixture-only when Task 7 wrote it, had a genuine occurrence
+ * in the landing page and onboarding steps. Re-verified by running this
+ * suite with the fixture already removed before deleting it for real.
  *
  * This is deliberately NOT a snapshot test: every assertion pins to a
  * literal value transcribed from docs/design/ui-system.md, so a value

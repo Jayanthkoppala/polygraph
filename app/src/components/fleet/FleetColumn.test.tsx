@@ -151,3 +151,77 @@ describe('FleetColumn — n>40: grouped, virtualized, VERIFIED collapsed by defa
     expect(rendered).toBeLessThan(50);
   });
 });
+
+describe('FleetColumn — roving tabindex (ui-system.md §6.4: arrow keys move focus in the fleet list)', () => {
+  it('exactly one card is a tab stop; ArrowDown/ArrowRight move focus and which one it is', () => {
+    stubMatchMedia();
+    const collectors = Array.from({ length: 4 }, (_, i) => makeCollector(`c${i}`, 'FAILED_STRUCTURAL'));
+    render(<FleetColumn collectors={collectors} selectedId={null} onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    const list = screen.getByRole('list', { name: 'Collectors needing attention' });
+    const cards = screen.getAllByRole('button', { name: /Wrong shape/ });
+
+    // Roving tabindex: exactly one card is tabIndex=0, the rest are -1.
+    expect(cards.filter((c) => c.tabIndex === 0)).toHaveLength(1);
+    expect(cards[0].tabIndex).toBe(0);
+
+    cards[0].focus();
+    fireEvent.keyDown(list, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(cards[1]);
+    expect(cards[0].tabIndex).toBe(-1);
+    expect(cards[1].tabIndex).toBe(0);
+
+    fireEvent.keyDown(list, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(cards[2]);
+
+    fireEvent.keyDown(list, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(cards[1]);
+
+    fireEvent.keyDown(list, { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(cards[0]);
+  });
+
+  it('ArrowUp at the first card and ArrowDown at the last card are no-ops, never wrap or throw', () => {
+    stubMatchMedia();
+    const collectors = Array.from({ length: 3 }, (_, i) => makeCollector(`c${i}`, 'FAILED_STRUCTURAL'));
+    render(<FleetColumn collectors={collectors} selectedId={null} onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    const list = screen.getByRole('list', { name: 'Collectors needing attention' });
+    const cards = screen.getAllByRole('button', { name: /Wrong shape/ });
+
+    cards[0].focus();
+    fireEvent.keyDown(list, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(cards[0]);
+
+    cards[2].focus();
+    fireEvent.keyDown(list, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(cards[2]);
+  });
+
+  it('the row-density virtualized list is also roving (n=20, ui-system.md §5.3)', () => {
+    stubMatchMedia();
+    const collectors = Array.from({ length: 20 }, (_, i) => makeCollector(`c${i}`, 'FAILED_STRUCTURAL'));
+    render(<FleetColumn collectors={collectors} selectedId={null} onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    const list = screen.getByTestId('fleet-virtual-scroll');
+    const cards = screen.getAllByRole('button', { name: /Wrong shape/ });
+
+    expect(cards.filter((c) => c.tabIndex === 0)).toHaveLength(1);
+    cards[0].focus();
+    fireEvent.keyDown(list, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(cards[1]);
+  });
+
+  it('arrow keys never land on a group-header toggle button (only real cards carry data-roving-item)', () => {
+    stubMatchMedia();
+    const collectors = Array.from({ length: 50 }, (_, i) => makeCollector(`c${i}`, i === 0 ? 'FAILED_STRUCTURAL' : 'PASS'));
+    render(<FleetColumn collectors={collectors} selectedId={null} onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    const list = screen.getByTestId('fleet-virtual-scroll');
+    const groupHeader = screen.getAllByTestId('fleet-group-header')[0];
+    expect(groupHeader.hasAttribute('data-roving-item')).toBe(false);
+    // With only one card rendered (the rest collapsed into the closed
+    // VERIFIED group), ArrowDown from it must not throw or move focus onto
+    // the header.
+    const card = screen.getByRole('button', { name: 'c0, Wrong shape' });
+    card.focus();
+    fireEvent.keyDown(list, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(card);
+  });
+});

@@ -17,6 +17,7 @@
 import { useMemo, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { X } from '@phosphor-icons/react';
+import Counter from '@/components/Counter';
 import { FleetColumn } from './FleetColumn';
 import { VerdictCard } from './VerdictCard';
 import { Headline } from './Headline';
@@ -46,7 +47,7 @@ export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: Fleet
 
   return (
     <div className="flex h-screen flex-col bg-[var(--color-void)] font-sans text-[#EDEDED]">
-      <ShellHeader fleet={fleet} />
+      <ShellHeader fleet={fleet} ledgerRows={ledgerRows} />
 
       <div
         data-testid="fleet-shell-grid"
@@ -100,11 +101,39 @@ export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: Fleet
   );
 }
 
-function ShellHeader({ fleet }: { fleet: FleetState }) {
+function ShellHeader({ fleet, ledgerRows }: { fleet: FleetState; ledgerRows: LedgerRow[] }) {
+  // The most recent event's own id, not `ledgerRows.length` — rows are
+  // capped to the last `fetchLedger(n)` window (FleetApp.tsx polls 100), so
+  // an array length plateaus once the ledger outgrows that window instead
+  // of continuing to climb. Ledger ids are assigned in append order, so the
+  // highest one seen is the honest "how far has the chain gotten" figure —
+  // never fabricated, never a total we can't actually compute client-side.
+  const latestLedgerId = ledgerRows.length > 0 ? ledgerRows[ledgerRows.length - 1].id : 0;
+
   return (
     <header className="flex h-16 shrink-0 items-center gap-4 border-b border-[#272727] px-4">
       <span className="text-sm font-semibold tracking-wide">POLYGRAPH</span>
       <span className="font-mono text-xs text-[#9B9B9B]">{fleet.tenant}</span>
+      {/* ui-system.md §3.2/§3.8: ReactBits `Counter` — an odometer can only
+          roll upward, which is the one numeric display shape that states
+          the ledger's own append-only invariant. `gradientHeight={0}`
+          disables the component's default top/bottom fade mask (a
+          background gradient, which B4 forbids on a surface); the digit
+          reel is short enough here that the fade served no purpose anyway. */}
+      <span className="flex items-center gap-1.5 font-mono text-xs text-[#9B9B9B]">
+        <span className="uppercase tracking-wide">Ledger</span>
+        <Counter
+          value={latestLedgerId}
+          fontSize={12}
+          gap={2}
+          horizontalPadding={4}
+          borderRadius={4}
+          gradientHeight={0}
+          textColor="#EDEDED"
+          fontWeight={500}
+          containerStyle={{ fontFamily: 'var(--font-mono)' }}
+        />
+      </span>
       <span className="ml-auto font-mono text-xs tabular-nums text-[#9B9B9B]">
         {fleet.governor.heal_enabled
           ? `heal ${fleet.governor.totalAttemptsToday}/${fleet.governor.daily_heal_budget}`

@@ -19,6 +19,7 @@
 import { useMemo, useState } from 'react';
 import { VerdictCard } from './VerdictCard';
 import { HealthyRow } from './HealthyRow';
+import { useRovingTabIndex } from '@/hooks/useRovingTabIndex';
 import { VERDICT, toVerdictState, type VerdictState } from '@/lib/verdict';
 import { layoutFor, sortBySeverityThenRecency, partitionByAttention, MAX_ATTENTION_CARDS } from '@/lib/density';
 import { computeVirtualWindow } from '@/lib/virtualize';
@@ -47,6 +48,12 @@ export function FleetColumn({
 }: FleetColumnProps) {
   const layout = layoutFor(collectors.length);
   const sorted = useMemo(() => sortBySeverityThenRecency(collectors), [collectors]);
+  // Called unconditionally, before the early return below, so this
+  // component's own hook count never changes between renders — the ref it
+  // returns is only ever attached in the non-virtualized branch's JSX; when
+  // that branch doesn't render, the hook's effect just finds `current ===
+  // null` and no-ops (see the hook's own early return).
+  const listRef = useRovingTabIndex<HTMLDivElement>();
 
   if (layout.kind === 'row-grid-2' || layout.kind === 'row-grid-1-grouped') {
     return (
@@ -77,7 +84,7 @@ export function FleetColumn({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className={gridClass} role="list" aria-label="Collectors needing attention">
+      <div ref={listRef} className={gridClass} role="list" aria-label="Collectors needing attention">
         {visible.map((c) => (
           <VerdictCard
             key={c.id}
@@ -163,9 +170,11 @@ function VirtualizedRows({
 
   const visibleItems = items.slice(win.startIndex, win.endIndex);
   const spanFull = gridCols === 2 ? { gridColumn: '1 / -1' } : undefined;
+  const listRef = useRovingTabIndex<HTMLDivElement>();
 
   return (
     <div
+      ref={listRef}
       role="list"
       aria-label="Fleet"
       data-testid="fleet-virtual-scroll"

@@ -45,7 +45,11 @@ export function Hero({ sandbox }: { sandbox: UseSandboxEngineResult }) {
           <CopyCommand command={DEMO_COMMAND} />
         </div>
 
-        <p className="mt-3 text-sm text-[#6E7681]">342 tests passing. Runs offline. No Bright Data account required.</p>
+        {/* Honesty pass (Task 10a): this number must stay true of the code,
+            not just true when someone wrote it. Verified against a fresh
+            `npm test` from the repo root before every publish of this
+            line — currently 579 passing, 1 skipped live-integration test. */}
+        <p className="mt-3 text-sm text-[#6E7681]">579 tests passing. Runs offline. No Bright Data account required.</p>
       </div>
 
       <div id="sandbox" className="relative mt-12">

@@ -70,6 +70,7 @@ export function VerdictCard({
         aria-pressed={selected}
         data-verdict-state={state}
         data-density={density}
+        data-roving-item
         className={
           isRow
             ? 'relative flex h-full w-full items-center gap-3 p-3 text-left outline-none'

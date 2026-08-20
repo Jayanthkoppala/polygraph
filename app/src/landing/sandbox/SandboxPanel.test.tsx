@@ -10,6 +10,16 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { SandboxPanel } from './SandboxPanel';
 import { useSandboxEngine } from './useSandboxEngine';
 
+/** `wrong_entity` is gated behind a real `AlertDialog` confirm (ui-system.md
+ * §3.7: "should not fire on a stray click") — its Radix Portal renders to
+ * `document.body`, outside whatever container scoped `getByTestId` found the
+ * trigger in, so this always queries the unscoped `screen`, never a
+ * `within(...)` scope. */
+function clickWrongEntityBreakButton(triggerScope: { getByTestId: typeof screen.getByTestId }) {
+  fireEvent.click(triggerScope.getByTestId('sandbox-break-wrong_entity'));
+  fireEvent.click(screen.getByRole('button', { name: 'Serve it' }));
+}
+
 // VerdictCard's children (VerdictRail/RepairSlot) call motion/react's
 // useReducedMotion(), which reads window.matchMedia — jsdom doesn't
 // implement it, so every test here stubs it, same as VerdictCard.test.tsx.
@@ -91,7 +101,7 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
     vi.useFakeTimers();
     render(<Harness testId="h" />);
 
-    fireEvent.click(screen.getByTestId('sandbox-break-wrong_entity'));
+    clickWrongEntityBreakButton(screen);
     await vi.advanceTimersByTimeAsync(600 + 1600);
 
     expect(screen.getAllByText('Wrong target')).toHaveLength(3);
@@ -129,7 +139,7 @@ describe('SandboxPanel — R8: two concurrent visitors never affect each other',
     const panelA = within(screen.getByTestId('visitor-a'));
     const panelB = within(screen.getByTestId('visitor-b'));
 
-    fireEvent.click(panelA.getByTestId('sandbox-break-wrong_entity'));
+    clickWrongEntityBreakButton(panelA);
     await vi.advanceTimersByTimeAsync(600 + 1600);
 
     expect(panelA.getAllByText('Wrong target')).toHaveLength(3);
