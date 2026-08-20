@@ -194,3 +194,52 @@ describe('repairRefusal — the run decides, and says why', () => {
     expect(REFUSAL_BLOCKED).not.toMatch(/try again|retry|later/i);
   });
 });
+
+/**
+ * Adversarial guard on the one refusal that must never become conditional.
+ *
+ * The fix moved repair eligibility from a per-state flag to a per-run
+ * derivation, and one of the run-level signals is the ABSENCE of a
+ * `suggestedHealCommand`. That raises a fair question: could a wrong-target
+ * run be talked into offering a repair by carrying a command, or could the
+ * label stop rendering because the refusal path changed? Neither. The
+ * per-state check runs FIRST and returns before any command or cause is
+ * consulted, so WRONG_TARGET's refusal is reached by a path that reads
+ * nothing about the run at all.
+ */
+describe('repairRefusal — WRONG_TARGET refuses on a path that never consults the run', () => {
+  it('refuses with a heal command present — the command cannot buy a repair', () => {
+    expect(
+      repairRefusal(
+        collector({
+          verdict: 'FAILED_IDENTITY',
+          cause: 'IDENTITY',
+          pureAction: 'REPAIR',
+          suggestedHealCommand: 'bdata scraper heal c1 "re-derive the price selector"',
+        }),
+      ),
+    ).toBe(REFUSAL_WRONG_TARGET);
+  });
+
+  it('refuses with a heal command absent — the ordinary case, unchanged', () => {
+    expect(repairRefusal(collector({ verdict: 'FAILED_IDENTITY', cause: 'IDENTITY' }))).toBe(
+      REFUSAL_WRONG_TARGET,
+    );
+  });
+
+  it('refuses whatever pureAction claims', () => {
+    for (const pureAction of ['REPAIR', 'QUARANTINE', 'REDISCOVER', 'RELEASE', null] as const) {
+      expect(repairRefusal(collector({ verdict: 'FAILED_IDENTITY', cause: 'IDENTITY', pureAction }))).toBe(
+        REFUSAL_WRONG_TARGET,
+      );
+    }
+  });
+
+  it('never hands a wrong-target run the blocked argument, even if cause were both', () => {
+    // IDENTITY wins the state mapping, so the identity argument is the one
+    // that gets made. A wrong-target card must never explain itself as a block.
+    expect(repairRefusal(collector({ verdict: 'FAILED_IDENTITY', cause: 'IDENTITY' }))).not.toBe(
+      REFUSAL_BLOCKED,
+    );
+  });
+});

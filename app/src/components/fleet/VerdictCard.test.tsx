@@ -633,3 +633,65 @@ describe('VerdictCard — a repairable structural run still offers repair', () =
     expect(screen.queryByTestId('verdict-chip-refusal-badge')).toBeNull();
   });
 });
+
+/**
+ * The WRONG_TARGET card is a cross-session invariant: the landing page's
+ * proof moment and tagline reveal both compose it, and its refusal is the
+ * single most important 300ms in the product (§2.8). These assert that the
+ * per-run derivation left both the LABEL and the REFUSAL untouched, in the
+ * adversarial case where the run carries a heal command it should never get.
+ */
+describe('VerdictCard — WRONG_TARGET is unchanged by the per-run derivation', () => {
+  function wrongTargetCollector(overrides: Partial<CollectorState> = {}): CollectorState {
+    return baseCollector({
+      verdict: 'FAILED_IDENTITY',
+      cause: 'IDENTITY',
+      action: 'QUARANTINE',
+      pureAction: 'QUARANTINE',
+      ...overrides,
+    });
+  }
+
+  it('renders the "Wrong target" label at card density', () => {
+    stubMatchMedia(false);
+    render(<VerdictCard collector={wrongTargetCollector()} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    expect(screen.getByText('Wrong target')).toBeInTheDocument();
+  });
+
+  it('renders the "Wrong target" label at row density, alongside its refusal badge', () => {
+    stubMatchMedia(false);
+    render(<VerdictCard collector={wrongTargetCollector()} density="row" onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    expect(screen.getByText('Wrong target')).toBeInTheDocument();
+    expect(screen.getByText('Repair refused')).toBeInTheDocument();
+  });
+
+  it('still refuses — and keeps its label — even carrying a heal command it should never have', () => {
+    stubMatchMedia(false);
+    const collector = wrongTargetCollector({
+      pureAction: 'REPAIR',
+      suggestedHealCommand: 'bdata scraper heal amazon-prices "re-derive the price selector"',
+    });
+    render(<VerdictCard collector={collector} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    expect(screen.getByText('Wrong target')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /repair/i })).toBeDisabled();
+  });
+
+  it('keeps the magenta refused control — the wrong-target treatment is untouched', () => {
+    stubMatchMedia(false);
+    const { container } = render(
+      <VerdictCard collector={wrongTargetCollector()} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    const slot = container.querySelector('[data-repair-elevation="sunken"]') as HTMLElement;
+    expect(slot.getAttribute('data-verdict-state')).toBe('WRONG_TARGET');
+    expect(slot.style.borderColor).toBe('rgb(232, 121, 249)');
+  });
+
+  it('carries the wrong-target argument, never the blocked one', () => {
+    stubMatchMedia(false);
+    render(<VerdictCard collector={wrongTargetCollector()} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    const describedBy = screen.getByRole('button', { name: /repair/i }).getAttribute('aria-describedby');
+    const reason = document.getElementById(describedBy!)!.textContent!;
+    expect(reason).toMatch(/wrong entity/i);
+    expect(reason).not.toMatch(/blocked this request/i);
+  });
+});
