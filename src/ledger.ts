@@ -40,6 +40,20 @@ export interface LedgerEventRow {
 export interface VerifyResult {
   ok: boolean;
   checked: number;
+  /**
+   * The id of the first row at which the chain breaks (prev_hash mismatch or
+   * event_hash mismatch), when `ok` is false.
+   *
+   * This is "first row at which the chain breaks", not necessarily "first
+   * row that was tampered with" — the two coincide for most tamper shapes,
+   * but not for a self-consistent single-row forgery (payload edited AND
+   * event_hash recomputed to match, prev_hash left untouched). That forgery
+   * verifies fine on its own row and is only caught one row downstream, when
+   * the next row's prev_hash no longer matches the forged event_hash. In
+   * that case the actual tampered row is `firstBadId - 1`. This is inherent
+   * to prev-hash chains: detecting the forged row itself would require an
+   * independent signature or external checkpoint, not just chain-walking.
+   */
   firstBadId?: number;
 }
 
@@ -84,7 +98,7 @@ interface RawRow {
 function deserializeRow(row: RawRow): LedgerEventRow {
   return {
     ...row,
-    evidence: row.evidence !== null ? JSON.parse(row.evidence) : null,
+    evidence: JSON.parse(row.evidence ?? 'null'),
   };
 }
 
@@ -119,6 +133,7 @@ function hashEvent(prevHash: string, payload: EventPayload): string {
  */
 export class Ledger {
   private db: Database.Database;
+  private appendTxn: Database.Transaction<(input: LedgerEventInput) => LedgerEventRow>;
 
   constructor(dbPath: string) {
     if (dbPath !== ':memory:') {
@@ -136,7 +151,7 @@ export class Ledger {
         verdict TEXT NOT NULL,
         cause TEXT,
         evidence TEXT,
-        action TEXT,
+        action TEXT NOT NULL,
         heal_job_id TEXT,
         input_hash TEXT,
         output_hash TEXT,
@@ -144,6 +159,34 @@ export class Ledger {
         event_hash TEXT NOT NULL
       )
     `);
+
+    const insertStmt = this.db.prepare(`
+      INSERT INTO events (ts, tenant, collector, run_id, verdict, cause, evidence, action, heal_job_id, input_hash, output_hash, prev_hash, event_hash)
+      VALUES (@ts, @tenant, @collector, @run_id, @verdict, @cause, @evidence, @action, @heal_job_id, @input_hash, @output_hash, @prev_hash, @event_hash)
+    `);
+
+    // read-last-hash + insert must be atomic: without a shared lock, two
+    // processes appending to the same DB could both read the same
+    // lastEventHash() before either commits, then both insert off the same
+    // prev_hash, forking the chain. db.transaction(...).immediate(...) takes
+    // SQLite's write lock (BEGIN IMMEDIATE) up front, before the read runs,
+    // so the read-then-write pair is serialized against any other writer on
+    // this DB file — the single-writer-per-DB assumption is enforced at the
+    // DB level, not just by convention.
+    this.appendTxn = this.db.transaction((input: LedgerEventInput): LedgerEventRow => {
+      const prevHash = this.lastEventHash();
+      const payload = normalizePayload(input);
+      const eventHash = hashEvent(prevHash, payload);
+
+      const info = insertStmt.run({
+        ...payload,
+        evidence: JSON.stringify(payload.evidence),
+        prev_hash: prevHash,
+        event_hash: eventHash,
+      });
+
+      return { id: Number(info.lastInsertRowid), ...payload, prev_hash: prevHash, event_hash: eventHash };
+    });
   }
 
   close(): void {
@@ -159,22 +202,7 @@ export class Ledger {
 
   /** Appends a new event, computing its hash chain link. Returns the stored row. */
   append(input: LedgerEventInput): LedgerEventRow {
-    const prevHash = this.lastEventHash();
-    const payload = normalizePayload(input);
-    const eventHash = hashEvent(prevHash, payload);
-
-    const stmt = this.db.prepare(`
-      INSERT INTO events (ts, tenant, collector, run_id, verdict, cause, evidence, action, heal_job_id, input_hash, output_hash, prev_hash, event_hash)
-      VALUES (@ts, @tenant, @collector, @run_id, @verdict, @cause, @evidence, @action, @heal_job_id, @input_hash, @output_hash, @prev_hash, @event_hash)
-    `);
-    const info = stmt.run({
-      ...payload,
-      evidence: JSON.stringify(payload.evidence),
-      prev_hash: prevHash,
-      event_hash: eventHash,
-    });
-
-    return { id: Number(info.lastInsertRowid), ...payload, prev_hash: prevHash, event_hash: eventHash };
+    return this.appendTxn.immediate(input);
   }
 
   /** All events, oldest first. */
@@ -183,7 +211,18 @@ export class Ledger {
     return rows.map(deserializeRow);
   }
 
-  /** Walks the chain from genesis, verifying each event_hash and prev_hash link. */
+  /**
+   * Walks the chain from genesis, verifying each event_hash and prev_hash
+   * link, stopping at the first row where either check fails.
+   *
+   * `firstBadId` is "first row at which the chain breaks", not always "first
+   * row that was tampered with": a self-consistent single-row forgery (a
+   * row's payload edited and its own event_hash recomputed to match, but
+   * prev_hash left alone) passes its own row's checks and is only caught
+   * one row later, when that row's prev_hash no longer matches the forged
+   * event_hash above it. In that specific case the actual tampered row is
+   * `firstBadId - 1`. See the `VerifyResult.firstBadId` doc for detail.
+   */
   verify(): VerifyResult {
     let prevHash = GENESIS_HASH;
     let checked = 0;

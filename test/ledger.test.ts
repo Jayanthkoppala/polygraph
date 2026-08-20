@@ -104,6 +104,37 @@ describe('Ledger', () => {
     ledger.close();
   });
 
+  it('reports the break one row downstream for a self-consistent single-row forgery', () => {
+    const { dir, path } = tempDbPath();
+    dirs.push(dir);
+    const ledger = new Ledger(path);
+
+    ledger.append(baseEvent({ run_id: 'run-1' }));
+    ledger.append(baseEvent({ run_id: 'run-2' }));
+    ledger.append(baseEvent({ run_id: 'run-3' }));
+
+    const rows = ledger.all();
+    const row2 = rows[1];
+
+    // Sophisticated tamper: edit row 2's verdict AND recompute row 2's own
+    // event_hash to match the edited payload (prev_hash left untouched).
+    // Row 2 is now internally self-consistent, so verify() can't catch the
+    // forgery locally at row 2 — it only surfaces at row 3, whose stored
+    // prev_hash still points at row 2's *original* event_hash and no longer
+    // matches the forged one. This locks in the documented firstBadId
+    // semantics: the forged row here is id 2, but firstBadId is 3.
+    const forgedHash = canonicalHashFor(row2.prev_hash, { ...row2, verdict: 'forged' });
+    const raw = new Database(path);
+    raw.prepare('UPDATE events SET verdict = ?, event_hash = ? WHERE id = ?').run('forged', forgedHash, row2.id);
+    raw.close();
+
+    const result = ledger.verify();
+    expect(result.ok).toBe(false);
+    expect(result.firstBadId).toBe(3);
+
+    ledger.close();
+  });
+
   it('exports valid JSONL with one event per line', () => {
     const { dir, path } = tempDbPath();
     dirs.push(dir);
