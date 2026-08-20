@@ -39,6 +39,39 @@ export function findCollectorListEntry(
   return undefined;
 }
 
+function collectorNameOf(entry: Record<string, unknown>): string | undefined {
+  const name = entry.name;
+  return typeof name === 'string' ? name : undefined;
+}
+
+export interface CollectorSummary {
+  id: string;
+  name?: string;
+}
+
+/**
+ * A defensive, minimal `{id, name}[]` view of a WHOLE `collectors_list`
+ * response — for a caller that wants "Connected. Found N collectors." right
+ * away (the settings/key save route reuses the SAME response
+ * `saveVerifiedTenantKey`'s verification call already fetched, per §2 step
+ * 2 — "this doubles as step 1 of onboarding... no extra request") without
+ * assuming anything about `output_schema`'s shape at all. An entry with no
+ * recognisable id is skipped rather than aborting the whole list — same
+ * "never throws, degrade instead" posture as the rest of this module.
+ */
+export function summarizeCollectorsList(collectorsListResponse: unknown): CollectorSummary[] {
+  if (!Array.isArray(collectorsListResponse)) return [];
+  const out: CollectorSummary[] = [];
+  for (const entry of collectorsListResponse) {
+    if (!entry || typeof entry !== 'object') continue;
+    const id = collectorIdOf(entry as Record<string, unknown>);
+    if (!id) continue;
+    const name = collectorNameOf(entry as Record<string, unknown>);
+    out.push(name ? { id, name } : { id });
+  }
+  return out;
+}
+
 /**
  * Parses an `output_schema` value into field names. Accepts three plausible
  * encodings and returns `[]` for anything else:

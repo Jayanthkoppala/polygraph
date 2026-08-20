@@ -53,7 +53,7 @@ import {
   TenantKeyRejectedError,
   TenantKeyVerificationUnavailableError,
 } from './key-verification.js';
-import { inferFieldsForCollector } from './infer-schema.js';
+import { inferFieldsForCollector, summarizeCollectorsList } from './infer-schema.js';
 import { probeCollector, buildProbeDraft, ConsentRequiredError } from './probe.js';
 import { buildConfirmedSchema, persistConfirmedSetup, type ConfirmedFieldInput } from './onboarding.js';
 import type { EntityKeyRule } from './entity-key.js';
@@ -433,7 +433,14 @@ export async function handleTenantRequest(req: IncomingMessage, res: ServerRespo
         const scope = scopeWithSecrets(deps.writer, session.tenantId, tenantRowWriter.genesis_hash, deps);
         try {
           const saved = await saveVerifiedTenantKey(scope.secrets!, body.api_key, { fetchImpl: deps.fetchImpl, baseUrl: deps.baseUrl });
-          sendJson(res, 200, { status: saved.status });
+          // The onboarding UI's fastest payoff moment ("Connected. Found N
+          // collectors.") reads straight off THIS response — reusing the
+          // exact collectors_list body saveVerifiedTenantKey's own
+          // verification call already fetched (§2 step 2: "this doubles as
+          // step 1 of onboarding... no extra request"), defensively mapped
+          // to a minimal {id, name}[] since the raw shape is unverified
+          // (infer-schema.ts's own docstring). Never the raw response body.
+          sendJson(res, 200, { status: saved.status, collectors: summarizeCollectorsList(saved.collectorsListResponse) });
         } catch (err) {
           if (err instanceof InvalidApiKeyFormatError) {
             sendJson(res, 400, { error: err.message });

@@ -4,7 +4,41 @@ import {
   findCollectorListEntry,
   inferFieldsForCollector,
   inferType,
+  summarizeCollectorsList,
 } from '../src/tenancy/infer-schema.js';
+
+describe('summarizeCollectorsList — the settings/key save route\'s "Found N collectors" payload', () => {
+  it('maps a collectors_list response to a minimal {id, name}[]', () => {
+    expect(
+      summarizeCollectorsList([
+        { id: 'c_1', name: 'Acme Catalog', output_schema: [{ name: 'sku' }] },
+        { id: 'c_2', name: 'Widget Pricing' },
+      ])
+    ).toEqual([
+      { id: 'c_1', name: 'Acme Catalog' },
+      { id: 'c_2', name: 'Widget Pricing' },
+    ]);
+  });
+
+  it('tolerates collector_id in place of id, per the same ambiguity findCollectorListEntry already handles', () => {
+    expect(summarizeCollectorsList([{ collector_id: 'c_1', name: 'Acme' }])).toEqual([{ id: 'c_1', name: 'Acme' }]);
+  });
+
+  it('omits name when absent rather than inventing one', () => {
+    expect(summarizeCollectorsList([{ id: 'c_1' }])).toEqual([{ id: 'c_1' }]);
+  });
+
+  it('skips an entry with no recognisable id instead of throwing', () => {
+    expect(summarizeCollectorsList([{ name: 'no id here' }, { id: 'c_1', name: 'ok' }])).toEqual([{ id: 'c_1', name: 'ok' }]);
+  });
+
+  it('degrades to [] for any unrecognised shape, never throws', () => {
+    expect(summarizeCollectorsList(null)).toEqual([]);
+    expect(summarizeCollectorsList(undefined)).toEqual([]);
+    expect(summarizeCollectorsList({ not: 'an array' })).toEqual([]);
+    expect(summarizeCollectorsList('garbage')).toEqual([]);
+  });
+});
 
 describe('fieldNamesFromOutputSchema — defensive parsing of an unverified shape', () => {
   it('parses an array of {name, ...} objects', () => {

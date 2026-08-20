@@ -295,6 +295,10 @@ describe('tenancy/serve — onboarding wizard end-to-end over real HTTP', () => 
       body: JSON.stringify({ api_key: 'a'.repeat(32) }),
     });
     expect(keyRes.status).toBe(200);
+    // The onboarding UI's "Connected. Found N collectors." payoff moment
+    // reads straight off this same response — no second round trip.
+    const keyBody = (await keyRes.json()) as { collectors: Array<{ id: string; name?: string }> };
+    expect(keyBody.collectors).toEqual([{ id: 'c_acme1', name: 'Acme Catalog' }]);
 
     const createRes = await fetch(`${base}/api/collectors`, {
       method: 'POST',
