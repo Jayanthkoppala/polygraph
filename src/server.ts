@@ -84,10 +84,18 @@ function isUnverified(evidence: unknown): boolean {
   return list.some((e) => e.metrics?.skipped === true);
 }
 
-/** Best-effort row count and average fill percentage for one run's
- * Evidence[], per this module's docstring. Never fabricates a number —
- * either metric can come back `null`. */
-function deriveDisplayMetrics(evidence: unknown): { rows: number | null; fillPct: number | null } {
+/** Best-effort row count, average fill percentage, and per-field fill rates
+ * for one run's Evidence[], per this module's docstring. Never fabricates a
+ * number — any of the three can come back `null`. `fillRates` is the
+ * contract check's own `metrics.fillRates` object verbatim (field name ->
+ * 0-1 fraction filled) — `fillPct` is just its average, kept for the
+ * existing single-number display; `fillRates` is the per-field breakdown a
+ * client needs to explain WHICH field collapsed, not just that fill dropped. */
+function deriveDisplayMetrics(evidence: unknown): {
+  rows: number | null;
+  fillPct: number | null;
+  fillRates: Record<string, number> | null;
+} {
   const list = Array.isArray(evidence) ? (evidence as Evidence[]) : [];
 
   let rows: number | null = null;
@@ -102,16 +110,18 @@ function deriveDisplayMetrics(evidence: unknown): { rows: number | null; fillPct
   }
 
   let fillPct: number | null = null;
+  let fillRatesOut: Record<string, number> | null = null;
   const contractEvidence = list.find((e) => e.check === 'contract');
   const fillRates = contractEvidence?.metrics?.fillRates;
   if (fillRates && typeof fillRates === 'object') {
-    const rates = Object.values(fillRates as Record<string, number>).filter((v) => typeof v === 'number');
+    fillRatesOut = fillRates as Record<string, number>;
+    const rates = Object.values(fillRatesOut).filter((v) => typeof v === 'number');
     if (rates.length > 0) {
       fillPct = Math.round((rates.reduce((sum, r) => sum + r, 0) / rates.length) * 100);
     }
   }
 
-  return { rows, fillPct };
+  return { rows, fillPct, fillRates: fillRatesOut };
 }
 
 interface PureActionDetail {
@@ -183,6 +193,15 @@ export interface CollectorState {
   action: string | null;
   rows: number | null;
   fillPct: number | null;
+  /** Per-field fill rates (field name -> 0-1 fraction filled) straight from
+   * the contract check's own `metrics.fillRates`, for the latest run. This
+   * is `fillPct`'s source data, not a re-derivation of it — `fillPct` is
+   * just their average, kept for the existing single-number display; a
+   * client that needs to say WHICH field collapsed (not just that fill
+   * dropped) reads this instead. `null` when there's no run yet or the
+   * latest run's evidence carries no contract check (e.g. an unverified
+   * collector). */
+  fillRates: Record<string, number> | null;
   learning: { n: number; of: 7 };
   lastTs: string | null;
   ledgerId: number | null;
@@ -214,6 +233,14 @@ export interface CollectorState {
    * field is what gets that same string onto the dashboard card (previously
    * computed but never surfaced past stdout). */
   suggestedHealCommand: string | null;
+  /** The full Evidence[] for the latest run, verbatim from the ledger (each
+   * entry's `check`/`ok`/`detail`/`metrics`) — the same array `/api/ledger`
+   * already returns per event, now also reachable from `/api/state` without
+   * a second request per collector. `null` when there's no run yet. Nothing
+   * here is derived or summarized; a client that wants to show or explain
+   * "why is this verdict what it is" reads this directly instead of
+   * re-deriving a summary from `cause`/`actionReason` alone. */
+  evidence: Evidence[] | null;
 }
 
 export interface FleetState {
@@ -261,9 +288,12 @@ export function buildFleetState(config: FleetConfig, ledger: Ledger, governor: G
     const latestEvent = events.length > 0 ? events[events.length - 1] : undefined;
     const acked = !!(latestEvent && latestRun && latestEvent.action === 'ACKED' && latestEvent.id > latestRun.id);
 
-    const { rows, fillPct } = latestRun ? deriveDisplayMetrics(latestRun.evidence) : { rows: null, fillPct: null };
+    const { rows, fillPct, fillRates } = latestRun
+      ? deriveDisplayMetrics(latestRun.evidence)
+      : { rows: null, fillPct: null, fillRates: null };
     const govRow = govByCollector.get(collector.id);
     const { pureAction, actionReason, suggestedHealCommand } = derivePureActionDetail(collector, latestRun);
+    const evidence = latestRun && Array.isArray(latestRun.evidence) ? (latestRun.evidence as Evidence[]) : null;
 
     return {
       id: collector.id,
@@ -273,6 +303,7 @@ export function buildFleetState(config: FleetConfig, ledger: Ledger, governor: G
       action: latestRun?.action ?? null,
       rows,
       fillPct,
+      fillRates,
       learning: { n: runs.length, of: 7 },
       lastTs: latestRun?.ts ?? null,
       ledgerId: latestRun?.id ?? null,
@@ -283,6 +314,7 @@ export function buildFleetState(config: FleetConfig, ledger: Ledger, governor: G
       pureAction,
       actionReason,
       suggestedHealCommand,
+      evidence,
     };
   });
 

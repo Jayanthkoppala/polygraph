@@ -164,6 +164,8 @@ describe('server (Task 8)', () => {
       needsAck: false,
     });
     expect(catalog.fillPct).toBeCloseTo(90, 0); // avg of fillRates {sku:1, title:0.8}
+    expect(catalog.fillRates).toEqual({ sku: 1, title: 0.8 });
+    expect(catalog.evidence).toEqual([passContractEvidence, passIdentityEvidence]);
     expect(catalog.learning).toEqual({ n: 1, of: 7 });
 
     const pricing = body.collectors.find((c: any) => c.id === 'acme-pricing');
@@ -172,10 +174,14 @@ describe('server (Task 8)', () => {
       name: 'Acme Pricing',
       verdict: 'SUSPECT_UNEXPLAINED_ANOMALY',
       cause: 'DATA',
+      action: 'QUARANTINE',
       needsAck: true,
       acked: false,
       ledgerId: suspectRow.id,
     });
+    // No contract evidence on this run at all — fillRates stays null, never fabricated.
+    expect(pricing.fillRates).toBeNull();
+    expect(pricing.evidence).toEqual([suspectCoherenceEvidence]);
 
     expect(body.governor).toBeDefined();
     expect(body.governor.heal_enabled).toBe(true);
@@ -195,6 +201,8 @@ describe('server (Task 8)', () => {
       expect(c.pureAction).toBeNull();
       expect(c.actionReason).toBeNull();
       expect(c.suggestedHealCommand).toBeNull();
+      expect(c.fillRates).toBeNull();
+      expect(c.evidence).toBeNull();
     }
   });
 
@@ -223,6 +231,9 @@ describe('server (Task 8)', () => {
     expect(catalog.actionReason).toBeNull();
     expect(catalog.suggestedHealCommand).toMatch(/^bdata scraper heal acme-catalog "/);
     expect(catalog.suggestedHealCommand).toContain('price');
+    // canary + coherence evidence, no contract check on this run — fillRates stays null.
+    expect(catalog.fillRates).toBeNull();
+    expect(catalog.evidence).toEqual([failedCanaryEvidence, suspectCoherenceEvidence]);
   });
 
   it('a FAILED_IDENTITY run never surfaces a suggestedHealCommand — pureAction is REDISCOVER, with a human-readable reason instead', async () => {
