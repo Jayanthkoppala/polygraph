@@ -39,8 +39,10 @@
  * 'pending_approval' result with only RECOVERY_PENDING on the ledger — an
  * intentional pause, not a failure) or throws — and a thrown error is
  * itself caught here just long enough to append a terminal RECOVERY_FAILED
- * event before rethrowing. A RECOVERY_PENDING row can never be the last
- * ledger row for a heal_job_id (also found in review — see task-6-report.md).
+ * event before rethrowing. Outside that intentional pending_approval pause
+ * — i.e. on every path that actually completes or fails — a RECOVERY_PENDING
+ * row is never left as the LAST ledger row for a heal_job_id; a terminal
+ * event always follows it (also found in review — see task-6-report.md).
  * Every terminal append (both on the success path and inside that catch)
  * goes through `appendBestEffort`: a ledger write CAN itself throw
  * (SQLITE_BUSY, disk full, a closed DB), and it must never mask the actual
@@ -111,7 +113,16 @@ export interface HealCollectorOptions {
    * user_approval/pending_answer gate. Default false: a heal that needs
    * approval and isn't auto-approved returns status "pending_approval"
    * without ever calling resume_automation_job or re-running — the
-   * incident is neither verified nor failed yet, just paused. */
+   * incident is neither verified nor failed yet, just paused.
+   *
+   * Nothing in this codebase currently passes `true`: `runner.ts`'s own
+   * call site never sets it, and there is no CLI command (`polygraph
+   * heal resume`, or similar) that calls `resumeAutomationJob` later either
+   * — so a heal that hits this gate today has no way forward at all once it
+   * parks at 'pending_approval'/RECOVERY_PENDING. Moot while heal stays
+   * disabled fleet-wide (see README's Current limits), but a real gap the
+   * moment it's turned on — do not describe this as "just pass
+   * autoApprove: true" without also building that resume path. */
   autoApprove?: boolean;
   /** Poll cadence for refactor_template/progress. Defaults: intervalMs
    * 10_000, deadlineMs 20min (Bright Data documents a heal as taking up
@@ -244,8 +255,15 @@ function appendBestEffort(ledger: Ledger, event: LedgerEventInput): AppendResult
  *      or BrightDataPollTimeoutError, a resume failure, the re-grade
  *      itself throwing) -> appends RECOVERY_FAILED with the error message
  *      as evidence (never key material — BrightDataError never carries
- *      any), THEN rethrows. A RECOVERY_PENDING row can never be the last
- *      row for a given heal_job_id.
+ *      any), THEN rethrows.
+ *   Outside case 1's intentional pause, a RECOVERY_PENDING row is never the
+ *   last row for a given heal_job_id — cases 2 and 3 both append a terminal
+ *   event after it. Case 1 is the sole, deliberate exception: nothing yet
+ *   resumes a paused heal (see "Current limits" — `autoApprove` is never
+ *   passed from `runner.ts`, and no CLI command calls `resumeAutomationJob`),
+ *   so a heal that halts at the approval gate today parks at
+ *   RECOVERY_PENDING with no way forward. Moot while heal is disabled
+ *   fleet-wide, but not something this module should ever claim otherwise.
  *
  * `prompt` must be a heal_prompt read off a genuine REPAIR action (see
  * policy.ts's REPAIR_BRAND) — this function trusts its caller the same

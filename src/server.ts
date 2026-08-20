@@ -69,6 +69,20 @@ function isAckable(verdict: string): boolean {
   return verdict.startsWith('SUSPECT_');
 }
 
+/** True when a run's Evidence[] contains at least one `skippedEvidence`
+ * row from runner.ts (a genuine registration gap — no schema, or no
+ * entity-key extractor for a configured entity_key — marked
+ * `metrics.skipped === true`, distinct from a check that's simply not
+ * applicable). Surfaced to the dashboard so it can render a clearly
+ * distinct "NOT VERIFIED" state instead of whatever verdict text the
+ * (now DATA-caused, per runner.ts's fix) decision happens to carry — "we
+ * couldn't check this" must never look like an ordinary verdict, let alone
+ * a green PASS. */
+function isUnverified(evidence: unknown): boolean {
+  const list = Array.isArray(evidence) ? (evidence as Evidence[]) : [];
+  return list.some((e) => e.metrics?.skipped === true);
+}
+
 /** Best-effort row count and average fill percentage for one run's
  * Evidence[], per this module's docstring. Never fabricates a number —
  * either metric can come back `null`. */
@@ -113,6 +127,11 @@ export interface CollectorState {
   needsAck: boolean;
   acked: boolean;
   healAttemptsToday: number;
+  /** True when the latest run has at least one skipped check (a missing
+   * COLLECTOR_REGISTRY entry, or entity_key configured with no extractor) —
+   * see `isUnverified`. The dashboard renders this as a distinct
+   * "NOT VERIFIED" state, never as a plain PASS or an ordinary verdict. */
+  unverified: boolean;
 }
 
 export interface FleetState {
@@ -177,6 +196,7 @@ export function buildFleetState(config: FleetConfig, ledger: Ledger, governor: G
       needsAck: !!(latestRun && isAckable(latestRun.verdict) && !acked),
       acked,
       healAttemptsToday: govRow?.attempts ?? 0,
+      unverified: !!(latestRun && isUnverified(latestRun.evidence)),
     };
   });
 

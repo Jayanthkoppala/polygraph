@@ -13,10 +13,17 @@
  * falls back to `extractors.ts`'s `COLLECTOR_REGISTRY` (keyed by collector
  * NAME). A collector with neither an override nor a registry entry still
  * runs — it just can't check contract/coherence/identity, and says so with
- * an explicit `ok: true, detail: "skipped: ..."` evidence row per check
+ * an explicit `ok: false, detail: "skipped: ..."` evidence row per check
  * rather than silently omitting it (a missing check must be visible in the
- * ledger). The canary check needs no such registry: its RerunFn is derived
- * directly from the same adapter, rerunning a single canary input through it.
+ * ledger, and — per a critical review finding — must never be
+ * indistinguishable from a genuine pass: `ok: false` here always pushes
+ * `cause` to at least `DATA`, so an unverifiable collector QUARANTINEs
+ * instead of RELEASEing with nothing actually checked). A collector that
+ * simply has no `entity_key` configured at all is a different, benign case
+ * — there's no missing registration there, just nothing for identity to
+ * compare — and gets `notApplicableEvidence` (`ok: true`) instead. The
+ * canary check needs no such registry: its RerunFn is derived directly from
+ * the same adapter, rerunning a single canary input through it.
  */
 import { randomUUID } from 'node:crypto';
 import type { FleetConfig, Collector } from './config.js';
@@ -121,8 +128,36 @@ function rerunFnFor(collector: Collector, ctx: RunnerContext): RerunFn {
   };
 }
 
+/** A check that could not run at all because nothing was registered to run
+ * it against — a genuine registration gap (no schema for this collector
+ * name, or an entity_key configured with no extractor registered for it).
+ * `ok: false` (not `true`) is deliberate: "we didn't check this" must never
+ * render identically to "we checked and it's fine" (critical review
+ * finding — see this module's docstring). `metrics.skipped: true` marks
+ * this row so the cause computation below can push it to `DATA` without
+ * also mistaking it for a genuine contract/coherence/identity failure (a
+ * skip is not proof of anything structural or identity-shaped, so it must
+ * never itself qualify a run for STRUCTURAL/IDENTITY, let alone REPAIR),
+ * and so server.ts can surface a distinct "not verified" state on the
+ * dashboard instead of folding it into the ordinary SUSPECT_* rendering. */
 function skippedEvidence(check: string, detail: string): Evidence {
+  return { check, ok: false, detail, metrics: { skipped: true } };
+}
+
+/** A check that was never applicable in the first place — e.g. a collector
+ * that legitimately declares no `entity_key` at all has nothing for the
+ * identity check to compare, by design, not by missing registration. Stays
+ * `ok: true`: there is no verification gap to flag here. */
+function notApplicableEvidence(check: string, detail: string): Evidence {
   return { check, ok: true, detail };
+}
+
+/** True for a `skippedEvidence` row (see above) — excluded from the
+ * structural/identity failure detection below so a registration gap can
+ * never itself manufacture a STRUCTURAL or IDENTITY cause (and, downstream,
+ * a REPAIR action policy.ts has no real HealProof for). */
+function isSkippedEvidence(e: Evidence): boolean {
+  return e.metrics?.skipped === true;
 }
 
 /** Adapts a registry EntityKeyFn ((input, row) => key|null) into
@@ -189,7 +224,16 @@ export async function evaluateCollector(
   if (collector.entity_key && (overrideExtractor || registryEntityKey)) {
     const keyExtractor = overrideExtractor ?? keyExtractorFromRegistry(registryEntityKey!, result.rows);
     evidence.push(checkIdentity(result, collector.entity_key, keyExtractor));
+  } else if (!collector.entity_key) {
+    // Legitimately nothing to check here — this collector was never
+    // configured with an entity_key at all, which is a valid design choice,
+    // not a missing registration. `ok: true`: there is no verification gap
+    // to flag.
+    evidence.push(notApplicableEvidence('identity', 'not applicable: no entity_key configured for this collector'));
   } else {
+    // A genuine registration gap: this collector DOES declare an
+    // entity_key, but nothing (RunnerContext override or COLLECTOR_REGISTRY)
+    // supplies an extractor for it — or there's no schema at all.
     evidence.push(
       skippedEvidence(
         'identity',
@@ -217,20 +261,51 @@ export async function evaluateCollector(
   // Cause, step 2: layer in what the structural/identity checks themselves
   // found, even when no error_code explains it (e.g. a 200 response with a
   // silently-defaulted field — no error at all, just a collapsed contract).
-  // NOTE: at this point `evidence` only ever holds contract, coherence (or
-  // their "skipped" stand-ins), and identity (or its "skipped" stand-in) —
-  // canary is appended below, AFTER cause is decided, and peer isn't
-  // produced by this module at all. So identityFailed/structuralFailed are
-  // jointly exhaustive over every non-ok evidence entry that can exist
-  // here: there is no third "any other failed" case to layer in. (If a
-  // future evidence source is added above this point, revisit this.)
-  const identityFailed = evidence.some((e) => e.check === 'identity' && !e.ok);
-  const structuralFailed = evidence.some((e) => (e.check === 'contract' || e.check === 'coherence') && !e.ok);
+  // A `skippedEvidence` row (registration gap, not a genuine check failure)
+  // is deliberately excluded from both of these — it must never itself
+  // manufacture an IDENTITY or STRUCTURAL cause (and, downstream, a REPAIR
+  // action policy.ts has no real HealProof for); it's handled separately by
+  // `anySkipped` below instead. NOTE: at this point `evidence` only ever
+  // holds contract, coherence (or their "skipped"/"not applicable"
+  // stand-ins), and identity (ditto) — canary is appended below, AFTER
+  // cause is decided, and peer isn't produced by this module at all. So
+  // identityFailed/structuralFailed/anySkipped are jointly exhaustive over
+  // every non-ok evidence entry that can exist here: there is no third "any
+  // other failed" case to layer in. (If a future evidence source is added
+  // above this point, revisit this.)
+  const identityFailed = evidence.some((e) => e.check === 'identity' && !e.ok && !isSkippedEvidence(e));
+  const structuralFailed = evidence.some(
+    (e) => (e.check === 'contract' || e.check === 'coherence') && !e.ok && !isSkippedEvidence(e)
+  );
+  const anySkipped = evidence.some(isSkippedEvidence);
 
   if (identityFailed) {
     cause = worstCause([cause, 'IDENTITY']);
-  } else if (structuralFailed) {
+  } else if (structuralFailed && cause !== 'BLOCKED') {
+    // Critical review finding: classifier-derived BLOCKED (an anti-bot
+    // block or a compliance-restricted target) is authoritative and must
+    // survive this escalation. contract.ts fails on ANY error row, so a
+    // blocked run's own error_code always trips checkContract — without
+    // this guard, that structural-looking symptom would silently overwrite
+    // a BLOCKED cause with STRUCTURAL and make an anti-bot block
+    // REPAIR-eligible (a live, paid refactor_template against a collector
+    // whose only real problem is a block, once heal is enabled). A BLOCKED
+    // cause reached here always came from causeForErrorCode reading a real
+    // error_code — never from these checks — so there is nothing structural
+    // being suppressed, only a duplicate symptom of the same block.
     cause = worstCause([cause, 'STRUCTURAL']);
+  }
+  if (anySkipped) {
+    // A registration gap means nothing was actually verified — never let
+    // that render as cause NONE / verdict PASS / action RELEASE (the exact
+    // failure mode a critical review finding caught: an unregistered
+    // collector reporting a clean pass with nothing checked). DATA is the
+    // right severity: it's an unverifiable run, not a confirmed structural
+    // or identity failure, so it QUARANTINEs for a human rather than ever
+    // being REPAIR-eligible. worstCause only ever raises `cause`, so this
+    // never downgrades a stronger IDENTITY/STRUCTURAL/BLOCKED signal found
+    // above.
+    cause = worstCause([cause, 'DATA']);
   }
 
   // STRUCTURAL is the only cause decideStructural can turn into REPAIR, and

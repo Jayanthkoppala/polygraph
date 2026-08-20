@@ -490,3 +490,44 @@ export class BrightDataClient {
     }
   }
 }
+
+/**
+ * Wraps `BrightDataClient` so its constructor's key resolution — and any
+ * throw when no key exists anywhere (see `resolveApiKey`) — is deferred
+ * until the first real method call, instead of happening the moment the
+ * client object is created.
+ *
+ * This exists so a purely `local`-adapter fleet (or a `--collector` run
+ * scoped to one) never resolves, and therefore never requires, a Bright
+ * Data API key: `adapters.ts`'s `localAdapter` never touches
+ * `AdapterContext.client` at all, so a lazy client handed to it is simply
+ * never constructed. A collector whose adapter genuinely needs the client
+ * (`brightdata`/`unlocker`) still triggers real construction — and any
+ * missing-key failure — at the point that collector's own `adapter.run()`
+ * call is reached, which `runner.ts`'s per-collector fault isolation
+ * already scopes to that one collector's own ledger row rather than
+ * crashing the whole CLI invocation before anything has run (see the
+ * critical review finding this fixed: `polygraph run --collector
+ * <local-fixture>` used to fail at startup even though nothing it actually
+ * touches needs a key).
+ *
+ * A `Proxy` (rather than hand-written delegate methods) keeps this in sync
+ * with `BrightDataClient`'s surface automatically — every property/method
+ * access forces construction and forwards to the real instance, memoized
+ * after the first access.
+ */
+export function createLazyBrightDataClient(options: BrightDataClientOptions = {}): BrightDataClient {
+  let real: BrightDataClient | undefined;
+  const getReal = (): BrightDataClient => {
+    if (!real) real = new BrightDataClient(options);
+    return real;
+  };
+
+  return new Proxy({} as BrightDataClient, {
+    get(_target, prop, _receiver) {
+      const client = getReal();
+      const value = Reflect.get(client as object, prop, client);
+      return typeof value === 'function' ? value.bind(client) : value;
+    },
+  });
+}

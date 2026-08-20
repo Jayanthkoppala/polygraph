@@ -143,6 +143,13 @@ npm run dev -- run                 # runs `tsx src/index.ts run`
 # or: npm run build && node dist/index.js run
 ```
 
+Editing `fleet.yaml` alone is not enough to fully onboard a new collector: contract,
+coherence, and identity all need a code-level `src/extractors.ts` `COLLECTOR_REGISTRY`
+entry keyed by the collector's `name` (schema + entity-key logic — neither is
+expressible as YAML). A collector with no registry entry still runs, but every check
+it can't run against now shows up as a distinct "not verified" state (dashboard) /
+`QUARANTINE` (CLI) rather than a silent, checkless `PASS` — see Current limits.
+
 Or skip straight to a working example — no `fleet.yaml` to write, no Bright Data
 account required:
 
@@ -161,6 +168,11 @@ narrative.
 Other commands: `polygraph run [--collector <id>]`, `polygraph watch` (cron + live
 dashboard), `polygraph log` / `polygraph ack`, `polygraph ledger verify`, `polygraph
 chaos <healthy|price_dead|wrong_entity|blocked>`. `polygraph status` is still a stub.
+This package is **not published to npm** — `npx polygraph <command>` will NOT work.
+Every `polygraph <command>` above is shorthand for `npx tsx src/index.ts <command>`
+run from a checkout of this repo (or `npm run build && node dist/index.js <command>`);
+if you'd rather type the short form literally, run `npm link` once from the repo
+checkout first (see [`docs/demo.md`](docs/demo.md) for the full explanation).
 
 ## Judges' checklist
 
@@ -225,7 +237,21 @@ Said plainly, because honest limits are part of this project's pitch:
   policy engine in this build.
 - **The `blocked` chaos mode cannot produce `cause=BLOCKED` locally.** That cause is
   derived from a real Bright Data `error_code`, which a local static-HTML fixture cannot
-  emit — so it's excluded from the scripted demo narrative rather than faked.
+  emit — so it's excluded from the scripted demo narrative rather than faked. Running it
+  anyway currently reaches `FAILED_STRUCTURAL` with a suggested (and, for a real anti-bot
+  block, wrong) heal command — see `docs/demo.md`'s mode table for the full explanation.
+- **Editing `fleet.yaml` alone does not onboard a new collector.** Contract, coherence,
+  and identity all read from `src/extractors.ts`'s `COLLECTOR_REGISTRY`, keyed by the
+  collector's `name` — there is no way to express a schema or entity-key extractor as
+  YAML data. A collector with no registry entry still runs (never crashes the fleet
+  pass), but every check it can't run against now shows up as a distinct "not verified"
+  state (an explicit `ok: false` evidence row, cause `DATA`, `QUARANTINE`) instead of a
+  silent, checkless `PASS` — see the `runner.ts`/`policy.ts` fix that closed this gap.
+- **A heal paused at the diff-approval gate has no way forward yet.** `runner.ts` never
+  passes `autoApprove` to `heal.ts`'s `healCollector`, and no CLI command wraps
+  `resumeAutomationJob` — so a heal that halts at `pending_answer`/`awaiting_approval`
+  parks at `RECOVERY_PENDING` indefinitely, with nothing to resume it. Moot today (heal
+  is disabled fleet-wide), but a real gap once heal is turned on.
 - **The dashboard's verdict grid has no overflow handling** and will clip cards on a
   very large fleet — fine at hackathon/demo scale, untested beyond it.
 - **No authentication on the dashboard.** `polygraph watch` binds to loopback

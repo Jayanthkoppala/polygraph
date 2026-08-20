@@ -6,7 +6,7 @@ import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { Ledger, type LedgerEventRow } from './ledger.js';
 import { loadFleetConfig, type FleetConfig } from './config.js';
 import { Governor } from './policy.js';
-import { BrightDataClient } from './brightdata.js';
+import { BrightDataClient, createLazyBrightDataClient } from './brightdata.js';
 import { runFleet, type RunnerContext, type CollectorRunSummary } from './runner.js';
 import { AlertNotifier } from './alerts.js';
 import { createServer, ackLedgerEvent, AckError } from './server.js';
@@ -85,7 +85,13 @@ program
       const dbPath = resolveDbPath();
       const governor = new Governor(dbPath);
       const ledger = new Ledger(dbPath);
-      const client = new BrightDataClient();
+      // Lazy: resolves (and can throw on a missing key) only when a
+      // collector whose adapter actually calls a client method is reached —
+      // never at startup, so a run scoped to purely local/fixture
+      // collectors (e.g. `--collector demo-fixture-catalog`) never needs a
+      // Bright Data API key at all. See brightdata.ts's
+      // createLazyBrightDataClient.
+      const client = createLazyBrightDataClient();
       // Task 7: same SQLite file as the ledger/governor (own connection,
       // like they each have — better-sqlite3 + WAL supports multiple
       // connections to one file), so the debounce table survives a
@@ -146,7 +152,8 @@ program
       const dbPath = resolveDbPath();
       const governor = new Governor(dbPath);
       const ledger = new Ledger(dbPath);
-      const client = new BrightDataClient();
+      // Lazy — see the `run` command's own comment on createLazyBrightDataClient.
+      const client = createLazyBrightDataClient();
       // Same SQLite file as run's own wiring (own connection — WAL supports
       // multiple connections to one file), so alert debounce/state and the
       // dashboard both see exactly what the scheduled runs just produced.

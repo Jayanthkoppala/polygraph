@@ -293,6 +293,12 @@ describe('healCollector — approval-gate path', () => {
       schemas: {
         'acme-catalog': { fields: { sku: { type: 'string', required: true }, price: { type: 'number', required: true, default_value: 0 } } },
       },
+      // `collector` declares entity_key: 'sku' — without an extractor
+      // registered for it, the re-grade's own identity check now correctly
+      // reads as a registration gap (critical fix) rather than a silent
+      // pass, which would sink this test's real re-grade to QUARANTINE
+      // instead of PASS.
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
     });
     const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
 
@@ -351,6 +357,8 @@ describe('healCollector — 500 retry on refactor_template', () => {
       schemas: {
         'acme-catalog': { fields: { sku: { type: 'string', required: true }, price: { type: 'number', required: true, default_value: 0 } } },
       },
+      // See the "approves via resume_automation_job..." test's comment above.
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
     });
     const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
 
@@ -711,6 +719,9 @@ describe('healCollector — a ledger write itself failing must not mask the real
       schemas: {
         'acme-catalog': { fields: { sku: { type: 'string', required: true }, price: { type: 'number', required: true, default_value: 0 } } },
       },
+      // See heal.test.ts's "approves via resume_automation_job..." test's
+      // comment on why this is now required post-fix.
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
     });
     const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
 

@@ -401,11 +401,16 @@
     });
   }
 
+  var NOT_VERIFIED_COLOR = '#f08c00'; // same amber as SUSPECT_* — reused, not a new palette entry
+
   function renderCard(c) {
-    var color = verdictColor(c.verdict);
+    var color = c.unverified ? NOT_VERIFIED_COLOR : verdictColor(c.verdict);
+    var badgeLabel = c.unverified ? 'NOT VERIFIED' : verdictLabel(c.verdict);
     var rowsDisplay = c.rows === null || c.rows === undefined ? '—' : c.rows;
     var fillDisplay = c.fillPct === null || c.fillPct === undefined ? '—' : c.fillPct + '%';
-    var causeLine = c.verdict ? (c.cause ? 'cause: ' + c.cause.toLowerCase() : '') : 'no runs recorded yet';
+    var causeLine = c.unverified
+      ? 'no schema/entity_key registered for this collector — nothing was actually checked'
+      : (c.verdict ? (c.cause ? 'cause: ' + c.cause.toLowerCase() : '') : 'no runs recorded yet');
 
     var footerRight;
     if (c.needsAck) {
@@ -427,7 +432,7 @@
             '<div class="card-id">' + escapeHtml(c.id) + '</div>' +
           '</div>' +
           '<span class="badge" style="color:' + color + ';border-color:' + color + ';background:' + color + '1a">' +
-            escapeHtml(verdictLabel(c.verdict)) +
+            escapeHtml(badgeLabel) +
           '</span>' +
         '</div>' +
         '<div class="metrics-row">' +

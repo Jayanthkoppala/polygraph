@@ -154,6 +154,10 @@ export class AlertNotifier {
         mkdirSync(dirname(dbOrPath), { recursive: true });
       }
       this.db = new Database(dbOrPath);
+      // Set explicitly here for the same reason Governor now does — see
+      // policy.ts's comment on its own `pragma('journal_mode = WAL')` call.
+      // Idempotent: a no-op if WAL is already active.
+      this.db.pragma('journal_mode = WAL');
       this.ownsDb = true;
     } else {
       this.db = dbOrPath;

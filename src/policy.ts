@@ -101,6 +101,25 @@ function decideNone(): { code: ReasonCode; action: ReleaseAction } {
 // derived from an "unknown" error_code with no per-row evidence at all).
 
 function decideData(evidence: Evidence[]): { code: ReasonCode; action: QuarantineAction } {
+  // A registration gap (runner.ts's `skippedEvidence`, marked
+  // `metrics.skipped === true`) takes priority over the generic
+  // contract/coherence branches below: "nothing was registered to check
+  // this" is a materially different — and more actionable — reason than an
+  // actual contract/coherence violation, and the quarantine reason should
+  // name the missing registration explicitly rather than read as a false
+  // "contract violation" (critical review finding: an unregistered
+  // collector was reporting PASS/RELEASE with nothing actually checked).
+  const skipped = evidence.find((e) => e.metrics?.skipped === true);
+  if (skipped) {
+    return {
+      code: 'SUSPECT_UNEXPLAINED_ANOMALY',
+      action: {
+        type: 'QUARANTINE',
+        reason: `unverifiable — ${skipped.check} check ${skipped.detail}`,
+      },
+    };
+  }
+
   const failedContract = evidence.find((e) => e.check === 'contract' && !e.ok);
   if (failedContract) {
     return {
@@ -466,6 +485,14 @@ export class Governor {
         mkdirSync(dirname(dbOrPath), { recursive: true });
       }
       this.db = new Database(dbOrPath);
+      // Set explicitly here rather than relying on the Ledger (or whichever
+      // component happens to open this file first) to have already set it —
+      // SQLite silently returns whatever journal mode is already active
+      // rather than erroring on a mismatch, so a future reordering of
+      // Governor/Ledger/AlertNotifier construction could otherwise downgrade
+      // to rollback-journal with no signal at all. Idempotent: a no-op if
+      // WAL is already active.
+      this.db.pragma('journal_mode = WAL');
       this.ownsDb = true;
     } else {
       this.db = dbOrPath;

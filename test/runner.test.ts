@@ -134,6 +134,67 @@ describe('runFleet', () => {
     expect(summary.results[0]).toMatchObject({ cause: 'STRUCTURAL', action: 'QUARANTINE' });
   });
 
+  it('a blocked run (anti-bot) keeps cause BLOCKED — the structural-looking symptom the errored row also trips in checkContract must never override a classifier-derived BLOCKED (critical fix)', async () => {
+    // 2 inputs: SKU-1 succeeds cleanly, SKU-2 comes back "blocked" (an
+    // anti-bot interstitial) via hp_errors. checkContract fails on ANY
+    // error row (errorRowRate > 0), which — before this fix — got read as a
+    // STRUCTURAL escalation and silently overwrote the classifier's own
+    // BLOCKED verdict, making an anti-bot block REPAIR-eligible.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { collection_id: 'j_blocked' }))
+      .mockResolvedValueOnce(jsonResponse(200, [{ sku: 'SKU-1', price: 9.99, input: 'SKU-1' }]))
+      .mockResolvedValueOnce(jsonResponse(200, { status: 'done', lines: 2, fails: 1, success: 1, pages: 2 }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, [{ input: 'SKU-2', error: 'anti-bot interstitial', error_code: 'blocked' }])
+      );
+    const collector: Collector = { ...healthyCollector, adapter: 'brightdata', canary_inputs: ['SKU-1', 'SKU-2'] };
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch });
+    const ctx = newRunnerContext({
+      adapterContext: { client },
+      schemas: { 'acme-catalog': healthySchema },
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
+    });
+
+    const summary = await runFleet(fleetConfig([collector], HEAL_ENABLED_POLICY), ctx);
+
+    expect(summary.results[0]).toMatchObject({
+      cause: 'BLOCKED',
+      verdict: 'FAILED_BLOCKED_RESPONSE',
+      action: 'QUARANTINE',
+    });
+    // Never REPAIR-eligible: no suggested heal command, no heal attempt.
+    expect(summary.results[0].suggestedHealCommand).toBeUndefined();
+    expect(summary.results[0].healOutcome).toBeUndefined();
+  });
+
+  it('a compliance-restricted run (brul) keeps cause BLOCKED for the same reason', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { collection_id: 'j_brul' }))
+      .mockResolvedValueOnce(jsonResponse(200, [{ sku: 'SKU-1', price: 9.99, input: 'SKU-1' }]))
+      .mockResolvedValueOnce(jsonResponse(200, { status: 'done', lines: 2, fails: 1, success: 1, pages: 2 }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, [{ input: 'SKU-2', error: 'compliance restricted target', error_code: 'brul' }])
+      );
+    const collector: Collector = { ...healthyCollector, adapter: 'brightdata', canary_inputs: ['SKU-1', 'SKU-2'] };
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch });
+    const ctx = newRunnerContext({
+      adapterContext: { client },
+      schemas: { 'acme-catalog': healthySchema },
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
+    });
+
+    const summary = await runFleet(fleetConfig([collector], HEAL_ENABLED_POLICY), ctx);
+
+    expect(summary.results[0]).toMatchObject({
+      cause: 'BLOCKED',
+      verdict: 'FAILED_BLOCKED_RESPONSE',
+      action: 'QUARANTINE',
+    });
+    expect(summary.results[0].suggestedHealCommand).toBeUndefined();
+  });
+
   it('routes an entity_key mismatch to IDENTITY cause via the identity check', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(textResponse(200, 'wrong page'));
     const ctx = newRunnerContext({
@@ -174,7 +235,7 @@ describe('runFleet', () => {
     expect(events.map((e) => e.collector)).toEqual(['acme-catalog', 'acme-second']);
   });
 
-  it('skips contract/coherence checks (but still runs) for a collector with no registered schema', async () => {
+  it('quarantines (never RELEASEs) a collector with no registered schema — a missing check must never look like a clean pass (critical fix)', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(textResponse(200, 'ok'));
     const ctx = newRunnerContext({
       adapterContext: {
@@ -185,10 +246,12 @@ describe('runFleet', () => {
 
     const summary = await runFleet(fleetConfig([healthyCollector]), ctx);
 
-    expect(summary.results[0]).toMatchObject({ cause: 'NONE', verdict: 'PASS', action: 'RELEASE' });
+    expect(summary.results[0].verdict).not.toBe('PASS');
+    expect(summary.results[0].action).not.toBe('RELEASE');
+    expect(summary.results[0]).toMatchObject({ cause: 'DATA', action: 'QUARANTINE' });
   });
 
-  it('records explicit skipped-evidence entries (never silently absent) for a collector with no override AND no COLLECTOR_REGISTRY entry', async () => {
+  it('records explicit skipped-evidence entries (ok: false, cause-contributing — never silently absent, never indistinguishable from a genuine pass) for a collector with no override AND no COLLECTOR_REGISTRY entry', async () => {
     const unregisteredCollector: Collector = {
       id: 'nobody-registered-me',
       name: 'some-unregistered-site.example.com',
@@ -205,16 +268,44 @@ describe('runFleet', () => {
       },
     });
 
-    await runFleet(fleetConfig([unregisteredCollector]), ctx);
+    const summary = await runFleet(fleetConfig([unregisteredCollector]), ctx);
+
+    expect(summary.results[0]).toMatchObject({ cause: 'DATA', action: 'QUARANTINE' });
+    expect(summary.results[0].verdict).not.toBe('PASS');
 
     const evidence = ctx.ledger.all()[0].evidence as { check: string; ok: boolean; detail: string }[];
     expect(evidence).toEqual(
       expect.arrayContaining([
-        { check: 'contract', ok: true, detail: 'skipped: no schema registered' },
-        { check: 'coherence', ok: true, detail: 'skipped: no schema registered' },
-        { check: 'identity', ok: true, detail: 'skipped: no schema registered' },
+        { check: 'contract', ok: false, detail: 'skipped: no schema registered', metrics: { skipped: true } },
+        { check: 'coherence', ok: false, detail: 'skipped: no schema registered', metrics: { skipped: true } },
+        { check: 'identity', ok: false, detail: 'skipped: no schema registered', metrics: { skipped: true } },
       ])
     );
+
+    // The ledger row's own QUARANTINE reason names the missing registration
+    // explicitly, so a human reading `polygraph log` (or the dashboard) sees
+    // WHY nothing was verified, not a generic anomaly message.
+    const ledgerRow = ctx.ledger.all()[0];
+    expect(ledgerRow.action).toBe('QUARANTINE');
+  });
+
+  it('a collector with a schema but no entity_key configured at all still checks contract/coherence and PASSes — no entity_key is a design choice, not a registration gap', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(textResponse(200, 'ok'));
+    const noEntityKeyCollector: Collector = { ...healthyCollector, entity_key: undefined };
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1', price: 9.99 }) },
+      },
+      schemas: { 'acme-catalog': healthySchema },
+      // deliberately no entityExtractors override
+    });
+
+    const summary = await runFleet(fleetConfig([noEntityKeyCollector]), ctx);
+
+    expect(summary.results[0]).toMatchObject({ cause: 'NONE', verdict: 'PASS', action: 'RELEASE' });
+    const evidence = ctx.ledger.all()[0].evidence as { check: string; ok: boolean }[];
+    expect(evidence.find((e) => e.check === 'identity')).toMatchObject({ ok: true });
   });
 
   it('falls back to extractors.ts COLLECTOR_REGISTRY (by collector NAME) when RunnerContext supplies no schema override, and a collapsed required field reaches a failing verdict rather than PASS', async () => {
@@ -290,6 +381,14 @@ describe('runFleet', () => {
           last: () => ({ sku: 'SKU-1', price: 1 }),
         },
       },
+      // "first" and "last" need a registered schema/entity-key to genuinely
+      // PASS post-fix — an unregistered collector now correctly QUARANTINEs
+      // (see the "quarantines ... a collector with no registered schema"
+      // test above) rather than reading as a clean pass, which would
+      // otherwise entangle THIS test's actual point (mid-fleet fault
+      // isolation around "middle"'s adapter throw) with that unrelated fix.
+      schemas: { first: healthySchema, last: healthySchema },
+      entityExtractors: { first: () => 'SKU-1', last: () => 'SKU-1' },
     });
 
     const summary = await runFleet(fleetConfig([first, middle, last]), ctx);

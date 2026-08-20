@@ -173,6 +173,12 @@ describe('runFleet — heal wiring (Task 9 controller ruling)', () => {
         client,
       },
       schemas: { 'acme-catalog': healthySchema },
+      // healthyCollector declares entity_key: 'sku' — without an extractor
+      // registered for it, the post-heal re-grade's own identity check now
+      // correctly reads as a registration gap (critical fix) rather than a
+      // silent pass, which would otherwise sink the re-grade to QUARANTINE
+      // instead of PASS and turn this "verified" outcome into "failed".
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
     });
 
     const summary = await runFleet(fleetConfig([healthyCollector], HEAL_ENABLED_POLICY), ctx);

@@ -165,11 +165,24 @@ same checks running against genuinely external, uncontrolled pages.
 | `healthy` | Nothing — clean catalog data | 200 | `PASS` / `RELEASE` |
 | `price_dead` | Price field's selector renamed; every other field untouched | 200 | `FAILED_STRUCTURAL`, REPAIR-eligible (HealProof-confirmed), suggested `bdata scraper heal` command |
 | `wrong_entity` | Product page serves a different, real product's full data for the requested SKU | 200 | `FAILED_IDENTITY`, never REPAIR-eligible (structurally excluded) |
-| `blocked` | Interstitial "verifying you are human" page, no product fields at all | 200 | contract/coherence failure (all fields collapsed) |
+| `blocked` | Interstitial "verifying you are human" page, no product fields at all | 200 | `FAILED_STRUCTURAL`, cause `STRUCTURAL` (see note below) |
 
 Every mode returns HTTP 200. That's deliberate — a 4xx/5xx is a problem any uptime
 monitor already catches. Polygraph exists for the failure mode uptime monitoring
 can't see at all: scrapers that keep returning "success."
+
+**A note on `blocked` specifically:** don't script this mode into the live demo — say
+what it does and why it's excluded instead. This local fixture has no way to emit a
+real Bright Data `error_code`; `blocked` mode is just static HTML with every product
+field collapsed, the same shape `price_dead` produces. It genuinely reaches
+`FAILED_STRUCTURAL` with a HealProof-confirmed suggested heal command — but that's the
+**wrong** remedy for what a real anti-bot interstitial needs (proxy/infra work, not a
+re-captured selector). A genuine `cause=BLOCKED` (`FAILED_BLOCKED_RESPONSE`, always
+`QUARANTINE`, never a suggested heal command — see `policy.ts`'s `decideBlocked` and
+the runner-level fix that keeps a classifier-derived `BLOCKED` cause from being
+overridden by this same structural-looking symptom) only comes from a real Bright
+Data `error_code` (`blocked`/`detect_block`/`brul`), which this offline fixture cannot
+produce. See the README's Current limits.
 
 Switch modes any time with `polygraph chaos <mode>` — it just flips a JSON switch
 file (`fixture/state.json`) the fixture server re-reads on every request, so it takes
