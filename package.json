@@ -1,22 +1,52 @@
 {
-  "name": "polygraph",
+  "name": "polygraph-verify",
   "version": "0.1.0",
-  "description": "Verification layer for Bright Data scraper fleets",
+  "description": "Evidence gate for scraper fleets — independently re-verifies a collector's output and only lets a repair through when it has live proof the repair is warranted",
+  "keywords": [
+    "scraping",
+    "web-scraping",
+    "brightdata",
+    "data-quality",
+    "verification",
+    "self-healing",
+    "monitoring",
+    "cli"
+  ],
+  "license": "MIT",
+  "author": "Jayanth Koppala <jayanth.sms.in@gmail.com>",
+  "homepage": "https://github.com/jayanth137/polygraph#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jayanth137/polygraph.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jayanth137/polygraph/issues"
+  },
   "type": "module",
   "bin": {
     "polygraph": "./dist/index.js"
   },
+  "files": [
+    "dist/",
+    "web/",
+    "app/dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "build": "tsc",
+    "build:app": "npm --prefix app run build",
+    "build:all": "npm run build && npm run build:app",
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:all": "npm run test && npm --prefix app run test",
     "dev": "tsx src/index.ts",
-    "progress": "node scripts/progress.mjs"
+    "progress": "node scripts/progress.mjs",
+    "prepublishOnly": "npm run build:all"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

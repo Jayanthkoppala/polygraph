@@ -1,0 +1,10 @@
+# Packing-only override. npm reads a directory's .npmignore in preference to its
+# .gitignore, and app/.gitignore ignores `dist` — correct for git, fatal for the
+# tarball, because `polygraph demo` serves app/dist/ as the dashboard UI. Git
+# still ignores app/dist via app/.gitignore; only npm pack sees this file.
+#
+# Keep this file free of globs. The root package.json "files" allowlist already
+# limits this directory to app/dist/, and a pattern like `*.html` here silently
+# ate app/dist/index.html, which made `demo` fall back to the old dashboard.
+
+node_modules

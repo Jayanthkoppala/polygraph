@@ -2,9 +2,12 @@ node_modules/
 reference/
 gates/
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 *.db
 .env
 dist/
 .superpowers/
 /fleet.yaml
 /fixture/state.json
+*.tgz
