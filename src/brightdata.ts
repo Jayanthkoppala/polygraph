@@ -338,6 +338,27 @@ export class BrightDataClient {
   }
 
   /**
+   * GET /dca/collectors_list — the Scraper Studio scrapers in this account,
+   * each with id, name, active status, delivery config, and (per Bright
+   * Data's docs, "when available") an `output_schema`. The exact response
+   * envelope and the `output_schema` field's own shape are NOT documented
+   * anywhere in the reference corpus (see
+   * `src/tenancy/infer-schema.ts`'s module docstring) — this method returns
+   * the parsed body as `unknown` rather than asserting a shape Bright Data
+   * itself doesn't publish; callers parse it defensively.
+   *
+   * Doubles as Bright Data API key verification (tenant-architecture.md §2
+   * "Validation at save time"): a 401 here means the key is invalid, so a
+   * caller verifying a freshly-pasted key can call this directly instead of
+   * a separate probe endpoint — see `src/tenancy/key-verification.ts`.
+   */
+  async collectorsList(): Promise<unknown> {
+    const res = await this.fetchWithRetry('/dca/collectors_list');
+    await ensureOk(res, 'collectorsList()');
+    return safeJson(res);
+  }
+
+  /**
    * Fetches one URL through the Web Unlocker API as markdown/html text.
    * With a zone configured (`opts.zone` or `BRIGHTDATA_UNLOCKER_ZONE`),
    * POSTs to `/unblocker/req`: a synchronous zone returns the page content

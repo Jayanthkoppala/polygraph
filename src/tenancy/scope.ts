@@ -158,6 +158,81 @@ export class ScopedCollectors {
       .all(this.tenantId) as TenantCollectorRow[];
     return assertOwned(rows, this.tenantId);
   }
+
+  /** One collector row, or undefined. */
+  get(collectorId: string): TenantCollectorRow | undefined {
+    const row = this.db
+      .prepare('SELECT * FROM tenant_collectors WHERE tenant_id = ? AND collector_id = ?')
+      .get(this.tenantId, collectorId) as TenantCollectorRow | undefined;
+    return row ? assertOwned([row], this.tenantId)[0] : undefined;
+  }
+
+  /** Creates (or re-seeds) a `setup_state = 'draft'`, `enabled = 0` row —
+   * the entry point of onboarding's three-step wizard (tenant-
+   * architecture.md §4): a collector is never scheduled until it reaches
+   * `confirmSetup` below. Idempotent by (tenant_id, collector_id) so
+   * re-opening the wizard for the same collector just refreshes its name/
+   * canary inputs rather than erroring. */
+  createDraft(input: { collectorId: string; name: string; canaryInputs: string[] }): TenantCollectorRow {
+    this.db
+      .prepare(
+        `INSERT INTO tenant_collectors (tenant_id, collector_id, name, adapter, canary_inputs_json, setup_state, enabled, created_at)
+         VALUES (@tenant_id, @collector_id, @name, 'brightdata', @canary_inputs_json, 'draft', 0, @created_at)
+         ON CONFLICT(tenant_id, collector_id) DO UPDATE SET
+           name = excluded.name,
+           canary_inputs_json = excluded.canary_inputs_json`
+      )
+      .run({
+        tenant_id: this.tenantId,
+        collector_id: input.collectorId,
+        name: input.name,
+        canary_inputs_json: JSON.stringify(input.canaryInputs),
+        created_at: new Date().toISOString(),
+      });
+    // The row above is guaranteed to exist immediately after this INSERT/
+    // upsert, so the non-null assertion here can never actually be hit.
+    return this.get(input.collectorId)!;
+  }
+
+  /**
+   * Step 4 (PERSIST) of onboarding (tenant-architecture.md §4): writes the
+   * user-confirmed schema + entity-key rule and flips the collector from
+   * `draft`/`inferred` to `confirmed` + `enabled = 1` — the FIRST time it
+   * is ever scheduled. JSON columns are accepted as already-stringified
+   * strings here (this class stays agnostic of `OutputSchema`/
+   * `EntityKeyRule` — see `TenantCollectorRow`'s own doc comment);
+   * `src/tenancy/onboarding.ts` owns the JSON encoding.
+   */
+  confirmSetup(
+    collectorId: string,
+    input: { outputSchemaJson: string; entityKey: string | null; entityKeyRuleJson: string | null }
+  ): TenantCollectorRow {
+    this.db
+      .prepare(
+        `UPDATE tenant_collectors
+            SET output_schema_json = @output_schema_json,
+                entity_key = @entity_key,
+                entity_key_rule_json = @entity_key_rule_json,
+                setup_state = 'confirmed',
+                enabled = 1
+          WHERE tenant_id = @tenant_id AND collector_id = @collector_id`
+      )
+      .run({
+        tenant_id: this.tenantId,
+        collector_id: collectorId,
+        output_schema_json: input.outputSchemaJson,
+        entity_key: input.entityKey,
+        entity_key_rule_json: input.entityKeyRuleJson,
+      });
+
+    const row = this.get(collectorId);
+    if (!row) {
+      throw new Error(
+        `ScopedCollectors.confirmSetup: no tenant_collectors row for "${collectorId}" — call createDraft first`
+      );
+    }
+    return row;
+  }
 }
 
 /**
@@ -209,15 +284,19 @@ export function scopeFor(db: Database.Database, tenantId: string, genesisHash?: 
  * through it is a TypeScript compile error, not a runtime permission check
  * someone has to remember to add.
  *
- * Omits BOTH 'governor' and 'ledger' from the base `TenantScope` (not just
- * 'governor') before re-adding a narrower `ledger` — intersecting a type
- * that still has `ledger: ScopedLedger` (full, with `append`) against
- * `{ ledger: Omit<ScopedLedger, 'append'> }` would otherwise merge back to
- * a `ledger` that still structurally has `append`, since `Omit` never
- * *forbids* an extra member, it only stops requiring it. Dropping `ledger`
- * from the base entirely avoids that trap. (See
+ * Omits 'governor', 'ledger', AND 'collectors' from the base `TenantScope`
+ * before re-adding narrower `ledger`/`collectors` — intersecting a type
+ * that still has (e.g.) `ledger: ScopedLedger` (full, with `append`)
+ * against `{ ledger: Omit<ScopedLedger, 'append'> }` would otherwise merge
+ * back to a `ledger` that still structurally has `append`, since `Omit`
+ * never *forbids* an extra member, it only stops requiring it. Dropping
+ * each property from the base entirely avoids that trap. `collectors` was
+ * added here alongside onboarding's `createDraft`/`confirmSetup` write
+ * methods (Task 3) — a showcase route reading collectors read-only must not
+ * gain the ability to onboard/confirm collectors on the public tenant. (See
  * test/tenancy.scope.test.ts's ReadOnlyTenantScope typecheck proof.)
  */
-export type ReadOnlyTenantScope = Omit<TenantScope, 'governor' | 'ledger'> & {
+export type ReadOnlyTenantScope = Omit<TenantScope, 'governor' | 'ledger' | 'collectors'> & {
   ledger: Omit<ScopedLedger, 'append'>;
+  collectors: Omit<ScopedCollectors, 'createDraft' | 'confirmSetup'>;
 };

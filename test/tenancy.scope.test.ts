@@ -216,9 +216,15 @@ describe('ReadOnlyTenantScope — write methods absent at the type level', () =>
       void scope.governor;
       // @ts-expect-error — ledger.append is omitted from ReadOnlyTenantScope's ledger.
       scope.ledger.append({} as never);
-      // A read-only method must still be reachable and typed correctly.
+      // @ts-expect-error — collectors.createDraft is omitted (Task 3 onboarding write methods).
+      scope.collectors.createDraft({} as never);
+      // @ts-expect-error — collectors.confirmSetup is omitted (Task 3 onboarding write methods).
+      scope.collectors.confirmSetup('x', {} as never);
+      // Read-only methods must still be reachable and typed correctly.
       const rows = scope.ledger.all();
       void rows;
+      const collectors = scope.collectors.list();
+      void collectors;
     }
     expect(typeof proveReadOnly).toBe('function');
   });

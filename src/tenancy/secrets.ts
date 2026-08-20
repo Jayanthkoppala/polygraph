@@ -21,7 +21,13 @@ import {
  * number of call sites.
  */
 
-const KEY_FORMAT = /^[A-Za-z0-9_-]{20,200}$/;
+/** Exported so `key-verification.ts` can format-check a candidate key
+ * BEFORE making any network call (tenant-architecture.md §2 step 1 must run
+ * ahead of step 2's `collectors_list` verification call), without
+ * duplicating the pattern. `save()` below still re-checks it itself, so
+ * this class's own invariant ("reject before touching crypto") holds
+ * regardless of what a caller does first. */
+export const KEY_FORMAT = /^[A-Za-z0-9_-]{20,200}$/;
 
 export class InvalidApiKeyFormatError extends Error {
   constructor() {
