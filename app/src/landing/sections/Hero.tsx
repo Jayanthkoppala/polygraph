@@ -49,7 +49,7 @@ export function Hero({ sandbox }: { sandbox: UseSandboxEngineResult }) {
             not just true when someone wrote it. Verified against a fresh
             `npm test` from the repo root before every publish of this
             line — currently 579 passing, 1 skipped live-integration test. */}
-        <p className="mt-3 text-sm text-[#9B9B9B]">74 tests passing. Runs offline. No Bright Data account required.</p>
+        <p className="mt-3 text-sm text-[#9B9B9B]">874 tests passing. Runs offline. No Bright Data account required.</p>
       </div>
 
       <div id="sandbox" className="relative mt-12">

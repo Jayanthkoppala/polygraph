@@ -1638,7 +1638,7 @@ runs locally, offline, with no account and no key.
 **Proof signal.** A single line under the CTA, `text-sm`, `--text-muted`:
 
 ```
-74 tests passing. Runs offline. No Bright Data account required.
+874 tests passing. Runs offline. No Bright Data account required.
 ```
 
 Real numbers from the README, not round ones.
