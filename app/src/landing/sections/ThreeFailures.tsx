@@ -96,11 +96,18 @@ export function ThreeFailures() {
       <BlurFade>
         <div className="mx-auto mt-8 max-w-4xl rounded-2xl border border-[#272727] bg-[var(--color-archive)] p-4">
           <h3 className="text-base font-semibold text-[#EDEDED]">We caught a repair lying, too.</h3>
+          {/* Boundary that comes with naming the vendor (copy owner ruling):
+              Bright Data appears ONLY in this dated, specific observation —
+              never in a general claim about their product. The closing
+              self-refusal clause is code-true (heal.ts refuses
+              RECOVERY_VERIFIED on an unchanged schema even when the
+              re-grade passes) and lands last on purpose. */}
           <p className="mt-2 text-pretty text-sm text-[#B4B4B4]">
-            We ran a vendor self-heal live (2026-08-20). It reported &quot;done&quot; in about 105 seconds, with
-            the approval step completed — and the change landed in a draft: the collector&rsquo;s production
-            schema was unchanged, and we found no API endpoint that promotes a draft to production. Polygraph
-            checks the schema before and after a repair, and refuses to call that a recovery.
+            We ran Bright Data&rsquo;s own self-heal live (2026-08-20). It reported &quot;done&quot; in about
+            105 seconds, with the approval step completed — and the change landed in a draft: the
+            collector&rsquo;s production schema was unchanged, and we found no API endpoint that promotes a
+            draft to production. Polygraph checks the schema before and after a repair, and refuses to call it
+            a recovery — even when our own re-check comes back clean.
           </p>
           {/* Deliberately NOT a link: package.json's repository URL 404s —
               the repo has never been pushed (git remote is empty), and a
