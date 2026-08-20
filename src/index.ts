@@ -51,11 +51,15 @@ program
       const ledger = new Ledger(dbPath);
       const client = new BrightDataClient();
 
-      // The brightdata adapter needs nothing beyond `client`; the
-      // unlocker/local adapters additionally need per-collector extractor
-      // functions, which aren't expressible in fleet.yaml — running a
-      // fleet with unlocker/local collectors from the CLI today requires a
-      // richer entry point than this one (a future task's concern).
+      // Contract/coherence/identity checks fall back to extractors.ts's
+      // COLLECTOR_REGISTRY (keyed by collector name) automatically — no
+      // schemas/entityExtractors override needed here for a registered
+      // collector. The brightdata adapter needs nothing beyond `client`;
+      // the unlocker/local adapters additionally need per-collector page
+      // extractor functions, which aren't expressible in fleet.yaml —
+      // running a fleet with unlocker/local collectors from the CLI today
+      // requires a richer entry point than this one (a future task's
+      // concern; unrelated to the schema/identity registry above).
       const summary = await runFleet(config, { adapterContext: { client }, governor, ledger });
 
       for (const r of summary.results) {

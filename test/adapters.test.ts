@@ -128,6 +128,21 @@ describe('brightdataAdapter', () => {
   it('throws a clear error when ctx.client is missing', async () => {
     await expect(brightdataAdapter.run(brightdataCollector, ['SKU-1'], {})).rejects.toThrow(/requires ctx.client/);
   });
+
+  it('tolerates a failing hp_errors call (e.g. 404) instead of failing the whole run', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { collection_id: 'j_run4' }))
+      .mockResolvedValueOnce(jsonResponse(200, [{ sku: 'SKU-1', input: 'SKU-1' }]))
+      .mockResolvedValueOnce(jsonResponse(200, { status: 'done', lines: 1, fails: 0, success: 1, pages: 1 }))
+      .mockResolvedValueOnce(jsonResponse(404, { error: 'not found' })); // hp_errors 404s
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    const result = await brightdataAdapter.run(brightdataCollector, ['SKU-1'], { client });
+
+    expect(result.rows).toEqual([{ sku: 'SKU-1', input: 'SKU-1' }]);
+    expect(result.errors).toBeUndefined(); // no per-input errors available, not a run failure
+  });
 });
 
 describe('unlockerAdapter', () => {

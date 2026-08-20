@@ -111,7 +111,19 @@ export const brightdataAdapter: RunAdapter = {
     const jobId = await client.trigger(collector.id, inputs);
     const dataset = await client.pollDataset(jobId, ctx.pollOptions);
     const log = await client.jobLog(jobId);
-    const hpErrors = await client.hpErrors(jobId);
+
+    // hp_errors is documented by Bright Data as belonging to /dca/trigger_hp
+    // jobs specifically ("regular /dca/trigger jobs may use a different
+    // error-retrieval path"); a 404/other error here is expected for some
+    // regular-trigger jobs, not a sign the run itself failed. Degrade to
+    // "no per-input errors available" rather than failing the whole run
+    // over this one endpoint.
+    let hpErrors: Awaited<ReturnType<typeof client.hpErrors>> = [];
+    try {
+      hpErrors = await client.hpErrors(jobId);
+    } catch {
+      hpErrors = [];
+    }
 
     const errors: RunError[] = hpErrors.map((e) => ({
       input: e.input,

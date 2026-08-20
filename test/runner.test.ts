@@ -185,4 +185,64 @@ describe('runFleet', () => {
 
     expect(summary.results[0]).toMatchObject({ cause: 'NONE', verdict: 'PASS', action: 'RELEASE' });
   });
+
+  it('records explicit skipped-evidence entries (never silently absent) for a collector with no override AND no COLLECTOR_REGISTRY entry', async () => {
+    const unregisteredCollector: Collector = {
+      id: 'nobody-registered-me',
+      name: 'some-unregistered-site.example.com',
+      entity_key: 'sku',
+      canary_inputs: ['x'],
+      adapter: 'local',
+      url_template: 'http://localhost:9/{input}',
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(textResponse(200, 'ok'));
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'nobody-registered-me': () => ({ sku: 'x' }) },
+      },
+    });
+
+    await runFleet(fleetConfig([unregisteredCollector]), ctx);
+
+    const evidence = ctx.ledger.all()[0].evidence as { check: string; ok: boolean; detail: string }[];
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        { check: 'contract', ok: true, detail: 'skipped: no schema registered' },
+        { check: 'coherence', ok: true, detail: 'skipped: no schema registered' },
+        { check: 'identity', ok: true, detail: 'skipped: no schema registered' },
+      ])
+    );
+  });
+
+  it('falls back to extractors.ts COLLECTOR_REGISTRY (by collector NAME) when RunnerContext supplies no schema override, and a collapsed required field reaches a failing verdict rather than PASS', async () => {
+    const booksCollector: Collector = {
+      id: 'books-catalog',
+      name: 'books.toscrape.com',
+      canary_inputs: ['https://books.toscrape.com/catalogue/soumission_998/index.html'],
+      adapter: 'local',
+      url_template: '{input}',
+    };
+    // The extractor never returns a upc (required by the registered
+    // schema) -- simulating an extractor whose UPC selector broke.
+    const fetchImpl = vi.fn().mockResolvedValue(textResponse(200, '<html>no upc on this page</html>'));
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        // adapters.ts's page-content extractors are keyed by collector.id
+        // (a different registry from extractors.ts's schema/entityKey
+        // COLLECTOR_REGISTRY, which is keyed by collector.name).
+        extractors: { 'books-catalog': () => ({ title: 'Soumission', price: 50.1 }) },
+      },
+      // Deliberately NOT supplying ctx.schemas — must come from the registry.
+    });
+
+    const summary = await runFleet(fleetConfig([booksCollector]), ctx);
+
+    expect(summary.results[0].verdict).not.toBe('PASS');
+    expect(['FAILED_CONTRACT', 'FAILED_STRUCTURAL']).toContain(summary.results[0].verdict);
+    const evidence = ctx.ledger.all()[0].evidence as { check: string; ok: boolean }[];
+    const contractEvidence = evidence.find((e) => e.check === 'contract');
+    expect(contractEvidence?.ok).toBe(false);
+  });
 });

@@ -6,17 +6,17 @@
  * never re-derived here), call decideWithGovernor, and append the outcome
  * to the ledger. Sequential per collector, matching the brief.
  *
- * Two per-collector registries this module (like adapters.ts) has to own,
- * since neither is expressible in fleet.yaml:
- *   - `schemas`: collector.id -> OutputSchema, for the contract/coherence
- *     checks. A collector with no schema registered skips both checks
- *     (no meaningful contract to check against) rather than erroring —
- *     the run still produces a RunResult and still gets error-code-derived
- *     evidence.
- *   - `entityExtractors`: collector.id -> KeyExtractor, for the identity
- *     check. Skipped the same way when absent.
- * The canary check needs no such registry: its RerunFn is derived directly
- * from the same adapter, rerunning a single canary input through it.
+ * Contract/coherence need an `OutputSchema` and identity needs an entity-key
+ * extractor, and neither is expressible in fleet.yaml — `RunnerContext.schemas`
+ * / `entityExtractors` (keyed by collector.id) let a caller (tests, mainly)
+ * supply them directly; when a collector has no override, `evaluateCollector`
+ * falls back to `extractors.ts`'s `COLLECTOR_REGISTRY` (keyed by collector
+ * NAME). A collector with neither an override nor a registry entry still
+ * runs — it just can't check contract/coherence/identity, and says so with
+ * an explicit `ok: true, detail: "skipped: ..."` evidence row per check
+ * rather than silently omitting it (a missing check must be visible in the
+ * ledger). The canary check needs no such registry: its RerunFn is derived
+ * directly from the same adapter, rerunning a single canary input through it.
  */
 import type { FleetConfig, Collector } from './config.js';
 import type { Cause, Evidence, OutputSchema, ReasonCode, RunResult } from './types.js';
@@ -27,14 +27,18 @@ import { checkCanary, type RerunFn } from './checks/canary.js';
 import { causeForErrorCode, worstCause, decideWithGovernor, Governor, type Action } from './policy.js';
 import { Ledger } from './ledger.js';
 import { getAdapter, type AdapterContext } from './adapters.js';
+import { COLLECTOR_REGISTRY, type EntityKeyFn } from './extractors.js';
 
 export interface RunnerContext {
   adapterContext: AdapterContext;
   governor: Governor;
   ledger: Ledger;
-  /** collector.id -> its declared output schema, for the contract/coherence checks. */
+  /** collector.id -> its declared output schema, for the contract/coherence
+   * checks. Overrides extractors.ts's COLLECTOR_REGISTRY (keyed by name)
+   * when present; falls back to the registry when absent. */
   schemas?: Record<string, OutputSchema>;
-  /** collector.id -> its entity-key extractor, for the identity check. */
+  /** collector.id -> its entity-key extractor, for the identity check.
+   * Same override-then-registry-fallback relationship as `schemas`. */
   entityExtractors?: Record<string, KeyExtractor>;
   /** Clock, injectable for tests. Defaults to `() => new Date().toISOString()`. */
   now?: () => string;
@@ -68,6 +72,33 @@ function rerunFnFor(collector: Collector, ctx: RunnerContext): RerunFn {
   };
 }
 
+function skippedEvidence(check: string, detail: string): Evidence {
+  return { check, ok: true, detail };
+}
+
+/** Adapts a registry EntityKeyFn ((input, row) => key|null) into
+ * identity.ts's frozen KeyExtractor ((input) => key|undefined) by closing
+ * over this run's own rows — checkIdentity only ever calls its extractor
+ * with `input`, never `row`, but a collector's identity logic (Ashby's
+ * company-slug cross-check especially) needs to see what was actually
+ * scraped, not just what was requested. Rows are looked up by their own
+ * echoed `input` (every adapter guarantees `row.input` is set — see
+ * adapters.ts), matched by JSON identity since inputs are plain
+ * strings/objects, not references shared with the caller. */
+function keyExtractorFromRegistry(entityKeyFn: EntityKeyFn, rows: Record<string, unknown>[]): KeyExtractor {
+  const rowsByInput = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
+    rowsByInput.set(JSON.stringify(row.input), row);
+  }
+
+  return (input) => {
+    const row = rowsByInput.get(JSON.stringify(input));
+    if (!row) return undefined;
+    const key = entityKeyFn(input, row);
+    return key === null ? undefined : key;
+  };
+}
+
 async function evaluateCollector(
   collector: Collector,
   ctx: RunnerContext
@@ -76,18 +107,36 @@ async function evaluateCollector(
   const result = await adapter.run(collector, collector.canary_inputs, ctx.adapterContext);
 
   const evidence: Evidence[] = [];
-  const schema = ctx.schemas?.[collector.id];
+  const registryEntry = COLLECTOR_REGISTRY[collector.name];
+  const schema = ctx.schemas?.[collector.id] ?? registryEntry?.schema;
 
   if (schema) {
     const contractEvidence = checkContract(result, schema);
     evidence.push(contractEvidence);
     const fillRates = (contractEvidence.metrics as ContractMetrics).fillRates;
     evidence.push(checkCoherence(result, fillRates));
+  } else {
+    // A missing check must be visible in the ledger, not invisible: a
+    // collector with no registered schema (no RunnerContext override AND
+    // no extractors.ts entry for its name) still gets contract/coherence
+    // evidence rows, just explicitly marked as skipped rather than
+    // silently absent.
+    evidence.push(skippedEvidence('contract', 'skipped: no schema registered'));
+    evidence.push(skippedEvidence('coherence', 'skipped: no schema registered'));
   }
 
-  const keyExtractor = ctx.entityExtractors?.[collector.id];
-  if (collector.entity_key && keyExtractor) {
+  const overrideExtractor = ctx.entityExtractors?.[collector.id];
+  const registryEntityKey = registryEntry?.entityKey;
+  if (collector.entity_key && (overrideExtractor || registryEntityKey)) {
+    const keyExtractor = overrideExtractor ?? keyExtractorFromRegistry(registryEntityKey!, result.rows);
     evidence.push(checkIdentity(result, collector.entity_key, keyExtractor));
+  } else {
+    evidence.push(
+      skippedEvidence(
+        'identity',
+        schema ? 'skipped: no entity_key extractor registered' : 'skipped: no schema registered'
+      )
+    );
   }
 
   // Cause, step 1: worst cause implied by this run's own error codes.
