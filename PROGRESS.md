@@ -122,6 +122,7 @@ numbers above are a settled snapshot, not a moving one. Nothing in v2 is in flig
 | Auto-repair off in hosted | Server never sets `POLYGRAPH_HEAL_ENABLED`; heals spend the tenant's credits |
 | JS bundle is one 735KB chunk (225KB gzip) | Route-level code-splitting not done |
 | Roving keyboard nav incomplete past 24 collectors | Virtualized window boundary |
+| ~398 inlined hex values instead of design tokens | Violates the plan's "every visual value resolves to a token" constraint. **Measured 2026-08-20 before deciding to defer:** only 12 DISTINCT values exist and three (`#EDEDED` text, `#9B9B9B` muted, `#272727` border) are 80% of uses — so the palette is consistent and there is no visible inconsistency, it is just not centralised. Deliberately NOT refactored before the deadline: touching 398 values across every component risks visual regressions for zero user-visible gain. Fix after submission |
 
 ---
 

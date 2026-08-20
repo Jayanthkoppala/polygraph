@@ -51,29 +51,57 @@ export function substituteProduct(requestedSku: string): FixtureProduct {
   return PRODUCTS[nextIndex];
 }
 
-/** The 3 demo collectors, each watching one distinct product page — the
- * same "each collector watches one site" shape as a real tenant's fleet. */
+/** The fields a sandbox collector's job actually pulls off every row. `sku`
+ * is on every job because it is the row's identity — without it there is
+ * nothing to check a row against. */
+export type FixtureField = keyof FixtureProduct;
+
+/**
+ * The 3 demo collectors. All three crawl the SAME demo store (the same 12
+ * rows — see `SANDBOX_ROWS`); what differs is the job each one does, which
+ * is what its name states:
+ *
+ *   store-pricing   — the price on every product row
+ *   store-stock     — the stock count on every product row
+ *   store-listings  — the product list itself: which SKUs exist, and what
+ *                     each one is called
+ *
+ * Named for the job rather than by letter (`catalog-a`/`-b`/`-c`) because
+ * the whole point of the break buttons is that a stranger can tell what
+ * was LOST when one of them starts lying. "store-pricing is failing" says
+ * "your prices are wrong"; "catalog-a is failing" says nothing at all.
+ *
+ * `fields` is what makes the names true rather than decorative: it is the
+ * field set each collector's contract check actually runs over, so killing
+ * the price field can only fail `store-pricing` — the other two never
+ * extract a price and are genuinely unaffected (engine.ts relies on this
+ * rather than asserting it).
+ */
 export interface SandboxCollectorDef {
   id: string;
   name: string;
-  watchedSku: string;
+  fields: FixtureField[];
+  /** The one row identity spot-checks by re-requesting it by key — the
+   * "did we get back the page we asked for" probe, not the only row the
+   * collector visits. */
+  probeSku: string;
 }
 
 export const SANDBOX_COLLECTORS: SandboxCollectorDef[] = [
-  { id: 'catalog-a', name: 'catalog-a', watchedSku: 'SKU-002' },
-  { id: 'catalog-b', name: 'catalog-b', watchedSku: 'SKU-006' },
-  { id: 'catalog-c', name: 'catalog-c', watchedSku: 'SKU-010' },
+  { id: 'store-pricing', name: 'store-pricing', fields: ['sku', 'price'], probeSku: 'SKU-002' },
+  { id: 'store-stock', name: 'store-stock', fields: ['sku', 'stock'], probeSku: 'SKU-006' },
+  { id: 'store-listings', name: 'store-listings', fields: ['sku', 'title'], probeSku: 'SKU-010' },
 ];
 
-export function watchedProduct(def: SandboxCollectorDef): FixtureProduct {
-  return productBySku(def.watchedSku);
+export function probedProduct(def: SandboxCollectorDef): FixtureProduct {
+  return productBySku(def.probeSku);
 }
 
 export function receivedProduct(def: SandboxCollectorDef): FixtureProduct {
-  return substituteProduct(def.watchedSku);
+  return substituteProduct(def.probeSku);
 }
 
-/** "12 rows" — the whole catalog a collector's crawl covers per run, matching
+/** "12 rows" — the whole store every collector's crawl covers per run, matching
  * ux-spec.md's own sitemap mockup ("12 rows 100%") and the real 12-product
  * fixture size. Never a fabricated row count. */
 export const SANDBOX_ROWS = PRODUCTS.length;

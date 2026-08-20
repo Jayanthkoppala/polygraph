@@ -88,7 +88,7 @@ program
       // Lazy: resolves (and can throw on a missing key) only when a
       // collector whose adapter actually calls a client method is reached —
       // never at startup, so a run scoped to purely local/fixture
-      // collectors (e.g. `--collector demo-fixture-catalog`) never needs a
+      // collectors (e.g. `--collector demo-store-products`) never needs a
       // Bright Data API key at all. See brightdata.ts's
       // createLazyBrightDataClient.
       const client = createLazyBrightDataClient();
@@ -305,14 +305,27 @@ const DEFAULT_DEMO_FIXTURE_PORT = 4200;
  * scrapeUnlocker's fallback (brightdata.ts) fails fast with no network call
  * at all, so these two collectors degrade to a QUARANTINE card rather than
  * ever hanging or crashing `polygraph demo` on a judge's machine with no
- * Bright Data account — see docs/demo.md for the full explanation. */
+ * Bright Data account — see docs/demo.md for the full explanation.
+ *
+ * COLLECTOR IDS say what each collector watches — `<site>-<what it
+ * collects>` — the same convention the landing page's live sandbox teaches
+ * (`store-pricing`/`store-stock`/`store-listings`, app/src/landing/sandbox/
+ * fixtureData.ts), so someone who meets the browser demo first and then
+ * runs the CLI is not handed a second vocabulary for the same idea. The
+ * `demo-` prefix marks the one that is this CLI's own offline fixture.
+ *
+ * `name` is NOT free-form and must not be renamed with the id: extractors.
+ * ts's COLLECTOR_REGISTRY keys its schema and entity-key function off
+ * `collectors[].name` ("Fixture Catalog", "books.toscrape.com"). The id is
+ * the user-facing handle (`--collector <id>`, the verdict table, the heal
+ * command); the name is a lookup key. */
 function buildDemoFleetDoc(fixturePort: number) {
   const fixtureBase = `http://127.0.0.1:${fixturePort}`;
   return {
     tenant: { name: 'polygraph-demo' },
     collectors: [
       {
-        id: 'demo-fixture-catalog',
+        id: 'demo-store-products',
         name: 'Fixture Catalog',
         entity_key: 'sku',
         canary_inputs: [
@@ -322,7 +335,7 @@ function buildDemoFleetDoc(fixturePort: number) {
         adapter: 'local',
       },
       {
-        id: 'books-fiction',
+        id: 'books-fiction-products',
         name: 'books.toscrape.com',
         entity_key: 'upc',
         canary_inputs: [
@@ -332,7 +345,7 @@ function buildDemoFleetDoc(fixturePort: number) {
         adapter: 'unlocker',
       },
       {
-        id: 'books-mystery',
+        id: 'books-mystery-products',
         name: 'books.toscrape.com',
         entity_key: 'upc',
         canary_inputs: [
@@ -456,12 +469,13 @@ program
       });
       process.stdout.write(`polygraph demo: dashboard on http://${DEFAULT_WATCH_HOST}:${dashboardPort}\n\n`);
       process.stdout.write('In another terminal, drive the chaos narrative — see docs/demo.md for the full script:\n');
-      process.stdout.write(`  polygraph chaos price_dead && polygraph run --collector demo-fixture-catalog\n`);
-      process.stdout.write(`  polygraph chaos wrong_entity && polygraph run --collector demo-fixture-catalog\n`);
+      process.stdout.write(`  polygraph chaos price_dead && polygraph run --collector demo-store-products\n`);
+      process.stdout.write(`  polygraph chaos wrong_entity && polygraph run --collector demo-store-products\n`);
       process.stdout.write(`  polygraph ledger verify\n\n`);
       process.stdout.write(
-        'The dashboard also shows books-fiction/books-mystery (real books.toscrape.com collectors) — running\n' +
-          'those needs a Bright Data account/`bdata` auth and is NOT part of the offline chaos script above.\n\n'
+        'The dashboard also shows books-fiction-products/books-mystery-products (real books.toscrape.com\n' +
+          'collectors) — running those needs a Bright Data account/`bdata` auth and is NOT part of the\n' +
+          'offline chaos script above.\n\n'
       );
       process.stdout.write('Press Ctrl+C to stop.\n');
 

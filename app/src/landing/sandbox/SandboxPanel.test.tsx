@@ -57,10 +57,26 @@ function Harness({ testId }: { testId: string }) {
 describe('SandboxPanel — first paint, no signup wall', () => {
   it('renders three already-green VerdictCards immediately, with no account and no network', () => {
     render(<Harness testId="h" />);
-    expect(screen.getByText('catalog-a')).toBeInTheDocument();
-    expect(screen.getByText('catalog-b')).toBeInTheDocument();
-    expect(screen.getByText('catalog-c')).toBeInTheDocument();
+    // Scoped to the fleet list on purpose: each name also appears in the
+    // panel's own gloss above the cards ("store-pricing reads the price on
+    // every product…"), which is the whole point of the rename — the names
+    // are said in plain words before the reader meets them as card titles.
+    const fleet = within(screen.getByRole('list', { name: 'Sandbox fleet' }));
+    expect(fleet.getByText('store-pricing')).toBeInTheDocument();
+    expect(fleet.getByText('store-stock')).toBeInTheDocument();
+    expect(fleet.getByText('store-listings')).toBeInTheDocument();
     expect(screen.getAllByText('Verified')).toHaveLength(3);
+  });
+
+  it('says what each collector does in plain words before the reader meets it as a card title', () => {
+    render(<Harness testId="h" />);
+    // The names are only self-explaining if the panel actually explains
+    // them once. Asserted on the panel, not on a card, so a future copy
+    // edit cannot quietly drop the gloss and leave three bare handles.
+    const panel = screen.getByTestId('sandbox-panel');
+    expect(panel).toHaveTextContent(/store-pricing reads the price on every product/);
+    expect(panel).toHaveTextContent(/store-stock the stock count/);
+    expect(panel).toHaveTextContent(/store-listings the product list itself/);
   });
 
   it('never offers a blocked-mode control', () => {
@@ -141,7 +157,7 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
     // it as first paint and would mount the card already settled. The
     // explicit `animateEntrance` override is what makes the run count as the
     // event it actually is.
-    expect(grid).toHaveAttribute('data-just-resolved', 'catalog-a');
+    expect(grid).toHaveAttribute('data-just-resolved', 'store-pricing');
     // `repair-slot-glyph-outgoing` is the wrench that is on its way OUT —
     // RepairSlot only mounts it when the entrance is genuinely playing, so
     // its presence is proof the withdrawal ran rather than being skipped.
@@ -158,7 +174,7 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
     // Exactly one card is named as "just resolved"; the other two keep the
     // natural mount-based gate (`animateEntrance` undefined, not false —
     // they never re-verified, so nothing should have an opinion about them).
-    expect(screen.getByRole('list', { name: 'Sandbox fleet' })).toHaveAttribute('data-just-resolved', 'catalog-a');
+    expect(screen.getByRole('list', { name: 'Sandbox fleet' })).toHaveAttribute('data-just-resolved', 'store-pricing');
     expect(screen.getAllByText('Verified')).toHaveLength(2);
   });
 

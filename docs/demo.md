@@ -50,8 +50,11 @@ instead if you'd rather keep the checkout untouched, substituting the full path 
 This does four things, in order:
 
 1. Seeds a fresh `fleet.yaml` — a demo fleet with three collectors: the local chaos
-   fixture (`demo-fixture-catalog`) plus two real `books.toscrape.com` category
-   collectors (`books-fiction`, `books-mystery`) included for fleet-scale realism.
+   fixture (`demo-store-products`) plus two real `books.toscrape.com` category
+   collectors (`books-fiction-products`, `books-mystery-products`) included for
+   fleet-scale realism. Every collector id says what that collector collects — the
+   same convention the landing page's live sandbox uses for its three scrapers
+   (`store-pricing`, `store-stock`, `store-listings`).
 2. Resets the ledger (`polygraph.sqlite`) to a clean genesis, so the chain you verify
    at the end started right here, in front of the audience.
 3. Starts the chaos fixture — a tiny 12-product catalog server on `:4200` — in
@@ -67,8 +70,10 @@ This does four things, in order:
 Open `http://127.0.0.1:4141` in a browser. With the React app built, you land on the
 landing page — click **Run the verification demo** (or go straight to
 `http://127.0.0.1:4141/fleet`) for the live fleet view: three collector cards, the
-fixture catalog at **PASS**, and the two books.toscrape.com collectors sitting at "not
-checked"/"awaiting first run" (nothing invented — they genuinely haven't run yet), plus
+fixture catalog (`demo-store-products`) at **PASS**, and the two books.toscrape.com
+collectors sitting at "not checked"/"awaiting first run" (the cards are titled by the
+collector's site name, so the terminal's `demo-store-products` is the "Fixture Catalog"
+card — nothing invented, they genuinely haven't run yet), plus
 a ledger stream on the right with a **Verify chain** button that runs a real chain walk.
 Without the React app built, the classic dashboard shows the same three cards in a
 single flat page — same underlying data, `GET /api/state`, just the older layout.
@@ -88,7 +93,8 @@ source tree via `dist/index.js`, so build it first with `npm run build`).
 
 **0:00 — "Here's a normal fleet."**
 
-Point at the dashboard. The fixture catalog card is green, `PASS`, `RELEASE`. Say what
+Point at the dashboard. The fixture catalog card (`demo-store-products`) is green,
+`PASS`, `RELEASE`. Say what
 Polygraph actually checks on every pass: not just "did the scraper return 200 and
 valid JSON" but *contract* (are the fields actually filled, or silently defaulted),
 *coherence* (did one field collapse while the rest look fine), *identity* (is this
@@ -99,7 +105,7 @@ before anything gets marked repairable.
 
 ```
 polygraph chaos price_dead
-polygraph run --collector demo-fixture-catalog
+polygraph run --collector demo-store-products
 ```
 
 `chaos price_dead` renames the price field's selector on the live fixture server —
@@ -111,8 +117,8 @@ and just quietly stop collecting the field that broke.
 Terminal output:
 
 ```
-demo-fixture-catalog: verdict=FAILED_STRUCTURAL cause=STRUCTURAL action=QUARANTINE run=...
-  suggested fix: bdata scraper heal demo-fixture-catalog "The field(s) price return default/empty values on 100% of pages since ..."
+demo-store-products: verdict=FAILED_STRUCTURAL cause=STRUCTURAL action=QUARANTINE run=...
+  suggested fix: bdata scraper heal demo-store-products "The field(s) price return default/empty values on 100% of pages since ..."
 ```
 
 Refresh the dashboard (or wait ~2s for its own poll) — the card flips to
@@ -130,7 +136,7 @@ row. Say the two things that matter here:
   production through the API even when it runs — see the README's Current limits and
   [`FINDING-heal-promotion.md`](FINDING-heal-promotion.md)). Rather than
   silently doing nothing, Polygraph prints the *exact* command a human could run to
-  trigger the same repair by hand: `bdata scraper heal demo-fixture-catalog "..."`.
+  trigger the same repair by hand: `bdata scraper heal demo-store-products "..."`.
   That's a feature, not a fallback — the system did the diagnosis, it's just not the
   one pulling the trigger on a paid, live-mutating API call without you asking it to.
 
@@ -138,7 +144,7 @@ row. Say the two things that matter here:
 
 ```
 polygraph chaos wrong_entity
-polygraph run --collector demo-fixture-catalog
+polygraph run --collector demo-store-products
 ```
 
 `wrong_entity` is the failure mode that contract/coherence checks alone can NEVER
@@ -150,7 +156,7 @@ perfect success to any check that only inspects field shape.
 Terminal output:
 
 ```
-demo-fixture-catalog: verdict=FAILED_IDENTITY cause=IDENTITY action=REDISCOVER run=...
+demo-store-products: verdict=FAILED_IDENTITY cause=IDENTITY action=REDISCOVER run=...
 ```
 
 Notice what's missing: **no suggested fix line.** This is the point. `FAILED_IDENTITY`
@@ -166,7 +172,7 @@ target) instead. Say it plainly: *heal refused, by construction, not by configur
 
 ```
 polygraph chaos healthy
-polygraph run --collector demo-fixture-catalog
+polygraph run --collector demo-store-products
 polygraph ledger verify
 ```
 
@@ -187,7 +193,7 @@ every verification and every decision that led there.
 
 **2:45 — Close.**
 
-`polygraph run --collector demo-fixture-catalog` (or `polygraph watch`, which adds a
+`polygraph run --collector demo-store-products` (or `polygraph watch`, which adds a
 cron schedule on top of everything above) is the exact same pipeline you'd point at a
 real fleet. The two `books.toscrape.com` collectors sitting in this demo's
 `fleet.yaml` are real, live scrapers — try `polygraph run` (no `--collector` filter)
@@ -235,7 +241,7 @@ effect on the very next fetch with zero restart.
 - **`polygraph run` (no `--collector` filter) hangs or is slow:** you're touching the
   two real `books.toscrape.com` collectors, which need either a configured Web
   Unlocker zone or the `bdata` CLI on `PATH`. That's expected and outside the
-  guaranteed-offline path above — use `--collector demo-fixture-catalog` for the
+  guaranteed-offline path above — use `--collector demo-store-products` for the
   scripted narrative.
 - **Ports already in use:** `polygraph demo --port <dashboard-port> --fixture-port
   <fixture-port>`.

@@ -128,8 +128,11 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
         <span className="text-xs font-medium uppercase tracking-wide text-[#9B9B9B]">
           Your sandbox fleet
           {/* "Collector" gets its plain-language gloss the first time a
-              stranger meets one (wording pass: no unexplained jargon). */}
-          <span className="ml-2 font-normal normal-case tracking-normal">— three scrapers watching a demo store</span>
+              stranger meets one (wording pass: no unexplained jargon), and
+              the three names get their jobs said out loud in the same
+              breath — the card titles are then self-explaining rather than
+              three labels the reader has to hold in their head. */}
+          <span className="ml-2 font-normal normal-case tracking-normal">— three scrapers on one demo store</span>
         </span>
         {/* When the last run happened is a fact about the data on screen,
             not chrome — --text-muted, never --text-faint (§1.3). */}
@@ -146,6 +149,17 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
           live
         </span>
       </header>
+
+      {/* Each card's name is its job, said once in plain words so the three
+          titles below are self-explaining — when one starts lying, the
+          reader already knows what was lost. Its own <p>, deliberately: the
+          disclosure paragraph beneath is asserted verbatim by
+          landing/honesty.test.ts and must keep starting where it starts. */}
+      <p data-testid="sandbox-jobs-line" className="relative mb-2 text-xs text-[#9B9B9B]">
+        Each one has a different job: <span className="text-[#EDEDED]">store-pricing</span> reads the price
+        on every product, <span className="text-[#EDEDED]">store-stock</span> the stock count,{' '}
+        <span className="text-[#EDEDED]">store-listings</span> the product list itself.
+      </p>
 
       {/* Honesty pass (Task 10a): this sandbox is genuinely computed, but
           entirely in your browser — it is not the hosted, server-side
@@ -212,9 +226,12 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
               {/* Named, because only this collector's page is broken — the
                   panel should never imply it did something to the other two.
                   Plain wording: "target X" read as jargon; this says what
-                  actually happens. */}
+                  actually happens. Naming the two that survive by their JOBS
+                  rather than as "the other two" is what tells a stranger
+                  what is at stake in the one that doesn't: prices go wrong,
+                  stock and listings stay correct. */}
               <span data-testid="sandbox-target-label" className="font-mono normal-case tracking-normal text-[#9B9B9B]">
-                only {targetId} breaks — the other two keep passing
+                only {targetId} breaks — stock and listings keep passing
               </span>
             </span>
             <div className="flex flex-wrap gap-2">

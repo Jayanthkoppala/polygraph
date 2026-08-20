@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { SandboxEngine, SandboxLimitError, SandboxBlockedModeError, SANDBOX_MAX_ACTIONS, walkChain } from './engine';
 import { PRODUCTS, SANDBOX_COLLECTORS, substituteProduct } from './fixtureData';
+import type { SandboxCollectorDef } from './fixtureData';
 import { toVerdictState } from '@/lib/verdict';
 
 /** Splits a post-`applyMode` fleet into the one collector the break buttons
@@ -19,6 +20,20 @@ function splitByTarget(engine: SandboxEngine, fleet: ReturnType<SandboxEngine['g
   const target = fleet.find((c) => c.id === engine.targetId);
   if (!target) throw new Error('sandbox fleet does not contain its own target collector');
   return { target, others: fleet.filter((c) => c.id !== engine.targetId) };
+}
+
+function defFor(id: string): SandboxCollectorDef {
+  const def = SANDBOX_COLLECTORS.find((d) => d.id === id);
+  if (!def) throw new Error(`no sandbox collector definition for ${id}`);
+  return def;
+}
+
+/** Every field a collector's job extracts, filled on every row — the
+ * expected contract evidence for a genuinely clean run of THAT job. Built
+ * from the collector's own `fields` so a test can never quietly assert a
+ * field the collector doesn't collect. */
+function allFilled(def: SandboxCollectorDef): Record<string, number> {
+  return Object.fromEntries(def.fields.map((f) => [f, 1]));
 }
 
 describe('SandboxEngine — seeded state (ux-spec.md §3)', () => {
@@ -93,12 +108,15 @@ describe('SandboxEngine — blocked mode is structurally excluded', () => {
 });
 
 describe('SandboxEngine — verdicts are computed from mode, not hardcoded per click', () => {
-  it('price_dead: only the price field collapses on the TARGET; sku/title/stock stay full, contract fails, repair available', () => {
+  it('price_dead: the price field collapses on the TARGET while its sku key stays full, contract fails, repair available', () => {
     const engine = new SandboxEngine();
     const { target } = splitByTarget(engine, engine.applyMode('price_dead'));
 
-    expect(target.fillRates).toEqual({ sku: 1, title: 1, price: 0, stock: 1 });
-    expect(target.fillPct).toBe(75);
+    // store-pricing's job is the price on every row, keyed by sku — so
+    // those are exactly the two fields its contract check reports on, and
+    // losing one of two is 50% fill, computed rather than stated.
+    expect(target.fillRates).toEqual({ sku: 1, price: 0 });
+    expect(target.fillPct).toBe(50);
     expect(target.cause).toBe('STRUCTURAL');
     expect(toVerdictState(target)).toBe('WRONG_SHAPE');
     const identity = target.evidence?.find((e) => e.check === 'identity');
@@ -112,12 +130,16 @@ describe('SandboxEngine — verdicts are computed from mode, not hardcoded per c
     expect(others).toHaveLength(2);
     for (const c of others) {
       expect(toVerdictState(c)).toBe('VERIFIED');
-      expect(c.fillRates).toEqual({ sku: 1, title: 1, price: 1, stock: 1 });
+      expect(c.fillRates).toEqual(allFilled(defFor(c.id)));
       expect(c.fillPct).toBe(100);
       expect(c.cause).toBeNull();
       // The pass is computed the same way the failure is: every check ran
       // and reported ok, rather than the collector simply being skipped.
       for (const e of c.evidence ?? []) expect(e.ok).toBe(true);
+      // ...and none of them reports on a price at all, which is WHY they
+      // pass: their jobs (stock counts, listings) never read the field
+      // that died. The names are descriptions of real work, not labels.
+      expect(Object.keys(c.fillRates ?? {})).not.toContain('price');
     }
   });
 
@@ -156,8 +178,8 @@ describe('SandboxEngine — verdicts are computed from mode, not hardcoded per c
     const mismatches = (identity?.metrics?.mismatches ?? []) as Array<{ requestedKey: string; extractedKey: string }>;
     const [m] = mismatches;
 
-    const requested = PRODUCTS.find((prod) => prod.sku === def.watchedSku)!;
-    const received = substituteProduct(def.watchedSku);
+    const requested = PRODUCTS.find((prod) => prod.sku === def.probeSku)!;
+    const received = substituteProduct(def.probeSku);
 
     // Both halves of the swap name a product that actually exists in the
     // fixture catalog, and the substitution is the documented catalog-order
@@ -167,6 +189,40 @@ describe('SandboxEngine — verdicts are computed from mode, not hardcoded per c
     expect(m.extractedKey).toBe(`${received.sku} — ${received.title}`);
     expect(PRODUCTS.some((prod) => prod.sku === received.sku)).toBe(true);
     expect(received.sku).not.toBe(requested.sku);
+  });
+});
+
+describe('SandboxEngine — every collector name is a true statement about its job', () => {
+  it('names the three collectors for the work they do, and the price break lands on the pricing one', () => {
+    const engine = new SandboxEngine();
+    expect(SANDBOX_COLLECTORS.map((d) => d.id)).toEqual(['store-pricing', 'store-stock', 'store-listings']);
+    // The card whose failure the landing copy talks about. Wrong prices in
+    // your database is the failure a stranger prices instantly.
+    expect(engine.targetId).toBe('store-pricing');
+  });
+
+  it('each collector extracts exactly the field its name claims — the names are the fixture, not decoration', () => {
+    expect(defFor('store-pricing').fields).toContain('price');
+    expect(defFor('store-stock').fields).toContain('stock');
+    expect(defFor('store-listings').fields).toContain('title');
+    // The negative half is the one that matters: if every collector read
+    // every field, the three names would be interchangeable labels and a
+    // break could not tell a reader what was lost.
+    expect(defFor('store-stock').fields).not.toContain('price');
+    expect(defFor('store-listings').fields).not.toContain('price');
+  });
+
+  it('a price break aimed at a collector that does not read prices is an honest PASS, not a stamped failure', () => {
+    // The engine only ever targets store-pricing, so this exercises the
+    // structural guarantee directly: the verdict follows the collector's
+    // real job, so no future retarget can produce a FAILED_CONTRACT card
+    // sitting on top of evidence that says 100% filled.
+    const engine = new SandboxEngine();
+    const fleet = engine.applyMode('price_dead');
+    for (const c of fleet.filter((x) => x.id !== engine.targetId)) {
+      expect(c.verdict).toBe('PASS');
+      expect(c.evidence?.find((e) => e.check === 'contract')?.ok).toBe(true);
+    }
   });
 });
 

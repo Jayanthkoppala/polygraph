@@ -14,13 +14,13 @@
   ],
   "license": "MIT",
   "author": "Jayanth Koppala <jayanth.sms.in@gmail.com>",
-  "homepage": "https://github.com/jayanth137/polygraph#readme",
+  "homepage": "https://github.com/Jayanthkoppala/polygraph#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jayanth137/polygraph.git"
+    "url": "git+https://github.com/Jayanthkoppala/polygraph.git"
   },
   "bugs": {
-    "url": "https://github.com/jayanth137/polygraph/issues"
+    "url": "https://github.com/Jayanthkoppala/polygraph/issues"
   },
   "type": "module",
   "bin": {

@@ -75,12 +75,12 @@ Not: explain the architecture. Not: list features. Not: show a pricing table.
 │   ┌────────────────────────────────────────────────────────────┐    │
 │   │  YOUR SANDBOX FLEET               last run 3s ago  ● live  │    │
 │   │                                                            │    │
-│   │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐        │    │
-│   │  │ catalog-a  ✓ │ │ catalog-b  ✓ │ │ catalog-c  ✓ │        │    │
-│   │  │ PASS         │ │ PASS         │ │ PASS         │        │    │
-│   │  │ 12 rows 100% │ │ 12 rows 100% │ │ 12 rows 100% │        │    │
-│   │  │ HTTP 200     │ │ HTTP 200     │ │ HTTP 200     │        │    │
-│   │  └──────────────┘ └──────────────┘ └──────────────┘        │    │
+│   │  ┌────────────────┐ ┌────────────────┐ ┌────────────────┐  │    │
+│   │  │ store-pricing  │ │ store-stock    │ │ store-listings │  │    │
+│   │  │ PASS         ✓ │ │ PASS         ✓ │ │ PASS         ✓ │  │    │
+│   │  │ 12 rows 100%   │ │ 12 rows 100%   │ │ 12 rows 100%   │  │    │
+│   │  │ HTTP 200       │ │ HTTP 200       │ │ HTTP 200       │  │    │
+│   │  └────────────────┘ └────────────────┘ └────────────────┘  │    │
 │   │                                                            │    │
 │   │  Break it:  [ Kill the price field ]                       │    │
 │   │             [ Serve the wrong product ]                    │    │
@@ -320,13 +320,20 @@ Colour alone is insufficient (two of the five are failures, and ~8% of men can't
 separate them). Every state is encoded **four** ways: hue, chip word, left-rule weight,
 and — decisively — **what occupies the action slot.**
 
+> [!stale] Chip labels below superseded by ui-system.md §2.1 (R1/R2) and
+> `app/src/lib/verdict.ts` (2026-08-20): the shipped display set is `Verified` /
+> `Unexplained` / `Wrong shape` / `Wrong target` / `Not checked`. "Lying" lives in
+> prose (the dashboard sentence, the tagline), never in chips. Everything else in this
+> table — hues, rules, and above all the action-slot encoding — stands. See
+> positioning.md §5.
+
 | State | Hue | Chip | Left rule | Action slot |
 |---|---|---|---|---|
-| PASS | green | *(none)* | 2px | `Released` (text, no button) |
-| NOT VERIFIED | grey | `NOT CHECKED` | 2px **dashed** | `Confirm its fields` |
-| SUSPECT | amber | `NEEDS YOU` | 4px | `Acknowledge` |
-| LYING (structural) | red | `LYING · FIXABLE` | 6px | **`Repair`** — a real, enabled button |
-| LYING (identity) | magenta | `LYING · WRONG TARGET` | 6px | **`Repair refused`** — struck through, disabled |
+| PASS | green | `Verified` | 2px | `Released` (text, no button) |
+| NOT VERIFIED | grey | `Not checked` | 2px **dashed** | `Confirm its fields` |
+| SUSPECT | amber | `Unexplained` | 4px | `Acknowledge` |
+| LYING (structural) | red | `Wrong shape` | 6px | **`Repair`** — a real, enabled button |
+| LYING (identity) | magenta | `Wrong target` | 6px | **`Repair refused`** — struck through, disabled |
 
 The two LYING states are deliberately different hues, not two shades of red. Red vs.
 magenta survives a squint test; light-red vs. dark-red does not.

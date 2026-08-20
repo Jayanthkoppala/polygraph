@@ -52,7 +52,7 @@ describe('demo pipeline against the real local fixture', () => {
     // COLLECTOR_REGISTRY keys on it for both the schema and the identity
     // entity-key function (see src/extractors.ts).
     collector = {
-      id: 'demo-fixture-catalog',
+      id: 'demo-store-products',
       name: 'Fixture Catalog',
       entity_key: 'sku',
       canary_inputs: [`${baseUrl}/products/${PRODUCTS[0].sku}`, `${baseUrl}/products/${PRODUCTS[1].sku}`],
@@ -108,7 +108,7 @@ describe('demo pipeline against the real local fixture', () => {
     // but the pure decision underneath is still REPAIR-eligible, so
     // runFleet surfaces the exact manual heal command.
     expect(summary.results[0].action).toBe('QUARANTINE');
-    expect(summary.results[0].suggestedHealCommand).toMatch(/^bdata scraper heal demo-fixture-catalog "/);
+    expect(summary.results[0].suggestedHealCommand).toMatch(/^bdata scraper heal demo-store-products "/);
   });
 
   it('produces FAILED_IDENTITY after flipping the fixture to wrong_entity, and never REPAIR', async () => {

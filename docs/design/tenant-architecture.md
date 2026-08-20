@@ -1447,7 +1447,7 @@ it('demo runs offline with no master key and no network', async () => {
 });
 
 it('the CLI never loads the tenancy module', async () => {
-  const r = await runCli(['run', '--collector', 'demo-fixture-catalog'],
+  const r = await runCli(['run', '--collector', 'demo-store-products'],
                          { env: { ...cleanEnv, NODE_DEBUG: 'module' } });
   expect(r.stderr).not.toContain('tenancy/crypto');
 });

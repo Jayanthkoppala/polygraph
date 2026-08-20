@@ -36,7 +36,7 @@ import { sha256Hex } from './sha256';
 import {
   SANDBOX_COLLECTORS,
   SANDBOX_ROWS,
-  watchedProduct,
+  probedProduct,
   receivedProduct,
   type SandboxCollectorDef,
 } from './fixtureData';
@@ -77,9 +77,35 @@ function isSandboxMode(value: string): value is SandboxMode {
   return (SANDBOX_MODES as string[]).includes(value);
 }
 
-function fillRatesFor(mode: SandboxMode): Record<string, number> {
-  if (mode === 'price_dead') return { sku: 1, title: 1, price: 0, stock: 1 };
-  return { sku: 1, title: 1, price: 1, stock: 1 };
+/**
+ * The contract check's fill rates for ONE collector — over the fields that
+ * collector's job actually extracts (`def.fields`), never a fixed
+ * every-field list. This is what makes `store-pricing`/`store-stock`/
+ * `store-listings` true statements rather than three labels on identical
+ * work: killing the price field collapses a field `store-pricing` extracts
+ * and `store-stock`/`store-listings` do not, so their passing is a
+ * computed consequence of their job, not an assertion.
+ */
+function fillRatesFor(def: SandboxCollectorDef, mode: SandboxMode): Record<string, number> {
+  const rates: Record<string, number> = {};
+  for (const field of def.fields) {
+    rates[field] = mode === 'price_dead' && field === 'price' ? 0 : 1;
+  }
+  return rates;
+}
+
+/**
+ * What a chaos mode actually does to THIS collector. A dead price field is
+ * only a failure for a collector whose job reads the price — for the other
+ * two the page they scrape is unchanged, so the honest outcome is a real
+ * pass. Without this, applying `price_dead` to `store-stock` would stamp a
+ * FAILED_CONTRACT verdict on evidence that says every field it collects is
+ * 100% filled, which is exactly the kind of lie this product exists to
+ * catch.
+ */
+function effectiveMode(def: SandboxCollectorDef, mode: SandboxMode): SandboxMode {
+  if (mode === 'price_dead' && !def.fields.includes('price')) return 'healthy';
+  return mode;
 }
 
 function fillPctFor(rates: Record<string, number>): number {
@@ -89,7 +115,7 @@ function fillPctFor(rates: Record<string, number>): number {
 }
 
 function buildEvidence(def: SandboxCollectorDef, mode: SandboxMode): Evidence[] {
-  const rates = fillRatesFor(mode);
+  const rates = fillRatesFor(def, mode);
   const contract: Evidence = {
     check: 'contract',
     ok: mode !== 'price_dead',
@@ -104,7 +130,7 @@ function buildEvidence(def: SandboxCollectorDef, mode: SandboxMode): Evidence[] 
   };
 
   if (mode === 'wrong_entity') {
-    const requested = watchedProduct(def);
+    const requested = probedProduct(def);
     const received = receivedProduct(def);
     const identity: Evidence = {
       check: 'identity',
@@ -138,7 +164,7 @@ function buildEvidence(def: SandboxCollectorDef, mode: SandboxMode): Evidence[] 
       ok: false,
       detail: 'confirmed on re-fetch',
       metrics: {
-        outcomes: [{ input: def.watchedSku, pass: false, reason: 'price field still absent on re-fetch' }],
+        outcomes: [{ input: def.probeSku, pass: false, reason: 'price field still absent on re-fetch' }],
         failCount: 1,
       },
     };
@@ -148,8 +174,9 @@ function buildEvidence(def: SandboxCollectorDef, mode: SandboxMode): Evidence[] 
   return [contract, coherence, identity];
 }
 
-function buildCollector(def: SandboxCollectorDef, mode: SandboxMode, ts: string, ledgerId: number): CollectorState {
-  const rates = fillRatesFor(mode);
+function buildCollector(def: SandboxCollectorDef, requestedMode: SandboxMode, ts: string, ledgerId: number): CollectorState {
+  const mode = effectiveMode(def, requestedMode);
+  const rates = fillRatesFor(def, mode);
   const fillPct = fillPctFor(rates);
   const verdict = mode === 'healthy' ? 'PASS' : mode === 'price_dead' ? 'FAILED_CONTRACT' : 'FAILED_IDENTITY';
   const cause = mode === 'healthy' ? null : mode === 'price_dead' ? 'STRUCTURAL' : 'IDENTITY';
@@ -219,6 +246,13 @@ export class SandboxEngine {
    * ledger row, exactly as `polygraph run` over a fleet would), and the two
    * untargeted collectors genuinely pass — their PASS rows are computed the
    * same way the target's failure is, never asserted.
+   *
+   * It is `store-pricing` (the first collector) because wrong prices are
+   * the most obviously expensive thing to have quietly wrong in your
+   * database — the visitor does not need the failure explained to them.
+   * `effectiveMode` above independently guarantees the price break can only
+   * land on a collector whose job reads the price, so this ordering and the
+   * fixture agree by construction rather than by coincidence.
    */
   readonly targetId: string = SANDBOX_COLLECTORS[0].id;
   private readonly genesisHash: string;

@@ -6,7 +6,7 @@
  * entirely to a `local`-adapter collector that never touches the client at
  * all. That killed the documented "no account, no API key" demo narrative
  * on any machine without one: `polygraph run --collector
- * demo-fixture-catalog` after `polygraph chaos price_dead` failed outright.
+ * demo-store-products` after `polygraph chaos price_dead` failed outright.
  *
  * This is the exact regression test that finding asked for: shell out to
  * the REAL CLI entrypoint in a CHILD PROCESS with a CLEAN environment (no
@@ -243,7 +243,7 @@ describe('CLI: R9 — tenancy is never loaded outside `polygraph serve`', () => 
       });
     });
 
-    expect(stdout).toMatch(/demo-fixture-catalog\s+PASS\s+NONE\s+RELEASE/);
+    expect(stdout).toMatch(/demo-store-products\s+PASS\s+NONE\s+RELEASE/);
 
     child.kill('SIGTERM');
     await new Promise<void>((resolve) => child.once('exit', () => resolve()));

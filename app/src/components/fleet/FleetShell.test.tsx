@@ -165,8 +165,8 @@ describe('FleetShell — the docked grid never lets a region blow out past its c
   });
 
   it('the heal-command control inside FOCUS can actually shrink and truncate, rather than forcing its column wide', () => {
-    const collector = makeCollector('demo-fixture-catalog-with-a-long-name', 'FAILED_STRUCTURAL', {
-      suggestedHealCommand: 'bdata scraper heal demo-fixture-catalog-with-a-long-name "re-derive the price selector"',
+    const collector = makeCollector('demo-store-products-with-a-very-long-name', 'FAILED_STRUCTURAL', {
+      suggestedHealCommand: 'bdata scraper heal demo-store-products-with-a-very-long-name "re-derive the price selector"',
     });
     render(
       <FleetShell fleet={fleetState([collector])} ledgerRows={[]} onRepair={noop} onAcknowledge={noop} />,
