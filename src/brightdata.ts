@@ -165,6 +165,52 @@ export interface ScrapeUnlockerOptions extends PollOptions {
   format?: 'markdown' | 'html';
 }
 
+/**
+ * GET /dca/collectors/{id}/refactor_template/progress response — a
+ * Self-Healing job's progress snapshot. Bright Data's docs don't publish an
+ * exhaustive schema for this envelope (see the reference self-healing demo
+ * at reference/scraper-studio-self-healing-demo/self-healing.js, which reads
+ * these same optional fields defensively); only `status` is guaranteed.
+ */
+export interface RefactorProgress {
+  status: string;
+  step?: string;
+  id?: string;
+  completed_steps?: string[];
+  preview_result?: Record<string, unknown>[];
+  diff?: { title?: string; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+export interface ResumeAutomationJobOptions {
+  /** true = approve the proposed diff, false = reject it. */
+  message: boolean;
+  autoSave: boolean;
+}
+
+// Terminal/halt states observed for a refactor_template job, per Bright
+// Data's docs ("pending_answer") and the reference self-healing demo's
+// broader defensive set (awaiting_approval and friends — the demo predates
+// resume_automation_job's documentation and probed several synonyms).
+const REFACTOR_SUCCESS_STATES = new Set(['ready', 'done', 'completed', 'success', 'finished']);
+const REFACTOR_APPROVAL_STATES = new Set([
+  'awaiting_approval',
+  'pending_answer',
+  'pending_input',
+  'awaiting_answer',
+  'awaiting_input',
+]);
+const REFACTOR_FAILURE_STATES = new Set(['failed', 'error', 'errored', 'cancelled', 'canceled']);
+
+/** True when a refactor_template job has halted at the diff-approval gate
+ * (status pending_answer/awaiting_approval, or step "user_approval" — the
+ * reference demo observed the gate signaled via `step` as well as `status`). */
+export function isAwaitingApproval(progress: RefactorProgress): boolean {
+  const status = String(progress.status ?? '').toLowerCase();
+  const step = progress.step ? String(progress.step).toLowerCase() : undefined;
+  return REFACTOR_APPROVAL_STATES.has(status) || step === 'user_approval';
+}
+
 export class BrightDataClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
@@ -326,6 +372,81 @@ export class BrightDataClient {
       throw new BrightDataError(`scrapeUnlocker(${url}) response missing response_id`, res.status, body);
     }
     return this.pollUnlockerResult(body.response_id, opts);
+  }
+
+  /**
+   * POST /dca/collectors/{id}/refactor_template — starts a Self-Healing job:
+   * a plain-language prompt describing what's broken and what to fix
+   * (<=1000 chars — policy.ts's composeHealPrompt enforces the cap when it
+   * builds the prompt; not re-validated here). Returns the accepted
+   * envelope as-is; Bright Data's docs don't publish its exact shape.
+   */
+  async refactorTemplate(collectorId: string, prompt: string, customInput: unknown[] = []): Promise<unknown> {
+    const res = await this.fetchWithRetry(`/dca/collectors/${encodeURIComponent(collectorId)}/refactor_template`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt, custom_input: customInput }),
+    });
+    await ensureOk(res, `refactorTemplate(${collectorId})`);
+    return safeJson(res);
+  }
+
+  /** GET /dca/collectors/{id}/refactor_template/progress — one snapshot of
+   * a Self-Healing job's progress. Prefer `pollRefactorTemplateProgress`,
+   * which polls this to a terminal state; call this directly only when you
+   * need a single point-in-time read. */
+  async refactorTemplateProgress(collectorId: string): Promise<RefactorProgress> {
+    const res = await this.fetchWithRetry(
+      `/dca/collectors/${encodeURIComponent(collectorId)}/refactor_template/progress`
+    );
+    await ensureOk(res, `refactorTemplateProgress(${collectorId})`);
+    return (await res.json()) as RefactorProgress;
+  }
+
+  /**
+   * Polls refactor_template/progress every `intervalMs` until the job
+   * reaches a terminal success state, halts at the diff-approval gate (see
+   * `isAwaitingApproval` — returned as-is so the caller can decide whether
+   * to approve), or a terminal failure state (throws BrightDataError).
+   * Bright Data documents a heal as taking up to ~15 minutes; the default
+   * deadlineMs (20min) leaves headroom above that.
+   */
+  async pollRefactorTemplateProgress(collectorId: string, opts: PollOptions = {}): Promise<RefactorProgress> {
+    const intervalMs = opts.intervalMs ?? 10_000;
+    const deadlineMs = opts.deadlineMs ?? 20 * 60_000;
+    const start = Date.now();
+
+    for (;;) {
+      const progress = await this.refactorTemplateProgress(collectorId);
+      const status = String(progress.status ?? '').toLowerCase();
+
+      if (REFACTOR_SUCCESS_STATES.has(status)) return progress;
+      if (isAwaitingApproval(progress)) return progress;
+      if (REFACTOR_FAILURE_STATES.has(status)) {
+        throw new BrightDataError(
+          `refactor_template job for ${collectorId} ended with status "${progress.status}"`,
+          undefined,
+          progress
+        );
+      }
+
+      if (Date.now() - start >= deadlineMs) throw new BrightDataPollTimeoutError(collectorId, deadlineMs);
+      await this.sleep(intervalMs);
+    }
+  }
+
+  /** POST /dca/collectors/{id}/resume_automation_job — approves
+   * ({message: true}) or rejects ({message: false}) a Self-Healing job
+   * paused at pending_answer. Returns 200 OK with no body per Bright
+   * Data's docs — this resolves to void rather than parsing a response. */
+  async resumeAutomationJob(collectorId: string, opts: ResumeAutomationJobOptions): Promise<void> {
+    const res = await this.fetchWithRetry(
+      `/dca/collectors/${encodeURIComponent(collectorId)}/resume_automation_job`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ message: opts.message, auto_save: opts.autoSave }),
+      }
+    );
+    await ensureOk(res, `resumeAutomationJob(${collectorId})`);
   }
 
   private async pollUnlockerResult(responseId: string, opts: PollOptions): Promise<string> {
