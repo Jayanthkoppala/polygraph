@@ -13,6 +13,18 @@ function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
+/** A `GET /dca/collectors_list` response containing exactly one entry for
+ * `acme-catalog`, with the given declared output field names — used to
+ * mock the promotion check's before/after `output_schema` snapshots (see
+ * heal.ts's `snapshotOutputFields`). Pass DIFFERENT field lists for
+ * before/after to simulate a heal that actually promoted (the default
+ * shape for every test not specifically about the promotion check itself);
+ * pass the SAME list twice to simulate a heal that reported success but
+ * never reached production. */
+function collectorsListResponse(fields: string[]): Response {
+  return jsonResponse(200, [{ id: 'acme-catalog', name: 'Acme Catalog', output_schema: fields.map((name) => ({ name })) }]);
+}
+
 const instantSleep = vi.fn(async () => {});
 
 const HEAL_POLICY: Policy = {
@@ -159,10 +171,14 @@ describe('healCollector — full happy path (mocked, flag enabled)', () => {
   it('triggers, polls straight to done (no approval needed), re-runs, re-grades PASS, and ledgers RECOVERY_PENDING then RECOVERY_VERIFIED', async () => {
     const fetchImpl = vi
       .fn()
+      // GET collectors_list (promotion baseline, pre-heal)
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       // POST refactor_template
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_1', status: 'started' }))
       // GET refactor_template/progress -> done immediately
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_1', status: 'done' }))
+      // GET collectors_list (promotion check, post-heal) — schema gained a field, promotion confirmed
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price']))
       // re-run: local adapter fetch, now healed (price present)
       .mockResolvedValueOnce(new Response('SKU-1 $9.99', { status: 200, headers: { 'content-type': 'text/html' } }));
 
@@ -189,6 +205,7 @@ describe('healCollector — full happy path (mocked, flag enabled)', () => {
 
     expect(outcome.status).toBe('verified');
     expect(outcome.regrade).toMatchObject({ verdict: 'PASS', action: 'RELEASE' });
+    expect(outcome.promotion).toMatchObject({ status: 'confirmed', viewUrl: 'https://brightdata.com/cp/scrapers/acme-catalog' });
 
     const events = ctx.ledger.all();
     expect(events.map((e) => e.verdict)).toEqual(['RECOVERY_PENDING', 'PASS', 'RECOVERY_VERIFIED']);
@@ -197,7 +214,7 @@ describe('healCollector — full happy path (mocked, flag enabled)', () => {
     expect(events[0].tenant).toBe('acme-corp');
 
     // trigger POST body carries the prompt.
-    const triggerCall = fetchImpl.mock.calls[0];
+    const triggerCall = fetchImpl.mock.calls[1];
     expect(triggerCall[0]).toBe('https://api.brightdata.com/dca/collectors/acme-catalog/refactor_template');
     expect(JSON.parse(triggerCall[1].body)).toMatchObject({ prompt });
   });
@@ -205,8 +222,12 @@ describe('healCollector — full happy path (mocked, flag enabled)', () => {
   it('re-grades RECOVERY_FAILED when the heal does not actually fix the collector', async () => {
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_2', status: 'started' }))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_2', status: 'done' }))
+      // schema did change (promotion confirmed) — isolates this test's own
+      // point (the re-grade itself still fails) from the promotion check.
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price']))
       // re-run still broken: extractor never returns price.
       .mockResolvedValueOnce(new Response('still broken', { status: 200, headers: { 'content-type': 'text/html' } }));
 
@@ -251,6 +272,7 @@ describe('healCollector — approval-gate path', () => {
   it('stops at pending_answer and returns pending_approval when autoApprove is not set — never calls resume_automation_job or re-runs', async () => {
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_3', status: 'started' }))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_3', status: 'pending_answer', preview_result: [{ sku: 'SKU-1', price: 9.99 }] }));
 
@@ -267,7 +289,9 @@ describe('healCollector — approval-gate path', () => {
     });
 
     expect(outcome.status).toBe('pending_approval');
-    expect(fetchImpl).toHaveBeenCalledTimes(2); // trigger + one progress poll, nothing more
+    // promotion baseline + trigger + one progress poll, nothing more — no
+    // post-heal promotion check runs until a heal actually reaches 'done'.
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
     const events = ctx.ledger.all();
     expect(events.map((e) => e.verdict)).toEqual(['RECOVERY_PENDING']); // no VERIFIED/FAILED yet
   });
@@ -275,12 +299,15 @@ describe('healCollector — approval-gate path', () => {
   it('approves via resume_automation_job and continues to re-run + re-grade when autoApprove is true', async () => {
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_4', status: 'started' }))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_4', status: 'pending_answer' }))
       // resume_automation_job -> 200 OK, no body
       .mockResolvedValueOnce(new Response('', { status: 200 }))
       // second progress poll after resume -> done
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_4', status: 'done' }))
+      // promotion check, post-heal — schema changed, promotion confirmed
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price']))
       // re-run
       .mockResolvedValueOnce(new Response('SKU-1 $9.99', { status: 200, headers: { 'content-type': 'text/html' } }));
 
@@ -312,7 +339,7 @@ describe('healCollector — approval-gate path', () => {
     });
 
     expect(outcome.status).toBe('verified');
-    const resumeCall = fetchImpl.mock.calls[2];
+    const resumeCall = fetchImpl.mock.calls[3];
     expect(resumeCall[0]).toBe('https://api.brightdata.com/dca/collectors/acme-catalog/resume_automation_job');
     expect(JSON.parse(resumeCall[1].body)).toEqual({ message: true, auto_save: true });
 
@@ -338,9 +365,11 @@ describe('healCollector — 500 retry on refactor_template', () => {
     // generic 5xx retry loop (already covered by brightdata.test.ts).
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(500, { error: 'internal' })) // 1st trigger attempt: 500
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_5', status: 'started' })) // heal.ts's own retry succeeds
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_5', status: 'done' }))
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price']))
       .mockResolvedValueOnce(new Response('SKU-1 $9.99', { status: 200, headers: { 'content-type': 'text/html' } }));
 
     const client = new BrightDataClient({
@@ -371,11 +400,14 @@ describe('healCollector — 500 retry on refactor_template', () => {
     });
 
     expect(outcome.status).toBe('verified');
-    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
   });
 
   it('does NOT retry a second time — a persistent 500 across both attempts surfaces as BrightDataError', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(500, { error: 'internal' }));
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
+      .mockResolvedValue(jsonResponse(500, { error: 'internal' }));
     const client = new BrightDataClient({
       apiKey: 'k',
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -395,7 +427,7 @@ describe('healCollector — 500 retry on refactor_template', () => {
       })
     ).rejects.toBeInstanceOf(BrightDataError);
 
-    expect(fetchImpl).toHaveBeenCalledTimes(2); // 1 initial + exactly 1 retry, never a 3rd
+    expect(fetchImpl).toHaveBeenCalledTimes(3); // promotion baseline + 1 initial + exactly 1 retry, never a 3rd trigger
     // Fix round 1, Finding A: a throw between RECOVERY_PENDING and the
     // terminal event must never leave RECOVERY_PENDING as the last row.
     const events = ctx.ledger.all();
@@ -421,6 +453,7 @@ describe('healCollector — ledger completeness on failure (Fix round 1, Finding
     vi.spyOn(Date, 'now').mockImplementation(() => now);
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_timeout', status: 'started' }))
       .mockImplementation(async () => {
         now += 6000;
@@ -452,6 +485,7 @@ describe('healCollector — ledger completeness on failure (Fix round 1, Finding
   it('a resume_automation_job failure still appends a terminal RECOVERY_FAILED before rethrowing', async () => {
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_resume_fail', status: 'started' }))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_resume_fail', status: 'pending_answer' }))
       .mockResolvedValueOnce(jsonResponse(500, { error: 'internal' })); // resume_automation_job itself fails
@@ -485,8 +519,10 @@ describe('healCollector — ledger completeness on failure (Fix round 1, Finding
     // adapter.run throws synchronously, which must still be caught here.
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_regrade_throw', status: 'started' }))
-      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_regrade_throw', status: 'done' }));
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_regrade_throw', status: 'done' }))
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price']));
     const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: instantSleep });
     const ctx = newRunnerContext({ adapterContext: {} }); // deliberately no extractors registered
     const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
@@ -534,8 +570,10 @@ describe('healCollector — governor integration', () => {
     // Successfully heal using that first, legitimately-minted action.
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_6', status: 'started' }))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_6', status: 'done' }))
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price']))
       .mockResolvedValueOnce(new Response('SKU-1 $9.99', { status: 200, headers: { 'content-type': 'text/html' } }));
     const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: instantSleep });
     ctx.adapterContext.fetchImpl = fetchImpl as unknown as typeof fetch;
@@ -593,8 +631,12 @@ describe('healCollector — governor attempt accounting (Fix round 1, Finding B)
 
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_double_count', status: 'started' }))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_double_count', status: 'done' }))
+      // schema did change (promotion confirmed) — isolates this test's own
+      // point (governor attempt accounting) from the promotion check.
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price']))
       // re-run still broken: price never comes back -> re-grade cause is
       // STRUCTURAL again, which is exactly the shape decideWithGovernor
       // would mint a second REPAIR from if heal.ts still called it here.
@@ -706,8 +748,10 @@ describe('healCollector — a ledger write itself failing must not mask the real
 
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_ledger_fail', status: 'started' }))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_ledger_fail', status: 'done' }))
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price']))
       .mockResolvedValueOnce(new Response('SKU-1 $9.99', { status: 200, headers: { 'content-type': 'text/html' } }));
     const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: instantSleep });
     const ctx = newRunnerContext({
@@ -764,8 +808,10 @@ describe('healCollector — alerts hook-in (RECOVERY_VERIFIED / RECOVERY_FAILED)
   it('alerts RECOVERY_VERIFIED with the terminal ledger row id when the heal actually fixed the collector', async () => {
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_1', status: 'started' }))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_1', status: 'done' }))
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price']))
       .mockResolvedValueOnce(new Response('SKU-1 $9.99', { status: 200, headers: { 'content-type': 'text/html' } }));
     const webhookFetch = vi.fn().mockResolvedValue(jsonResponse(200, {}));
     const notifier = new AlertNotifier(':memory:', { fetchImpl: webhookFetch });
@@ -811,8 +857,10 @@ describe('healCollector — alerts hook-in (RECOVERY_VERIFIED / RECOVERY_FAILED)
   it('alerts RECOVERY_FAILED when the heal did not fix the collector', async () => {
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_2', status: 'started' }))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_2', status: 'done' }))
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price']))
       .mockResolvedValueOnce(new Response('still broken', { status: 200, headers: { 'content-type': 'text/html' } }));
     const webhookFetch = vi.fn().mockResolvedValue(jsonResponse(200, {}));
     const notifier = new AlertNotifier(':memory:', { fetchImpl: webhookFetch });
@@ -848,6 +896,7 @@ describe('healCollector — alerts hook-in (RECOVERY_VERIFIED / RECOVERY_FAILED)
     const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_timeout', status: 'started' }))
       .mockImplementation(async () => {
         now += 6000;
@@ -889,8 +938,10 @@ describe('healCollector — alerts hook-in (RECOVERY_VERIFIED / RECOVERY_FAILED)
   it('a webhook failure never breaks a heal cycle — outcome and thrown errors are unaffected', async () => {
     const fetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku']))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_4', status: 'started' }))
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_4', status: 'done' }))
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price']))
       .mockResolvedValueOnce(new Response('SKU-1 $9.99', { status: 200, headers: { 'content-type': 'text/html' } }));
     const webhookFetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
     const notifier = new AlertNotifier(':memory:', { fetchImpl: webhookFetch, onError: vi.fn() });
@@ -921,5 +972,155 @@ describe('healCollector — alerts hook-in (RECOVERY_VERIFIED / RECOVERY_FAILED)
     expect(outcome.status).toBe('verified');
     expect(outcome.ledgerWriteError).toBeUndefined();
     notifier.close();
+  });
+});
+
+describe('healCollector — promotion check (t2live live bug: approve ≠ Save to Production)', () => {
+  const prevEnv = process.env.POLYGRAPH_HEAL_ENABLED;
+
+  beforeEach(() => {
+    process.env.POLYGRAPH_HEAL_ENABLED = '1';
+  });
+
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.POLYGRAPH_HEAL_ENABLED;
+    else process.env.POLYGRAPH_HEAL_ENABLED = prevEnv;
+  });
+
+  it('heal reports "done" and the re-grade itself reads PASS, but production output_schema is unchanged -> RECOVERY_FAILED, never RECOVERY_VERIFIED', async () => {
+    // Reproduces the live t2live bug exactly: the re-grade's own
+    // contract/coherence checks are satisfied (sku + price both present —
+    // neither check has any notion of a field the heal prompt asked for
+    // but the local registry never declared, matching "rank" in the real
+    // incident), so decide() alone would read PASS. Only the promotion
+    // check — collectors_list's output_schema identical before vs. after —
+    // catches that nothing actually reached production.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price'])) // baseline
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_promo_1', status: 'started' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_promo_1', status: 'done' }))
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price'])) // post-heal: IDENTICAL — never promoted
+      .mockResolvedValueOnce(new Response('SKU-1 $9.99', { status: 200, headers: { 'content-type': 'text/html' } }));
+
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: instantSleep });
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        // The re-run genuinely satisfies the DECLARED contract (sku, price)
+        // — the checks have no idea a "rank" field was ever requested.
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1', price: 9.99 }) },
+      },
+      schemas: {
+        'acme-catalog': { fields: { sku: { type: 'string', required: true }, price: { type: 'number', required: true, default_value: 0 } } },
+      },
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
+    });
+    const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
+
+    const outcome = await healCollector('acme-catalog', prompt, {
+      client,
+      policy: HEAL_POLICY,
+      tenant: 'acme-corp',
+      collector,
+      runnerCtx: ctx,
+    });
+
+    // The re-grade itself really did read PASS — proving this isn't just a
+    // coincidental regrade failure; the promotion gate is what forces the
+    // outcome to 'failed'.
+    expect(outcome.regrade).toMatchObject({ verdict: 'PASS' });
+    expect(outcome.promotion).toMatchObject({ status: 'unchanged', viewUrl: 'https://brightdata.com/cp/scrapers/acme-catalog' });
+    expect(outcome.status).toBe('failed');
+
+    const events = ctx.ledger.all();
+    expect(events.map((e) => e.verdict)).toEqual(['RECOVERY_PENDING', 'PASS', 'RECOVERY_FAILED']);
+    const terminal = events.at(-1)!;
+    expect(terminal.verdict).toBe('RECOVERY_FAILED');
+    expect(terminal.evidence).toMatchObject([{ check: 'promotion', ok: false, detail: expect.stringMatching(/not promoted/) }]);
+  });
+
+  it('heal reports "done" and production output_schema reflects the change -> RECOVERY_VERIFIED', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(collectorsListResponse(['sku'])) // baseline
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_promo_2', status: 'started' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_promo_2', status: 'done' }))
+      .mockResolvedValueOnce(collectorsListResponse(['sku', 'price'])) // post-heal: field gained — promoted
+      .mockResolvedValueOnce(new Response('SKU-1 $9.99', { status: 200, headers: { 'content-type': 'text/html' } }));
+
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: instantSleep });
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1', price: 9.99 }) },
+      },
+      schemas: {
+        'acme-catalog': { fields: { sku: { type: 'string', required: true }, price: { type: 'number', required: true, default_value: 0 } } },
+      },
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
+    });
+    const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
+
+    const outcome = await healCollector('acme-catalog', prompt, {
+      client,
+      policy: HEAL_POLICY,
+      tenant: 'acme-corp',
+      collector,
+      runnerCtx: ctx,
+    });
+
+    expect(outcome.promotion).toMatchObject({ status: 'confirmed' });
+    expect(outcome.status).toBe('verified');
+    const events = ctx.ledger.all();
+    expect(events.map((e) => e.verdict)).toEqual(['RECOVERY_PENDING', 'PASS', 'RECOVERY_VERIFIED']);
+  });
+
+  it('a collectors_list fetch failing (both snapshots) must not crash the heal path — defers to the re-grade verdict, never a false "unchanged"', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(500, { error: 'internal' })) // baseline snapshot fetch fails
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_promo_3', status: 'started' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_promo_3', status: 'done' }))
+      .mockResolvedValueOnce(jsonResponse(500, { error: 'internal' })) // post-heal snapshot fetch fails too
+      .mockResolvedValueOnce(new Response('SKU-1 $9.99', { status: 200, headers: { 'content-type': 'text/html' } }));
+
+    // maxRetries: 0 — a 500 on collectors_list would otherwise retry inside
+    // BrightDataClient's own generic 5xx loop, consuming multiple queued
+    // mock responses for what should be one logical (failed) call.
+    const client = new BrightDataClient({
+      apiKey: 'k',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: instantSleep,
+      maxRetries: 0,
+    });
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1', price: 9.99 }) },
+      },
+      schemas: {
+        'acme-catalog': { fields: { sku: { type: 'string', required: true }, price: { type: 'number', required: true, default_value: 0 } } },
+      },
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
+    });
+    const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
+
+    // Must resolve normally (no throw) even though both promotion snapshots
+    // themselves failed — same best-effort discipline as appendBestEffort.
+    const outcome = await healCollector('acme-catalog', prompt, {
+      client,
+      policy: HEAL_POLICY,
+      tenant: 'acme-corp',
+      collector,
+      runnerCtx: ctx,
+    });
+
+    expect(outcome.promotion).toMatchObject({ status: 'unknown' });
+    // 'unknown' defers to the re-grade's own (real) PASS verdict rather
+    // than forcing a false failure.
+    expect(outcome.status).toBe('verified');
+    const events = ctx.ledger.all();
+    expect(events.map((e) => e.verdict)).toEqual(['RECOVERY_PENDING', 'PASS', 'RECOVERY_VERIFIED']);
   });
 });

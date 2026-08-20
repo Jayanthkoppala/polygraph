@@ -268,10 +268,12 @@ realism.
 **Self-healing demonstration.** Gated, and honestly so: the prompt composer
 (`policy.ts`'s `composeHealPrompt`), the heal controller's full trigger → poll →
 approve → re-run → re-grade cycle (`heal.ts`), and the structural refusal logic are all
-complete and covered by tests — but every test mocks the Bright Data HTTP layer, because
-this account has never been able to call the live Self-Healing API (403-gated on AI
-features). Heal is double-gated behind `policy.heal_enabled` in `fleet.yaml` **and** the
-environment variable `POLYGRAPH_HEAL_ENABLED=1` — both must be set for a real heal
+complete and covered by tests, every one against a mocked HTTP layer. The account's
+AI-feature 403-gate has since lifted for one real run (2026-08-20,
+`gates/t2live/`) — see Current limits for what that live run found (`--auto-approve`
+genuinely clears the diff-approval gate, but approving is not the same as promoting to
+production). Heal is double-gated behind `policy.heal_enabled` in `fleet.yaml` **and**
+the environment variable `POLYGRAPH_HEAL_ENABLED=1` — both must be set for a real heal
 attempt to fire; either one closed disables every heal path (`heal.ts`'s
 `isHealEnabled`). The demo shows the diagnosis and the exact manual fallback command
 instead of a live call.
@@ -322,11 +324,20 @@ automated here — see Current limits for exactly what has and hasn't been verif
 
 Said plainly, because honest limits are part of this project's pitch:
 
-- **Heal is unverified against the live API.** Every heal path is flag-gated and fully
-  tested against mocks, but has never executed against Bright Data's real Self-Healing
-  endpoints — the account is 403-gated. One specific unverified assumption is called out
-  in `heal.ts`: whether an approved heal promotes straight to production or lands in a
-  draft state needing a separate step Bright Data's docs don't describe.
+- **A heal promoting to production is a manual step — Bright Data's API has no
+  "Save to Production" call.** Heal has now run live (2026-08-20, `gates/t2live/`): an
+  `--auto-approve` heal reported `status: "done"` after ~173s with `user_approval` in
+  `completed_steps`, proving `resume_automation_job` genuinely clears the diff-approval
+  gate. But the fix never reached production — a `GET /dca/collectors_list` read and a
+  live production trigger both confirmed the requested field never showed up.
+  `resume_automation_job` approving a diff is not the same as Bright Data's "Save to
+  Production" step, which the docs describe only as a Scraper Studio IDE button with no
+  API or CLI equivalent anywhere in the `/dca/*` surface (confirmed by grepping the full
+  reference corpus, not assumed). `heal.ts` cannot promote a heal itself — it snapshots
+  the collector's declared output fields before and after via `collectors_list` and
+  refuses to report `RECOVERY_VERIFIED` when they're identical, surfacing
+  `status: "unchanged"` plus the collector's view URL so a human can finish the job in
+  the IDE instead of trusting a heal envelope that says "done" but isn't.
 - **The core `brightdata` adapter path is equally unverified end-to-end against a live
   account, for the same 403-gate reason.** `trigger` → `pollDataset` → `jobLog` →
   `hpErrors` (`src/adapters.ts`) is implemented and covered by unit tests, all of them

@@ -53,14 +53,29 @@
  * fix for this guarded the RECOVERY_PENDING append but left the catch
  * block's own append unguarded, reproducing the exact bug it fixed.
  *
- * UNVERIFIED — see task-6-report.md: whether a heal approved via
- * resume_automation_job promotes straight to production, or lands in a
- * draft state that needs a separate promotion step Bright Data's docs
- * don't describe. This module assumes the healed template is immediately
- * live for the next trigger (the re-run step below). If that assumption
- * is wrong, a heal that actually worked could still read as
- * RECOVERY_FAILED here, because the re-run would hit the still-broken
- * live template rather than the healed draft.
+ * CONFIRMED LIVE (2026-08-20, gates/t2live/heal.json + heal.log — the
+ * account's AI-feature 403-gate lifted for this one run): an
+ * `--auto-approve` heal against a real collector (`c_mt1dsu9fdtdtx3uhf`,
+ * Hacker News) reported `status: "done"` after 71 poll attempts (~173s wall
+ * clock) with `user_approval` present in `completed_steps` — proving
+ * `--auto-approve` does clear the diff-approval gate via
+ * `resume_automation_job`, well inside Bright Data's documented "up to
+ * ~15 minutes." BUT the change never reached production: a
+ * `GET /dca/collectors_list` read immediately after showed the collector's
+ * production `output_schema` unchanged (no `rank` field, though the heal
+ * prompt asked for one), and a live `POST /dca/trigger` + dataset fetch
+ * confirmed the production run still didn't return `rank` either —
+ * verified twice. So `resume_automation_job` approving a diff is NOT the
+ * same as Bright Data's "Save to Production": that promotion step leaves
+ * the healed template in a draft state, and neither the docs
+ * (`reference/docs/llms-full.txt`) nor its self-healing-tool guide (Step 5)
+ * describe an API or CLI equivalent — "Save to Production" is documented
+ * only as an IDE button. This module cannot promote a heal itself; it can
+ * only detect whether promotion happened (`snapshotOutputFields` /
+ * `judgePromotion` below) and refuse to call a heal RECOVERY_VERIFIED when
+ * it didn't. This is precisely the silent-failure class this whole product
+ * exists to catch — Bright Data's own heal API returned a success-shaped
+ * result (`status: "done"`) that did not do what it claimed.
  */
 import { randomUUID } from 'node:crypto';
 import {
@@ -74,6 +89,7 @@ import type { Collector, Policy } from './config.js';
 import { evaluateCollector, type RunnerContext } from './runner.js';
 import { decide } from './policy.js';
 import type { Ledger, LedgerEventInput, LedgerEventRow } from './ledger.js';
+import { inferFieldsForCollector } from './tenancy/infer-schema.js';
 
 export class PolygraphHealDisabled extends Error {
   constructor(reason: string) {
@@ -163,6 +179,81 @@ export interface HealOutcome {
    * attempted), so a bookkeeping failure never masks it. Absent when every
    * ledger write on this path succeeded. See `appendBestEffort`. */
   ledgerWriteError?: unknown;
+  /** Present only once the heal reached a terminal `done` state (status
+   * 'verified' or 'failed') — absent for 'pending_approval', same gating as
+   * `regrade`. See `judgePromotion`'s doc comment for what this does and
+   * doesn't prove. */
+  promotion?: PromotionCheck;
+}
+
+/**
+ * `'confirmed'` — the collector's production `output_schema` field names
+ * differ before vs. after the heal: something genuinely reached production.
+ * `'unchanged'` — identical field names before and after a heal that
+ * reported success: direct proof nothing was promoted (this is the exact
+ * shape of the live "rank" bug — see the module docstring). `'unknown'` —
+ * either snapshot couldn't be taken (a `collectors_list` fetch failed, or
+ * returned no entry for this collector) — never treated as proof of
+ * failure, only as "can't tell."
+ */
+export type PromotionStatus = 'confirmed' | 'unchanged' | 'unknown';
+
+export interface PromotionCheck {
+  status: PromotionStatus;
+  /** Bright Data's own control-panel URL for this collector — the same
+   * `https://brightdata.com/cp/scrapers/{id}` shape the `bdata` CLI itself
+   * returns as `view_url` (confirmed live, gates/t2live/heal.json), built
+   * directly since the raw refactor_template/progress API this module
+   * calls (unlike the CLI) never surfaces that URL. Included on every
+   * outcome so a 'unchanged' (or 'unknown') result always carries the exact
+   * place a human finishes the job manually — Scraper Studio IDE ->
+   * Save to Production. */
+  viewUrl: string;
+}
+
+/**
+ * Snapshots this collector's declared output field names via
+ * `collectorsList()`, reusing `tenancy/infer-schema.ts`'s already-tested
+ * defensive parsing (Bright Data doesn't document `output_schema`'s exact
+ * shape). Returns `undefined` — never throws — when the fetch itself fails
+ * or the collector isn't found in the list; a caller comparing two
+ * `undefined`s (or one `undefined`) always lands on `PromotionStatus:
+ * 'unknown'`, never a false accusation. Same "must not crash the heal path"
+ * discipline as `appendBestEffort`.
+ */
+async function snapshotOutputFields(client: BrightDataClient, collectorId: string): Promise<string[] | undefined> {
+  try {
+    const inferred = inferFieldsForCollector(await client.collectorsList(), collectorId);
+    if (!inferred.found) return undefined;
+    return [...inferred.fieldNames].sort();
+  } catch {
+    return undefined;
+  }
+}
+
+function sameFieldSet(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((name, i) => name === b[i]);
+}
+
+/**
+ * Compares a pre-heal and post-heal `snapshotOutputFields` result. This can
+ * only prove a NEGATIVE (identical field-name lists after a heal that was
+ * supposed to change something is unambiguous — nothing promoted) — it
+ * cannot prove a positive for every heal shape: a heal that fixes a field's
+ * *values* without touching its declared schema (e.g. "price returns null,
+ * fix it") legitimately leaves the field-name list unchanged even when
+ * promotion genuinely happened, which would misread as 'unchanged' here.
+ * `healCollector` never uses 'unchanged' as anything stronger than "block
+ * RECOVERY_VERIFIED and say why" for exactly this reason — see its own
+ * comment at the call site.
+ */
+function judgePromotion(pre: string[] | undefined, post: string[] | undefined): PromotionStatus {
+  if (pre === undefined || post === undefined) return 'unknown';
+  return sameFieldSet(pre, post) ? 'unchanged' : 'confirmed';
+}
+
+function collectorViewUrl(collectorId: string): string {
+  return `https://brightdata.com/cp/scrapers/${collectorId}`;
 }
 
 const DEFAULT_POLL: Required<PollOptions> = { intervalMs: 10_000, deadlineMs: 20 * 60_000 };
@@ -250,7 +341,11 @@ function appendBestEffort(ledger: Ledger, event: LedgerEventInput): AppendResult
  *   2. Runs to completion -> appends a normal grading ledger event (the
  *      re-run's own verdict/cause/action, ungoverned — see the module
  *      docstring's "Governor" section) followed by RECOVERY_VERIFIED
- *      (grading verdict was PASS) or RECOVERY_FAILED (anything else).
+ *      (grading verdict was PASS AND the promotion check below didn't come
+ *      back 'unchanged') or RECOVERY_FAILED (anything else — including a
+ *      PASS grade whose promotion check came back 'unchanged': a heal that
+ *      reported success but never reached production is not a recovery,
+ *      no matter what the re-grade itself found. See `judgePromotion`).
  *   3. Anything throws (trigger retry exhaustion, a poll BrightDataError
  *      or BrightDataPollTimeoutError, a resume failure, the re-grade
  *      itself throwing) -> appends RECOVERY_FAILED with the error message
@@ -294,6 +389,10 @@ export async function healCollector(
   });
 
   try {
+    // Baseline for the promotion check below — taken before the heal ever
+    // touches the collector, best-effort (see `snapshotOutputFields`).
+    const preHealFields = await snapshotOutputFields(options.client, collectorId);
+
     await triggerRefactorWithRetry(options.client, collectorId, prompt);
 
     const pollOpts: PollOptions = {
@@ -310,6 +409,19 @@ export async function healCollector(
       progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts);
     }
 
+    // Do NOT trust `progress.status === "done"` as proof the fix reached
+    // production — confirmed live (see module docstring) that
+    // `resume_automation_job` approving a diff is NOT the same as Bright
+    // Data's "Save to Production". Re-read the collector's declared output
+    // fields now and diff against the baseline above; `judgePromotion` can
+    // only prove a NEGATIVE (see its own doc comment), which is exactly
+    // enough to block a false RECOVERY_VERIFIED.
+    const postHealFields = await snapshotOutputFields(options.client, collectorId);
+    const promotion: PromotionCheck = {
+      status: judgePromotion(preHealFields, postHealFields),
+      viewUrl: collectorViewUrl(collectorId),
+    };
+
     // Re-run + re-grade, ungoverned: `evaluateCollector` (re-run) + a bare
     // `policy.decide()` call — deliberately NOT `runFleet`/
     // `decideWithGovernor`. Grading a just-healed collector is a
@@ -322,7 +434,26 @@ export async function healCollector(
       entityKeyField: options.collector.entity_key,
       now: new Date(nowIso(options.runnerCtx)),
     });
-    const verified = decision.verdict.code === 'PASS';
+    // A heal that reported "done" but definitively did NOT promote (schema
+    // identical before/after) is never a recovery, no matter what the
+    // re-grade itself found — the re-grade only proves the DECLARED
+    // contract still holds, which says nothing about whether the specific
+    // fix the prompt asked for (e.g. a brand-new field no check yet
+    // validates) actually shipped. `promotion.status === 'unknown'` never
+    // overrides the re-grade — an inconclusive fetch is "can't tell," not
+    // "didn't happen".
+    const verified = decision.verdict.code === 'PASS' && promotion.status !== 'unchanged';
+
+    const promotionEvidence = {
+      check: 'promotion',
+      ok: promotion.status !== 'unchanged',
+      detail:
+        promotion.status === 'confirmed'
+          ? 'production output_schema changed after the heal — promotion confirmed.'
+          : promotion.status === 'unchanged'
+            ? `heal reported "${progress.status}" but the collector's production output_schema is unchanged — the fix was not promoted. Finish it manually: Scraper Studio IDE -> Save to Production. ${promotion.viewUrl}`
+            : 'could not verify promotion (collectors_list fetch failed, or returned no entry for this collector) — deferring to the re-grade verdict.',
+    };
 
     // Both appends go through appendBestEffort: the heal outcome
     // (status/regrade below) is already fully computed at this point, so a
@@ -347,6 +478,7 @@ export async function healCollector(
       run_id: evaluated.result.run_id,
       verdict: verified ? 'RECOVERY_VERIFIED' : 'RECOVERY_FAILED',
       cause: decision.verdict.cause,
+      evidence: [promotionEvidence],
       action: decision.action.type,
       heal_job_id: healJobId,
     });
@@ -362,7 +494,7 @@ export async function healCollector(
         collector: collectorId,
         verdict: verified ? 'RECOVERY_VERIFIED' : 'RECOVERY_FAILED',
         cause: decision.verdict.cause,
-        evidence: decision.verdict.evidence,
+        evidence: [decision.verdict.evidence, promotionEvidence].flat(),
         ts: secondWrite.row.ts,
         ledger_id: secondWrite.row.id,
       });
@@ -378,6 +510,7 @@ export async function healCollector(
         action: decision.action.type,
         run_id: evaluated.result.run_id,
       },
+      promotion,
       ...(ledgerWriteError !== undefined ? { ledgerWriteError } : {}),
     };
   } catch (err) {

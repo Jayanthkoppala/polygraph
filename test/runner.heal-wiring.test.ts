@@ -21,6 +21,11 @@ function textResponse(status: number, body: string): Response {
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
+/** GET /dca/collectors_list mock for heal.ts's promotion check — see
+ * heal.test.ts's own `collectorsListResponse` helper (same shape). */
+function collectorsListResponse(collectorId: string, fields: string[]): Response {
+  return jsonResponse(200, [{ id: collectorId, name: collectorId, output_schema: fields.map((name) => ({ name })) }]);
+}
 
 const instantSleep = vi.fn(async () => {});
 
@@ -148,8 +153,10 @@ describe('runFleet — heal wiring (Task 9 controller ruling)', () => {
     const localFetchImpl = vi.fn().mockImplementation(async () => textResponse(200, 'irrelevant, extractor is stateful'));
     const bdFetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse('acme-catalog', ['sku'])) // promotion baseline
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_1', status: 'started' })) // POST refactor_template
-      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_1', status: 'done' })); // GET progress -> done
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_1', status: 'done' })) // GET progress -> done
+      .mockResolvedValueOnce(collectorsListResponse('acme-catalog', ['sku', 'price'])); // promotion check, post-heal — confirmed
     const client = new BrightDataClient({
       apiKey: 'k',
       fetchImpl: bdFetchImpl as unknown as typeof fetch,
@@ -200,8 +207,12 @@ describe('runFleet — heal wiring (Task 9 controller ruling)', () => {
     const localFetchImpl = vi.fn().mockImplementation(async () => textResponse(200, 'still broken'));
     const bdFetchImpl = vi
       .fn()
+      .mockResolvedValueOnce(collectorsListResponse('acme-catalog', ['sku'])) // promotion baseline
       .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_2', status: 'started' }))
-      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_2', status: 'done' }));
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_2', status: 'done' }))
+      // schema did change (promotion confirmed) — isolates this test's own
+      // point (the re-grade itself still fails) from the promotion check.
+      .mockResolvedValueOnce(collectorsListResponse('acme-catalog', ['sku', 'price']));
     const client = new BrightDataClient({
       apiKey: 'k',
       fetchImpl: bdFetchImpl as unknown as typeof fetch,
