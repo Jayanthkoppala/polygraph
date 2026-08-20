@@ -65,6 +65,20 @@ const suspectCoherenceEvidence: Evidence = {
   metrics: { collapsedFields: ['price'], zeroRows: false },
 };
 
+const failedCanaryEvidence: Evidence = {
+  check: 'canary',
+  ok: false,
+  detail: 'canary rerun failed 5/5 attempts',
+  metrics: { failures: 5, attempts: 5 },
+};
+
+const failedIdentityEvidence: Evidence = {
+  check: 'identity',
+  ok: false,
+  detail: 'entity_key mismatch on 5/5 comparable row(s)',
+  metrics: { compared: 5, mismatched: 5, mismatchRate: 1 },
+};
+
 describe('server (Task 8)', () => {
   let dbDir: string;
   let webTmpDir: string;
@@ -178,7 +192,59 @@ describe('server (Task 8)', () => {
       expect(c.verdict).toBeNull();
       expect(c.needsAck).toBe(false);
       expect(c.learning).toEqual({ n: 0, of: 7 });
+      expect(c.pureAction).toBeNull();
+      expect(c.actionReason).toBeNull();
+      expect(c.suggestedHealCommand).toBeNull();
     }
+  });
+
+  it('a FAILED_STRUCTURAL run with a confirmed canary+structural pairing surfaces pureAction=REPAIR and the exact bdata command, even though the ledgered action was downgraded to QUARANTINE', async () => {
+    ledger.append({
+      ts: '2026-08-20T09:10:00.000Z',
+      tenant: 'acme-corp',
+      collector: 'acme-catalog',
+      run_id: 'run-structural',
+      verdict: 'FAILED_STRUCTURAL',
+      cause: 'STRUCTURAL',
+      evidence: [failedCanaryEvidence, suspectCoherenceEvidence],
+      // The persisted action reflects a governor downgrade (heal disabled,
+      // cooldown, budget) — deliberately NOT 'REPAIR', so this test proves
+      // pureAction is re-derived from cause+evidence, not copied from here.
+      action: 'QUARANTINE',
+    });
+
+    const res = await fetch(`${baseUrl}/api/state`);
+    const body = (await res.json()) as any;
+    const catalog = body.collectors.find((c: any) => c.id === 'acme-catalog');
+
+    expect(catalog.verdict).toBe('FAILED_STRUCTURAL');
+    expect(catalog.action).toBe('QUARANTINE');
+    expect(catalog.pureAction).toBe('REPAIR');
+    expect(catalog.actionReason).toBeNull();
+    expect(catalog.suggestedHealCommand).toMatch(/^bdata scraper heal acme-catalog "/);
+    expect(catalog.suggestedHealCommand).toContain('price');
+  });
+
+  it('a FAILED_IDENTITY run never surfaces a suggestedHealCommand — pureAction is REDISCOVER, with a human-readable reason instead', async () => {
+    ledger.append({
+      ts: '2026-08-20T09:10:00.000Z',
+      tenant: 'acme-corp',
+      collector: 'acme-catalog',
+      run_id: 'run-identity',
+      verdict: 'FAILED_IDENTITY',
+      cause: 'IDENTITY',
+      evidence: [failedIdentityEvidence],
+      action: 'REDISCOVER',
+    });
+
+    const res = await fetch(`${baseUrl}/api/state`);
+    const body = (await res.json()) as any;
+    const catalog = body.collectors.find((c: any) => c.id === 'acme-catalog');
+
+    expect(catalog.verdict).toBe('FAILED_IDENTITY');
+    expect(catalog.pureAction).toBe('REDISCOVER');
+    expect(catalog.suggestedHealCommand).toBeNull();
+    expect(catalog.actionReason).toMatch(/entity_key mismatch on 100% of comparable rows/);
   });
 
   it('POST /api/ack appends a new ledger event with action=ACKED and clears needsAck', async () => {

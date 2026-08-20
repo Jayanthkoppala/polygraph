@@ -34,10 +34,11 @@ import { createServer as createHttpServer, type IncomingMessage, type Server, ty
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { FleetConfig } from './config.js';
+import type { Collector, FleetConfig } from './config.js';
 import { Ledger, type LedgerEventRow } from './ledger.js';
-import { Governor } from './policy.js';
-import type { Evidence } from './types.js';
+import { decide, Governor } from './policy.js';
+import type { Cause, Evidence } from './types.js';
+import { bdataHealCommand } from './runner.js';
 
 export interface ServerDeps {
   config: FleetConfig;
@@ -113,11 +114,72 @@ function deriveDisplayMetrics(evidence: unknown): { rows: number | null; fillPct
   return { rows, fillPct };
 }
 
+interface PureActionDetail {
+  pureAction: CollectorState['pureAction'];
+  actionReason: string | null;
+  suggestedHealCommand: string | null;
+}
+
+const NO_PURE_ACTION_DETAIL: PureActionDetail = { pureAction: null, actionReason: null, suggestedHealCommand: null };
+
+/**
+ * Re-derives the UNGOVERNED policy decision for a collector's latest run,
+ * purely by replaying `policy.decide()` (pure — no I/O, no governor, per its
+ * own module docstring) against what the ledger already persisted for that
+ * run: `cause` and `evidence`. This mirrors runner.ts's own "pure decision"
+ * re-derivation for `CollectorRunSummary.suggestedHealCommand` — same inputs,
+ * same function, same output — except runner.ts's copy only ever reached
+ * stdout (the CLI's "suggested fix:" line); this is what gets it onto the
+ * dashboard.
+ *
+ * Why re-derive instead of trusting the ledger's own `action` column: the
+ * ledger stores what actually got EXECUTED, which for a STRUCTURAL failure
+ * with heal disabled by policy is QUARANTINE — identical to what a
+ * genuinely un-provable structural failure, or an IDENTITY failure, also
+ * stores. Replaying `decide()` recovers the counterfactual "what should
+ * happen" (REPAIR, with its heal_prompt) that the dashboard needs in order
+ * to tell "broken but fixable, just not auto-healed right now" apart from
+ * "broken, no automatic fix exists" — see the CRITICAL dashboard finding
+ * this addresses (FAILED_STRUCTURAL and FAILED_IDENTITY were rendering
+ * identically). `decideIdentity` is structurally incapable of returning
+ * REPAIR (policy.ts's `IdentityAction` type excludes it), so this can never
+ * manufacture a heal command for an identity failure — the refusal is
+ * enforced by the same compiler guarantee policy.ts already relies on, not
+ * re-checked here.
+ */
+function derivePureActionDetail(collector: Collector, latestRun: LedgerEventRow | undefined): PureActionDetail {
+  if (!latestRun || !latestRun.cause) return NO_PURE_ACTION_DETAIL;
+
+  const evidence = Array.isArray(latestRun.evidence) ? (latestRun.evidence as Evidence[]) : [];
+  const decision = decide(latestRun.cause as Cause, evidence, {
+    entityKeyField: collector.entity_key,
+    now: new Date(latestRun.ts),
+  });
+
+  if (decision.action.type === 'REPAIR') {
+    return {
+      pureAction: 'REPAIR',
+      actionReason: null,
+      suggestedHealCommand: bdataHealCommand(collector.id, decision.action.heal_prompt),
+    };
+  }
+  if (decision.action.type === 'QUARANTINE' || decision.action.type === 'REDISCOVER') {
+    return { pureAction: decision.action.type, actionReason: decision.action.reason, suggestedHealCommand: null };
+  }
+  return { pureAction: 'RELEASE', actionReason: null, suggestedHealCommand: null };
+}
+
 export interface CollectorState {
   id: string;
   name: string;
   verdict: string | null;
   cause: string | null;
+  /** The action actually EXECUTED and ledgered for the latest run — e.g.
+   * QUARANTINE for a STRUCTURAL failure whose REPAIR got downgraded by the
+   * governor (heal disabled, cooldown, budget exhausted). See `pureAction`
+   * below for "what a fresh, ungoverned decision would say," which is the
+   * field that tells a genuinely un-fixable failure apart from a fixable
+   * one that simply isn't being auto-healed right now. */
   action: string | null;
   rows: number | null;
   fillPct: number | null;
@@ -132,6 +194,26 @@ export interface CollectorState {
    * see `isUnverified`. The dashboard renders this as a distinct
    * "NOT VERIFIED" state, never as a plain PASS or an ordinary verdict. */
   unverified: boolean;
+  /** What `policy.decide()` — pure, ungoverned — would produce today from
+   * this run's own persisted cause+evidence. See `derivePureActionDetail`'s
+   * docstring for why the dashboard needs this distinct from `action`
+   * above: a STRUCTURAL failure with a confirmed canary+structural pairing
+   * is REPAIR here even when the actually-ledgered `action` reads
+   * QUARANTINE because heal is currently disabled. `null` when there is no
+   * run yet, or the run's cause is missing. */
+  pureAction: 'RELEASE' | 'QUARANTINE' | 'REPAIR' | 'REDISCOVER' | null;
+  /** The QUARANTINE/REDISCOVER reason string from that pure decision,
+   * verbatim from policy.ts (e.g. "entity_key mismatch on 100% of
+   * comparable rows — selector likely broken"). `null` for RELEASE/REPAIR
+   * (REPAIR carries no `reason`, only `heal_prompt`) or when there's no
+   * pure decision to report. */
+  actionReason: string | null;
+  /** The exact `bdata scraper heal <id> "<prompt>"` command a human could
+   * run by hand — present only when `pureAction === 'REPAIR'`. Identical to
+   * what runner.ts's CLI output already prints as "suggested fix:"; this
+   * field is what gets that same string onto the dashboard card (previously
+   * computed but never surfaced past stdout). */
+  suggestedHealCommand: string | null;
 }
 
 export interface FleetState {
@@ -181,6 +263,7 @@ export function buildFleetState(config: FleetConfig, ledger: Ledger, governor: G
 
     const { rows, fillPct } = latestRun ? deriveDisplayMetrics(latestRun.evidence) : { rows: null, fillPct: null };
     const govRow = govByCollector.get(collector.id);
+    const { pureAction, actionReason, suggestedHealCommand } = derivePureActionDetail(collector, latestRun);
 
     return {
       id: collector.id,
@@ -197,6 +280,9 @@ export function buildFleetState(config: FleetConfig, ledger: Ledger, governor: G
       acked,
       healAttemptsToday: govRow?.attempts ?? 0,
       unverified: !!(latestRun && isUnverified(latestRun.evidence)),
+      pureAction,
+      actionReason,
+      suggestedHealCommand,
     };
   });
 

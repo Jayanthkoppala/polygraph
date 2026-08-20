@@ -129,7 +129,7 @@
   #verdict-grid {
     flex: 0 0 auto;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 12px;
   }
 
@@ -140,8 +140,16 @@
     padding: 14px 16px;
     border-left: 3px solid var(--muted);
     box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
-    transition: border-color 160ms ease;
+    transition: border-color 160ms ease, box-shadow 160ms ease, transform 120ms ease;
   }
+
+  .card.clickable { cursor: pointer; }
+  .card.clickable:hover {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+    transform: translateY(-1px);
+  }
+  .card.clickable:hover .evidence-hint { color: var(--gold); }
+  .card.clickable:active { transform: translateY(0); }
 
   .card-top {
     display: flex;
@@ -195,6 +203,74 @@
   .metric .value { font-size: 15px; color: var(--text); font-weight: 600; }
   .metric .value.dim { color: var(--muted); font-weight: 400; }
 
+  /* ---------- action chip: what happens next, distinct by kind ---------- */
+  .action-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+
+  .action-chip {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 3px 8px;
+    border-radius: 5px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+
+  /* IDENTITY failures: healing is refused outright, never a repair suggestion. */
+  .refusal-banner {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--red);
+    background: rgba(224, 49, 49, 0.12);
+    border: 1px solid rgba(224, 49, 49, 0.38);
+    border-radius: 6px;
+    padding: 6px 9px;
+    line-height: 1.35;
+    margin-bottom: 8px;
+  }
+
+  /* STRUCTURAL failures with a confirmed proof: the quotable heal command. */
+  .heal-cmd {
+    margin-bottom: 8px;
+    border: 1px solid rgba(240, 140, 0, 0.35);
+    background: rgba(240, 140, 0, 0.07);
+    border-radius: 7px;
+    padding: 7px 9px;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .heal-cmd:hover { background: rgba(240, 140, 0, 0.13); border-color: rgba(240, 140, 0, 0.6); }
+  .heal-cmd-label {
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--amber);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 3px;
+  }
+  .heal-cmd-label .copy-hint { color: var(--muted); text-transform: none; letter-spacing: 0; font-family: var(--mono); }
+  .heal-cmd.copied .copy-hint { color: var(--green); }
+  .heal-cmd code {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
+  }
+
   .cause-line {
     font-size: 11.5px;
     color: var(--muted);
@@ -208,6 +284,19 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+  }
+
+  .footer-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .evidence-hint {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    transition: color 120ms ease;
   }
 
   .learning-pill {
@@ -282,23 +371,38 @@
     flex: 1 1 auto;
     overflow-y: auto;
     min-height: 0;
+    /* Ruled lines carry through the empty space below the last real event —
+       a ledger book's blank rows, not fabricated data — so a lightly
+       populated demo still reads as an instrument rather than a broken
+       half-empty page. */
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent,
+      transparent 33px,
+      rgba(42, 47, 66, 0.4) 33px,
+      rgba(42, 47, 66, 0.4) 34px
+    );
   }
 
   .ledger-row {
     display: grid;
-    grid-template-columns: 168px 150px 96px 190px 1fr 70px;
+    grid-template-columns: 158px 150px 168px 150px 1fr 64px;
     gap: 12px;
     align-items: center;
     padding: 7px 16px;
     border-bottom: 1px solid rgba(42, 47, 66, 0.6);
     font-family: var(--mono);
     font-size: 11.5px;
+    cursor: pointer;
+    transition: background 100ms ease;
   }
   .ledger-row:last-child { border-bottom: none; }
+  .ledger-row:hover { background: rgba(154, 163, 199, 0.06); }
 
   .ledger-row .ts { color: var(--muted); }
   .ledger-row .collector { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ledger-row .cause { color: var(--muted); }
+  .ledger-row .verdict-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ledger-row .cause { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ledger-row .detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ledger-row .hash { color: var(--gold); text-align: right; opacity: 0.75; }
 
@@ -318,6 +422,105 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
   ::-webkit-scrollbar-thumb:hover { background: #3a4160; }
+
+  /* ---------- evidence modal: "show the proof, not just the verdict" ---------- */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(6, 7, 11, 0.72);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    z-index: 50;
+  }
+  .modal-overlay[hidden] { display: none; }
+
+  .modal-panel {
+    width: min(760px, 100%);
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 16px 56px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+  }
+
+  .modal-header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .modal-title { font-size: 14px; font-weight: 700; color: var(--text); }
+  .modal-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  .modal-close {
+    flex: 0 0 auto;
+    font-family: var(--sans);
+    font-size: 13px;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    width: 26px;
+    height: 26px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .modal-close:hover { color: var(--text); border-color: #3a4160; }
+
+  /* This is the ONLY region inside the modal that scrolls — the modal
+     itself never grows the page, matching the single-viewport constraint. */
+  .modal-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    min-height: 0;
+    padding: 14px 18px;
+  }
+
+  .evidence-row {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+  .evidence-row:last-child { margin-bottom: 0; }
+  .evidence-row-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 5px;
+  }
+  .evidence-check {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+  .evidence-ok { font-family: var(--mono); font-size: 10.5px; font-weight: 700; }
+  .evidence-detail { font-size: 12px; color: var(--muted); line-height: 1.45; }
+  .evidence-metrics {
+    margin: 7px 0 0;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 6px;
+    padding: 8px 10px;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  .modal-heal-cmd { margin-bottom: 14px; }
 </style>
 </head>
 <body>
@@ -354,6 +557,19 @@
     </section>
   </main>
 
+  <div class="modal-overlay" id="evidence-modal" hidden>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" id="modal-title">—</div>
+          <div class="modal-sub" id="modal-sub">—</div>
+        </div>
+        <button class="modal-close" id="modal-close" aria-label="Close evidence">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
 <script>
 (function () {
   var POLL_MS = 2000;
@@ -367,9 +583,20 @@
   var credits = document.getElementById('credits');
   var liveIndicator = document.getElementById('live-indicator');
   var liveLabel = document.getElementById('live-label');
+  var modalOverlay = document.getElementById('evidence-modal');
+  var modalTitle = document.getElementById('modal-title');
+  var modalSub = document.getElementById('modal-sub');
+  var modalBody = document.getElementById('modal-body');
+  var modalClose = document.getElementById('modal-close');
 
   var lastSuccessAt = 0;
   var ackInFlight = Object.create(null);
+  // Latest /api/ledger?n=50 tail, keyed by id — the evidence modal reads
+  // from this cache (already fetched every poll tick for the ledger panel)
+  // instead of issuing a second request per click. A card whose latest run
+  // has scrolled out of this window gets an honest "unavailable" message,
+  // never a fabricated one (see showEvidenceForLedgerId).
+  var ledgerById = Object.create(null);
 
   function verdictColor(verdict) {
     if (!verdict) return '#9aa3c7';
@@ -403,16 +630,66 @@
 
   var NOT_VERIFIED_COLOR = '#f08c00'; // same amber as SUSPECT_* — reused, not a new palette entry
 
+  // What happens next, colored by KIND rather than severity — the badge
+  // already says "this failed" in red; this says "what do I do about it",
+  // reusing the existing palette so a repairable failure (amber, same as
+  // the ACK affordance elsewhere) reads as fundamentally different from a
+  // refused one (blue "needs re-discovery" / muted-red "stuck, needs a
+  // human") at a glance, without inventing a new hue.
+  var ACTION_CHIP = {
+    REPAIR: { label: '⚙ REPAIR AVAILABLE', color: 'var(--amber)' },
+    REDISCOVER: { label: '⊘ REDISCOVER TARGET', color: 'var(--blue)' },
+    QUARANTINE: { label: '◻ QUARANTINE — REVIEW', color: 'var(--red)' }
+  };
+
+  function actionChipHtml(pureAction) {
+    var chip = pureAction ? ACTION_CHIP[pureAction] : null;
+    if (!chip) return '';
+    return (
+      '<div class="action-row">' +
+        '<span class="action-chip" style="color:' + chip.color + ';border-color:' + chip.color + ';background:' + chip.color + '1a">' +
+          chip.label +
+        '</span>' +
+      '</div>'
+    );
+  }
+
+  function healCmdHtml(cmd) {
+    if (!cmd) return '';
+    return (
+      '<div class="heal-cmd">' +
+        '<div class="heal-cmd-label"><span>suggested fix</span><span class="copy-hint">click to copy</span></div>' +
+        '<code>' + escapeHtml(cmd) + '</code>' +
+      '</div>'
+    );
+  }
+
   function renderCard(c) {
     var color = c.unverified ? NOT_VERIFIED_COLOR : verdictColor(c.verdict);
     var badgeLabel = c.unverified ? 'NOT VERIFIED' : verdictLabel(c.verdict);
     var rowsDisplay = c.rows === null || c.rows === undefined ? '—' : c.rows;
     var fillDisplay = c.fillPct === null || c.fillPct === undefined ? '—' : c.fillPct + '%';
-    var causeLine = c.unverified
-      ? 'no schema/entity_key registered for this collector — nothing was actually checked'
-      : (c.verdict ? (c.cause ? 'cause: ' + c.cause.toLowerCase() : '') : 'no runs recorded yet');
 
-    var footerRight;
+    var isIdentityFailure = c.verdict === 'FAILED_IDENTITY';
+    var refusalBanner = isIdentityFailure
+      ? '<div class="refusal-banner">⊘ HEAL REFUSED — wrong target, not wrong parser</div>'
+      : '';
+
+    var causeLine;
+    if (c.unverified) {
+      causeLine = 'no schema/entity_key registered for this collector — nothing was actually checked';
+    } else if (c.actionReason) {
+      // The exact policy-engine reason (e.g. "entity_key mismatch on 100%
+      // of comparable rows — selector likely broken") — this is what
+      // answers "why is this red?" at a glance, not a generic cause label.
+      causeLine = c.actionReason;
+    } else if (c.verdict) {
+      causeLine = c.cause ? 'cause: ' + c.cause.toLowerCase() : '';
+    } else {
+      causeLine = 'no runs recorded yet';
+    }
+
+    var footerRight = '';
     if (c.needsAck) {
       var busy = !!ackInFlight[c.ledgerId];
       footerRight =
@@ -420,12 +697,14 @@
         (busy ? ' disabled' : '') + '>' + (busy ? 'ACKING…' : 'ACK') + '</button>';
     } else if (c.acked) {
       footerRight = '<span class="acked-tag">✓ acknowledged</span>';
-    } else {
-      footerRight = '';
     }
 
+    var clickable = c.ledgerId !== null && c.ledgerId !== undefined;
+    var evidenceHint = clickable ? '<span class="evidence-hint">evidence ▸</span>' : '';
+
     return (
-      '<div class="card" style="border-left-color:' + color + '">' +
+      '<div class="card' + (clickable ? ' clickable' : '') + '" style="border-left-color:' + color + '"' +
+        (clickable ? ' data-ledger-id="' + c.ledgerId + '"' : '') + '>' +
         '<div class="card-top">' +
           '<div>' +
             '<div class="card-name" title="' + escapeHtml(c.name) + '">' + escapeHtml(c.name) + '</div>' +
@@ -439,26 +718,36 @@
           '<div class="metric"><div class="label">Rows</div><div class="value' + (c.rows === null ? ' dim' : '') + '">' + rowsDisplay + '</div></div>' +
           '<div class="metric"><div class="label">Fill</div><div class="value' + (c.fillPct === null ? ' dim' : '') + '">' + fillDisplay + '</div></div>' +
         '</div>' +
+        actionChipHtml(c.pureAction) +
+        refusalBanner +
+        healCmdHtml(c.suggestedHealCommand) +
         '<div class="cause-line">' + escapeHtml(causeLine) + '</div>' +
         '<div class="card-footer">' +
           '<span class="learning-pill">learning: ' + c.learning.n + '/' + c.learning.of + '</span>' +
-          footerRight +
+          '<div class="footer-right">' + evidenceHint + footerRight + '</div>' +
         '</div>' +
       '</div>'
     );
   }
 
+  function summarizeEvidence(list) {
+    if (!Array.isArray(list)) return '';
+    var failed = list.filter(function (e) { return e && e.ok === false; });
+    if (!failed.length) return '';
+    return failed.map(function (e) { return e.check + ': ' + e.detail; }).join(' · ');
+  }
+
   function renderLedgerRow(e) {
     var color = verdictColor(e.verdict);
     var isAck = e.action === 'ACKED';
-    var detail = isAck ? 'acknowledged' : (e.action || '');
+    var summary = isAck ? 'acknowledged' : summarizeEvidence(e.evidence);
     return (
-      '<div class="ledger-row">' +
+      '<div class="ledger-row" data-ledger-id="' + e.id + '">' +
         '<span class="ts">' + fmtTime(e.ts) + '</span>' +
         '<span class="collector" title="' + escapeHtml(e.collector) + '">' + escapeHtml(e.collector) + '</span>' +
-        '<span style="color:' + color + '">' + escapeHtml((e.verdict || '').replace(/_/g, ' ')) + '</span>' +
+        '<span class="verdict-cell" style="color:' + color + '">' + escapeHtml((e.verdict || '').replace(/_/g, ' ')) + '</span>' +
         '<span class="cause">' + escapeHtml(e.action || '') + (e.cause ? ' · ' + e.cause.toLowerCase() : '') + '</span>' +
-        '<span class="detail">' + escapeHtml(detail) + '</span>' +
+        '<span class="detail" title="' + escapeHtml(summary) + '">' + escapeHtml(summary) + '</span>' +
         '<span class="hash">#' + e.id + '</span>' +
       '</div>'
     );
@@ -476,7 +765,8 @@
     }
 
     verdictGrid.querySelectorAll('.ack-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
+      btn.addEventListener('click', function (ev) {
+        ev.stopPropagation(); // never also open the evidence modal
         var id = Number(btn.getAttribute('data-ledger-id'));
         ackInFlight[id] = true;
         btn.disabled = true;
@@ -491,16 +781,113 @@
           .then(function () { delete ackInFlight[id]; });
       });
     });
+
+    verdictGrid.querySelectorAll('.heal-cmd').forEach(function (block) {
+      block.addEventListener('click', function (ev) {
+        ev.stopPropagation(); // copy, don't also open the evidence modal
+        copyHealCommand(block);
+      });
+    });
+
+    verdictGrid.querySelectorAll('.card.clickable').forEach(function (card) {
+      card.addEventListener('click', function () {
+        var id = Number(card.getAttribute('data-ledger-id'));
+        showEvidenceForLedgerId(id);
+      });
+    });
+  }
+
+  function copyHealCommand(block) {
+    var codeEl = block.querySelector('code');
+    var text = codeEl ? codeEl.textContent : '';
+    var flash = function () {
+      block.classList.add('copied');
+      var hint = block.querySelector('.copy-hint');
+      var original = hint ? hint.textContent : '';
+      if (hint) hint.textContent = 'copied ✓';
+      setTimeout(function () {
+        block.classList.remove('copied');
+        if (hint) hint.textContent = original;
+      }, 1200);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(flash).catch(function () {});
+    }
   }
 
   function renderLedger(events) {
     ledgerCount.textContent = events.length + ' event' + (events.length === 1 ? '' : 's');
+    ledgerById = Object.create(null);
+    events.forEach(function (e) { ledgerById[e.id] = e; });
+
     if (!events.length) {
       ledgerList.innerHTML = '<div class="empty-note">No ledger events yet — the chain starts on the first verification run.</div>';
       return;
     }
     ledgerList.innerHTML = events.map(renderLedgerRow).join('');
+
+    ledgerList.querySelectorAll('.ledger-row').forEach(function (row) {
+      row.addEventListener('click', function () {
+        var id = Number(row.getAttribute('data-ledger-id'));
+        showEvidenceForLedgerId(id);
+      });
+    });
   }
+
+  // ---------- evidence modal: "show the proof, not just the verdict" ----------
+
+  function renderEvidenceRow(e) {
+    var okColor = e.ok ? 'var(--green)' : 'var(--red)';
+    var metricsJson = e.metrics && Object.keys(e.metrics).length ? JSON.stringify(e.metrics, null, 2) : null;
+    return (
+      '<div class="evidence-row">' +
+        '<div class="evidence-row-head">' +
+          '<span class="evidence-check">' + escapeHtml(e.check) + '</span>' +
+          '<span class="evidence-ok" style="color:' + okColor + '">' + (e.ok ? 'OK' : 'FAILED') + '</span>' +
+        '</div>' +
+        '<div class="evidence-detail">' + escapeHtml(e.detail) + '</div>' +
+        (metricsJson ? '<pre class="evidence-metrics">' + escapeHtml(metricsJson) + '</pre>' : '') +
+      '</div>'
+    );
+  }
+
+  function openEvidenceModal(evt) {
+    modalTitle.textContent = evt.collector + '  ·  ' + verdictLabel(evt.verdict);
+    modalSub.textContent = '#' + evt.id + '  ·  ' + fmtTime(evt.ts) + '  ·  run ' + evt.run_id +
+      (evt.cause ? '  ·  cause ' + evt.cause.toLowerCase() : '');
+
+    var list = Array.isArray(evt.evidence) ? evt.evidence : [];
+    var body = list.length
+      ? list.map(renderEvidenceRow).join('')
+      : '<div class="empty-note">No evidence recorded for this event.</div>';
+    modalBody.innerHTML = body;
+    modalOverlay.hidden = false;
+  }
+
+  function showEvidenceForLedgerId(id) {
+    var evt = ledgerById[id];
+    if (evt) {
+      openEvidenceModal(evt);
+      return;
+    }
+    modalTitle.textContent = 'Evidence unavailable';
+    modalSub.textContent = '#' + id;
+    modalBody.innerHTML =
+      '<div class="empty-note">This run has scrolled out of the visible ledger window. It is still on the hash chain — just not in the last 50 events currently fetched.</div>';
+    modalOverlay.hidden = false;
+  }
+
+  function closeModal() { modalOverlay.hidden = true; }
+
+  modalClose.addEventListener('click', closeModal);
+  modalOverlay.addEventListener('click', function (ev) {
+    if (ev.target === modalOverlay) closeModal();
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && !modalOverlay.hidden) closeModal();
+  });
+
+  // ---------- polling ----------
 
   function setLive(ok) {
     if (ok) {

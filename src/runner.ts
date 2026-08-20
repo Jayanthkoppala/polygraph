@@ -103,8 +103,12 @@ export interface CollectorRunSummary {
  * auto-healed this pass. `prompt` is always a heal_prompt read off a
  * genuine REPAIR action (policy.ts's decide()/decideWithGovernor()) —
  * JSON.stringify quoting keeps it shell-safe regardless of what characters
- * the composed prompt happens to contain. */
-function bdataHealCommand(collectorId: string, prompt: string): string {
+ * the composed prompt happens to contain. Exported so server.ts can render
+ * the identical string on the dashboard when it re-derives the same pure
+ * REPAIR decision from a ledger row's own persisted cause+evidence (see
+ * server.ts's `derivePureActionDetail`) — one formatting function, two
+ * surfaces (CLI stdout, dashboard card), never duplicated. */
+export function bdataHealCommand(collectorId: string, prompt: string): string {
   return `bdata scraper heal ${collectorId} ${JSON.stringify(prompt)}`;
 }
 
