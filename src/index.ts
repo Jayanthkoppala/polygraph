@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { Ledger, type LedgerEventRow } from './ledger.js';
+import { loadFleetConfig } from './config.js';
+import { Governor } from './policy.js';
+import { BrightDataClient } from './brightdata.js';
+import { runFleet } from './runner.js';
 
 const program = new Command();
 
@@ -8,6 +12,13 @@ const program = new Command();
 function resolveDbPath(): string {
   const fromEnv = process.env.POLYGRAPH_DB;
   return fromEnv && fromEnv.trim() !== '' ? fromEnv : './polygraph.sqlite';
+}
+
+/** Default fleet config path is ./fleet.yaml, overridable via env POLYGRAPH_CONFIG. */
+function resolveConfigPath(explicit?: string): string {
+  if (explicit && explicit.trim() !== '') return explicit;
+  const fromEnv = process.env.POLYGRAPH_CONFIG;
+  return fromEnv && fromEnv.trim() !== '' ? fromEnv : './fleet.yaml';
 }
 
 function formatLogLine(row: LedgerEventRow): string {
@@ -30,7 +41,37 @@ function stub(commandLabel: string) {
 program
   .command('run')
   .description('Run a single verification pass across the fleet')
-  .action(stub('run'));
+  .option('-c, --config <path>', 'path to fleet.yaml (default ./fleet.yaml, or POLYGRAPH_CONFIG)')
+  .option('--once', 'run a single pass and exit (currently the only mode `run` supports; reserved for parity with `watch`)')
+  .action(async (opts: { config?: string; once?: boolean }) => {
+    try {
+      const config = loadFleetConfig(resolveConfigPath(opts.config));
+      const dbPath = resolveDbPath();
+      const governor = new Governor(dbPath);
+      const ledger = new Ledger(dbPath);
+      const client = new BrightDataClient();
+
+      // The brightdata adapter needs nothing beyond `client`; the
+      // unlocker/local adapters additionally need per-collector extractor
+      // functions, which aren't expressible in fleet.yaml — running a
+      // fleet with unlocker/local collectors from the CLI today requires a
+      // richer entry point than this one (a future task's concern).
+      const summary = await runFleet(config, { adapterContext: { client }, governor, ledger });
+
+      for (const r of summary.results) {
+        process.stdout.write(
+          `${r.collector}: verdict=${r.verdict} cause=${r.cause} action=${r.action} run=${r.run_id}\n`
+        );
+      }
+
+      governor.close();
+      ledger.close();
+      process.exitCode = summary.results.some((r) => r.action !== 'RELEASE') ? 1 : 0;
+    } catch (err) {
+      process.stderr.write(`polygraph run: ${(err as Error).message}\n`);
+      process.exitCode = 1;
+    }
+  });
 
 program
   .command('watch')
