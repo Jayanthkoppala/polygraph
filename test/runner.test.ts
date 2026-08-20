@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runFleet, type RunnerContext } from '../src/runner.js';
 import { Governor } from '../src/policy.js';
 import { Ledger } from '../src/ledger.js';
+import { BrightDataClient } from '../src/brightdata.js';
 import type { FleetConfig, Collector, Policy } from '../src/config.js';
 import type { OutputSchema } from '../src/types.js';
 
@@ -244,5 +245,64 @@ describe('runFleet', () => {
     const evidence = ctx.ledger.all()[0].evidence as { check: string; ok: boolean }[];
     const contractEvidence = evidence.find((e) => e.check === 'contract');
     expect(contractEvidence?.ok).toBe(false);
+  });
+
+  it('never reaches PASS when meta.fails > 0, even when every returned row is well-formed and the failed input\'s own error_code classifies as NONE (task review CRITICAL finding)', async () => {
+    // A well-explained, fully-accounted single "timeout" failure (a plain
+    // retryable_transient code, not anti-bot) is exactly the shape that
+    // classifies to cause NONE from error codes alone -- the adapter's own
+    // partial_failure reconciliation does NOT fire here (rows+errors add
+    // up, fails are fully accounted for by hp_errors). Only the runner's
+    // own "read meta.fails" safeguard stands between this and a false PASS.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { collection_id: 'j_transient' }))
+      .mockResolvedValueOnce(jsonResponse(200, [{ sku: 'SKU-1', input: 'SKU-1' }])) // 1 of 2 inputs
+      .mockResolvedValueOnce(jsonResponse(200, { status: 'done', lines: 1, fails: 1, success: 1, pages: 1 }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, [{ input: 'SKU-2', error: 'timed out', error_code: 'timeout' }])
+      ); // fully accounts for the 1 fail
+    const collector: Collector = { ...healthyCollector, adapter: 'brightdata', canary_inputs: ['SKU-1', 'SKU-2'] };
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch });
+    const ctx = newRunnerContext({ adapterContext: { client } });
+
+    const summary = await runFleet(fleetConfig([collector]), ctx);
+
+    expect(summary.results[0].verdict).not.toBe('PASS');
+    expect(summary.results[0].cause).toBe('DATA');
+  });
+
+  it('isolates a mid-fleet adapter failure: other collectors still get evaluated and ledgered, the failing one gets an error entry', async () => {
+    const first: Collector = { ...healthyCollector, id: 'first', name: 'First' };
+    const middle: Collector = { ...healthyCollector, id: 'middle', name: 'Middle' };
+    const last: Collector = { ...healthyCollector, id: 'last', name: 'Last' };
+    // A fresh Response per call -- a Response body can only be read once,
+    // and mockResolvedValue(sameObject) would hand the SAME (already
+    // consumed) instance to every collector's fetch.
+    const fetchImpl = vi.fn().mockImplementation(async () => textResponse(200, 'ok'));
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: {
+          first: () => ({ sku: 'SKU-1', price: 1 }),
+          // deliberately no extractor registered for "middle" -> adapter throws
+          last: () => ({ sku: 'SKU-1', price: 1 }),
+        },
+      },
+    });
+
+    const summary = await runFleet(fleetConfig([first, middle, last]), ctx);
+
+    expect(summary.results.map((r) => r.collector)).toEqual(['first', 'middle', 'last']);
+    expect(summary.results[0]).toMatchObject({ verdict: 'PASS', action: 'RELEASE' });
+    expect(summary.results[1]).toMatchObject({ verdict: 'SUSPECT_UNEXPLAINED_ANOMALY', cause: 'DATA', action: 'QUARANTINE' });
+    expect(summary.results[2]).toMatchObject({ verdict: 'PASS', action: 'RELEASE' });
+
+    const events = ctx.ledger.all();
+    expect(events).toHaveLength(3);
+    expect(events[1].collector).toBe('middle');
+    const middleEvidence = events[1].evidence as { check: string; ok: boolean; detail: string }[];
+    expect(middleEvidence[0]).toMatchObject({ check: 'adapter', ok: false });
+    expect(middleEvidence[0].detail).toContain('no extractor registered');
   });
 });

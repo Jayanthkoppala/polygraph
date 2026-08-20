@@ -129,6 +129,79 @@ describe('brightdataAdapter', () => {
     await expect(brightdataAdapter.run(brightdataCollector, ['SKU-1'], {})).rejects.toThrow(/requires ctx.client/);
   });
 
+  describe('partial_failure accounting (task review CRITICAL finding)', () => {
+    it('synthesizes partial_failure when rows+errors fall short of inputs requested, even with empty hp_errors', async () => {
+      const inputs = ['SKU-1', 'SKU-2', 'SKU-3', 'SKU-4', 'SKU-5'];
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(200, { collection_id: 'j_partial1' }))
+        .mockResolvedValueOnce(
+          jsonResponse(200, [
+            { sku: 'SKU-1', input: 'SKU-1' },
+            { sku: 'SKU-2', input: 'SKU-2' },
+            { sku: 'SKU-3', input: 'SKU-3' },
+          ])
+        ) // only 3 of 5 rows came back
+        .mockResolvedValueOnce(jsonResponse(200, { status: 'done', lines: 3, fails: 0, success: 3, pages: 1 }))
+        .mockResolvedValueOnce(jsonResponse(200, [])); // hp_errors empty -- no explanation offered
+      const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch });
+
+      const result = await brightdataAdapter.run(brightdataCollector, inputs, { client });
+
+      expect(result.rows).toHaveLength(3);
+      expect(result.errors).toEqual([
+        expect.objectContaining({ error_code: 'partial_failure', input: null }),
+      ]);
+      expect(result.errors?.[0].message).toContain('5 input(s) requested');
+      expect(result.errors?.[0].message).toContain('3 row(s) returned');
+    });
+
+    it('synthesizes partial_failure when jobLog reports fails > 0 that hp_errors does not explain, even with full rows', async () => {
+      const inputs = ['SKU-1', 'SKU-2'];
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(200, { collection_id: 'j_partial2' }))
+        .mockResolvedValueOnce(
+          jsonResponse(200, [
+            { sku: 'SKU-1', input: 'SKU-1' },
+            { sku: 'SKU-2', input: 'SKU-2' },
+          ])
+        ) // "full" rows -- as many rows as inputs
+        .mockResolvedValueOnce(jsonResponse(200, { status: 'done', lines: 2, fails: 1, success: 2, pages: 1 })) // but fails=1
+        .mockResolvedValueOnce(jsonResponse(200, [])); // hp_errors doesn't account for that 1 fail
+      const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch });
+
+      const result = await brightdataAdapter.run(brightdataCollector, inputs, { client });
+
+      expect(result.rows).toHaveLength(2);
+      expect(result.errors).toEqual([
+        expect.objectContaining({ error_code: 'partial_failure', input: null }),
+      ]);
+      expect(result.errors?.[0].message).toContain('1 fail(s) reported');
+    });
+
+    it('does NOT synthesize partial_failure for a genuinely clean run (rows == inputs, fails == 0)', async () => {
+      const inputs = ['SKU-1', 'SKU-2'];
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(200, { collection_id: 'j_clean' }))
+        .mockResolvedValueOnce(
+          jsonResponse(200, [
+            { sku: 'SKU-1', input: 'SKU-1' },
+            { sku: 'SKU-2', input: 'SKU-2' },
+          ])
+        )
+        .mockResolvedValueOnce(jsonResponse(200, { status: 'done', lines: 2, fails: 0, success: 2, pages: 1 }))
+        .mockResolvedValueOnce(jsonResponse(200, []));
+      const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch });
+
+      const result = await brightdataAdapter.run(brightdataCollector, inputs, { client });
+
+      expect(result.rows).toHaveLength(2);
+      expect(result.errors).toBeUndefined();
+    });
+  });
+
   it('tolerates a failing hp_errors call (e.g. 404) instead of failing the whole run', async () => {
     const fetchImpl = vi
       .fn()

@@ -146,6 +146,42 @@ export const brightdataAdapter: RunAdapter = {
           'GET /dca/dataset returned HTTP 200 with an empty array — could be zero matching rows or an ' +
           'expired/invalid snapshot; not treated as a silent empty success',
       });
+    } else {
+      // CRITICAL accounting gap (task review finding): Bright Data's docs
+      // say a batch job returns "one row per successful input by
+      // default" — a job can legitimately come back with FEWER rows than
+      // inputs requested, with no error surfaced at all (hp_errors can
+      // legitimately be [] for a regular /dca/trigger job, per the note
+      // above). Nothing else in the pipeline notices that shortfall:
+      // checkContract's errorRowRate denominator is rows+errors (never
+      // inputs requested), checkCoherence's zeroRows only fires at
+      // exactly 0 rows, checkIdentity only iterates rows that came back.
+      // Left unchecked, a collector silently dropping a fraction of its
+      // inputs — while every row it DOES return is well-formed — reads
+      // as a clean PASS. Reconcile before returning: if rows+errors don't
+      // add up to what was requested, or the job log's own success/fails
+      // counters don't agree with what we actually got back, synthesize
+      // a `partial_failure` error (same pattern as `ambiguous_empty_dataset`
+      // above) so it classifies as DATA -> SUSPECT/QUARANTINE rather than
+      // silently RELEASE.
+      const requested = inputs.length;
+      const accountedFor = dataset.rows.length + errors.length;
+      const reportedFails = typeof log.fails === 'number' ? log.fails : 0;
+      const reportedSuccess = typeof log.success === 'number' ? log.success : dataset.rows.length;
+
+      const shortfall = accountedFor < requested;
+      const successMismatch = reportedSuccess !== dataset.rows.length;
+      const failsUnaccountedFor = reportedFails > errors.length;
+
+      if (shortfall || successMismatch || failsUnaccountedFor) {
+        errors.push({
+          input: null,
+          error_code: 'partial_failure',
+          message:
+            `${requested} input(s) requested, ${dataset.rows.length} row(s) returned, ` +
+            `${reportedFails} fail(s) reported by jobLog (hp_errors accounted for ${errors.length})`,
+        });
+      }
     }
 
     return {
