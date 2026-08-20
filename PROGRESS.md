@@ -3,7 +3,7 @@
 Single source of truth for what is built, what is being built, and what is not.
 Refresh the live numbers with `npm run progress` (rewrites the Live metrics block below).
 
-**Last updated:** 2026-08-20 · **Branch:** `build/v1` · **Deadline:** 2026-08-23
+**Last updated:** 2026-08-20 17:10 · **Branch:** `build/v1` · **Deadline:** 2026-08-23
 
 ---
 
@@ -12,8 +12,8 @@ Refresh the live numbers with `npm run progress` (rewrites the Live metrics bloc
 <!-- METRICS:START -->
 | Metric | Value |
 |---|---|
-| Commits | 60 |
-| Backend tests | 591 passing, 1 skipped |
+| Commits | 64 |
+| Backend tests | 598 passing, 1 skipped |
 | App tests | 276 passing |
 | Typecheck | clean |
 | Backend suite | `npx vitest run` |
@@ -26,12 +26,13 @@ Refresh the live numbers with `npm run progress` (rewrites the Live metrics bloc
 > scopes it to `test/**` only, so `npx vitest run` from the repo root no longer globs
 > into `app/`'s jsdom-only test files the way it used to (proven by deliberately
 > breaking one test in each suite and confirming `test:all` reported the failure, then
-> restoring it). The **App tests row above is a live number, not a stable one** —
-> `app/**` is under active concurrent development as this is written (Task 10a). It went
+> restoring it). The App tests row above **used to be volatile** — during Task 10a it went
 > 232 passing → 4 files failing (missing `lucide-react`) → fixed → 243 passing, 5 newly
-> failing, all within the span of writing this section. `npm run progress`'s numbers are
-> real (not a lint-only pass), just volatile until Task 10a settles — re-run it for the
-> current truth rather than trusting this snapshot.
+> failing, all within the span of writing that section. **That has settled.** Re-verified
+> 2026-08-20 17:10 on a clean tree with no agent writing: 598 + 276 = 874 passing, both
+> typechecks and both builds clean. `npm run progress`'s numbers are real (not a lint-only
+> pass) and are now a stable snapshot — but re-run it after any further work rather than
+> trusting a printed number.
 
 ---
 
@@ -55,7 +56,7 @@ Shipped, reviewed, demo-ready. This is the fallback if v2 does not land.
 
 ---
 
-## v2 — hosted multi-tenant product · IN PROGRESS
+## v2 — hosted multi-tenant product · BUILD COMPLETE
 
 | # | Task | Owner surface | State |
 |---|---|---|---|
@@ -70,14 +71,15 @@ Shipped, reviewed, demo-ready. This is the fallback if v2 does not land.
 | 9 | Onboarding UI + tenant app shell | `app/src/onboarding/` | ✅ |
 | 10 | Integration, routing, honesty pass, deploy readiness | root + `app/` | ✅ |
 | — | Design critique (rendered, measured, 15 screenshots) | `docs/design/critique.md` | ✅ |
-| — | **Visual defect fixes** (repair slot clipped, layout blowout, unpainted body) | `app/` | 🔄 |
-| — | **Heal promotion fix** (live finding: heal reports done without promoting) | `src/heal.ts` | 🔄 |
+| — | Visual defect fixes (repair slot clipped, layout blowout, unpainted body) | `app/` | ✅ `f2f97f4` |
+| — | Heal promotion fix (live finding: heal reports done without promoting) | `src/heal.ts` | ✅ `1b2d2bd` |
 
-Tasks 4/7/8/9's own deliverables landed and are individually reviewed-complete per their
-task reports — the 🔄 on 10a reflects frontend work landing concurrently with (and after)
-those tasks, which has intermittently broken `app/`'s own build/tests (see Known limits),
-not that 7/8/9 themselves are unfinished. Full v2 completion is blocked on 10a alone:
-router wiring between landing/onboarding/fleet, and `app/`'s test suite settling green.
+Task 10a has settled. Router wiring between landing/onboarding/fleet is in place and
+`app/`'s suite is green, which is what v2 completion was waiting on. Verified 2026-08-20
+17:10 on a clean tree: 598 backend passing (1 skipped — `brightdata.live-smoke`, intentional)
+plus 276 app passing = **874 passing**, typecheck and build clean on both projects. The
+concurrent-development volatility described under Known limits no longer applies; the
+numbers above are a settled snapshot, not a moving one. Nothing in v2 is in flight.
 
 ---
 
@@ -112,13 +114,13 @@ router wiring between landing/onboarding/fleet, and `app/`'s test suite settling
 
 | Limit | Why |
 |---|---|
-| Heal promotes to draft, not production | **Proven live 2026-08-20**: Bright Data's heal returned `status: done` while production stayed unchanged. Fix in flight; the finding is now the strongest submission story |
+| Heal promotes to draft, not production | **Proven live 2026-08-20**: Bright Data's heal returned `status: done` while production stayed unchanged. No programmatic promote endpoint exists anywhere in the documented `/dca/*` surface (confirmed by exhaustive grep, not assumed), so this cannot be fixed from the API. `1b2d2bd` instead makes it honest: heal snapshots the collector's declared output fields before and after, and **refuses `RECOVERY_VERIFIED` when they are identical** — even if the re-grade reads PASS, which it can when the heal adds a field no check validates. An `unchanged` result is recorded with the collector's view URL so a human finishes in Scraper Studio. The finding is the strongest submission story |
 | Bright Data adapter path now proven live | Real collector, 59 records, real heal — no longer mock-only |
 | Landing sandbox is client-side | Real verdicts/fill-rates/SHA-256 chain computed in the browser, not the server pipeline. Disclosed on the page |
 | Peer corroboration built but unwired | Advisory-only; needs ≥3 same-purpose collectors |
 | Drift detection cut | No trend signal exists; a chart would be a lie |
 | Auto-repair off in hosted | Server never sets `POLYGRAPH_HEAL_ENABLED`; heals spend the tenant's credits |
-| JS bundle is one 734KB chunk | Route-level code-splitting not done |
+| JS bundle is one 735KB chunk (225KB gzip) | Route-level code-splitting not done |
 | Roving keyboard nav incomplete past 24 collectors | Virtualized window boundary |
 
 ---
@@ -130,7 +132,7 @@ router wiring between landing/onboarding/fleet, and `app/`'s test suite settling
 | ~~Bright Data account verification~~ | ~~Jay~~ | ✅ **DONE 2026-08-20** — AI generation, runs and heal all confirmed working live |
 | Deploy to Fly | Jay | Everything is ready; agents were told not to deploy without your say-so |
 | Hackathon submission | Jay | Form open, resubmission allowed |
-| Git author identity | Jay | Commits still author as "Fakename"; LICENCE says Jayanth Koppala |
+| Git author identity | Jay | **Half done 2026-08-20.** Global `user.name` is now `Jayanth Koppala`, so the 5 most recent commits are correct. The **first 59 still author as "Fakename"** — rewriting them needs a `filter-branch` pass, which is a history rewrite and needs your explicit go. No remote exists, so it is local-only and safe to run |
 
 ---
 
