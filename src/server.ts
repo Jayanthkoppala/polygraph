@@ -39,16 +39,30 @@ import { Ledger, type LedgerEventRow } from './ledger.js';
 import { decide, Governor } from './policy.js';
 import type { Cause, Evidence } from './types.js';
 import { bdataHealCommand } from './runner.js';
+import { serveStaticOrSpa, hasBuiltApp } from './static-serve.js';
 
 export interface ServerDeps {
   config: FleetConfig;
   ledger: Ledger;
   governor: Governor;
-  /** Directory containing index.html. Defaults to the repo's `web/`
-   * directory (resolved relative to this module, so it works identically
-   * run via `tsx src/server.ts` in dev and from compiled `dist/server.js`).
-   * Injectable for tests. */
+  /** Directory containing the CLASSIC dashboard's index.html (the original
+   * single-page `web/` dashboard). Defaults to the repo's `web/` directory
+   * (resolved relative to this module, so it works identically run via
+   * `tsx src/server.ts` in dev and from compiled `dist/server.js`).
+   * Injectable for tests.
+   *
+   * Passing this explicitly opts OUT of the app/dist SPA resolution below —
+   * it forces classic single-page serving of exactly this directory,
+   * matching this field's original (pre-SPA) behavior. That keeps every
+   * caller that already depends on "webDir means THE dashboard" (this
+   * module's own test suite) working unchanged; only the argument-free
+   * default path (`polygraph demo`/`watch`) picks up the new React app. */
   webDir?: string;
+  /** Directory containing the built React app (`app/dist`) — the new
+   * dashboard `polygraph demo`/`watch` prefer per docs/demo.md. Defaults to
+   * `../app/dist` resolved relative to this module. Injectable for tests.
+   * Ignored when `webDir` is explicitly set (see its own doc comment). */
+  appDir?: string;
   /** Clock, injectable for tests. Defaults to `() => new Date().toISOString()`. */
   now?: () => string;
 }
@@ -366,6 +380,44 @@ function defaultWebDir(): string {
   return fileURLToPath(new URL('../web', import.meta.url));
 }
 
+function defaultAppDir(): string {
+  // Same one-directory-below-repo-root resolution as defaultWebDir() above,
+  // mirroring tenancy/serve.ts's own defaultWebDir() for app/dist.
+  return fileURLToPath(new URL('../app/dist', import.meta.url));
+}
+
+interface ResolvedDashboardDir {
+  mode: 'spa' | 'classic';
+  dir: string;
+}
+
+/**
+ * Picks which directory `GET /` (and, in `spa` mode, every other unmatched
+ * GET) serves from, per ServerDeps.webDir/appDir's own doc comments:
+ *
+ * - `deps.webDir` set explicitly -> always `classic` mode against exactly
+ *   that directory (back-compat with every existing caller/test that passes
+ *   `webDir` expecting the original single-page behavior).
+ * - otherwise, the built React app (`deps.appDir` or `../app/dist`) if it
+ *   exists -> `spa` mode.
+ * - otherwise (a fresh clone that hasn't run `cd app && npm run build`
+ *   yet) -> fall back to the classic `web/` dashboard, which ships in the
+ *   repo and always exists, so `polygraph demo`/`watch` never serve a blank
+ *   page or crash. One line on stderr says why, so this doesn't look like a
+ *   silent regression to whoever's running it.
+ */
+function resolveDashboardDir(deps: Pick<ServerDeps, 'webDir' | 'appDir'>): ResolvedDashboardDir {
+  if (deps.webDir) return { mode: 'classic', dir: deps.webDir };
+
+  const appDir = deps.appDir ?? defaultAppDir();
+  if (hasBuiltApp(appDir)) return { mode: 'spa', dir: appDir };
+
+  process.stderr.write(
+    'polygraph: app/dist not found — serving the classic dashboard. Run `cd app && npm run build` for the new UI.\n'
+  );
+  return { mode: 'classic', dir: defaultWebDir() };
+}
+
 /** Exported so tenancy/http-routes.ts's own JSON responses use the exact
  * same content-type/content-length framing as this module's routes. */
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -431,11 +483,11 @@ export function parseLimit(raw: string | null, fallback: number): number {
  * matches how `Ledger`/`Governor`/`AlertNotifier` all leave lifecycle to
  * their caller rather than managing it themselves. */
 export function createServer(deps: ServerDeps): Server {
-  const webDir = deps.webDir ?? defaultWebDir();
+  const dashboard = resolveDashboardDir(deps);
   const nowFn = deps.now ?? (() => new Date().toISOString());
 
   return createHttpServer((req, res) => {
-    void handleRequest(req, res, deps, webDir, nowFn);
+    void handleRequest(req, res, deps, dashboard, nowFn);
   });
 }
 
@@ -443,19 +495,12 @@ async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   deps: ServerDeps,
-  webDir: string,
+  dashboard: ResolvedDashboardDir,
   nowFn: () => string
 ): Promise<void> {
   try {
     const method = req.method ?? 'GET';
     const url = new URL(req.url ?? '/', 'http://localhost');
-
-    if (method === 'GET' && url.pathname === '/') {
-      const html = await readFile(join(webDir, 'index.html'), 'utf8');
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(html);
-      return;
-    }
 
     if (method === 'GET' && url.pathname === '/api/state') {
       const state = buildFleetState(deps.config, deps.ledger, deps.governor, nowFn());
@@ -497,6 +542,55 @@ async function handleRequest(
         throw err;
       }
       return;
+    }
+
+    // The React app's session gate (app/src/lib/session.ts's
+    // `fetchSessionStatus`) probes this exact tenancy route
+    // (`src/tenancy/http-routes.ts`'s `GET /api/settings/key/status`) to
+    // decide between "anonymous"/"keyless"/"ready". There is no tenancy,
+    // no session, and no Bright Data key concept at all on this offline
+    // dashboard — every visitor already has the one local demo ledger this
+    // process owns — so this route always answers "ready" (any non-null
+    // `status`), letting the app's fleet view render directly against
+    // `/api/state`/`/api/ledger` above instead of bouncing a session-less
+    // visitor back to the landing page. This never touches tenancy/crypto —
+    // it's a static string, not a real key status.
+    if (method === 'GET' && url.pathname === '/api/settings/key/status') {
+      sendJson(res, 200, { status: 'offline-demo' });
+      return;
+    }
+
+    // `app/src/components/ledger/LedgerStream.tsx`'s "Verify chain" button
+    // calls this route (mirroring `src/tenancy/http-routes.ts`'s tenant-scoped
+    // version). The offline dashboard has exactly one ledger — this walks it
+    // for real via `Ledger.verifyAsync()`, same chain-walk logic `polygraph
+    // ledger verify` uses, so the button's result is a genuine verification,
+    // never a fabricated "chain intact".
+    if (method === 'POST' && url.pathname === '/api/ledger/verify') {
+      const result = await deps.ledger.verifyAsync();
+      sendJson(res, 200, {
+        ok: result.ok,
+        checked: result.checked,
+        reason: result.ok ? undefined : `chain broken at event #${result.firstBadId}`,
+      });
+      return;
+    }
+
+    if (method === 'GET') {
+      if (dashboard.mode === 'spa') {
+        await serveStaticOrSpa(url.pathname, dashboard.dir, res);
+        return;
+      }
+      // Classic mode: exactly one static page at '/', same as this
+      // module's original (pre-SPA) behavior — anything else genuinely 404s
+      // rather than SPA-shelling paths a single-page dashboard never had
+      // client-side routes for.
+      if (url.pathname === '/') {
+        const html = await readFile(join(dashboard.dir, 'index.html'), 'utf8');
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end(html);
+        return;
+      }
     }
 
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });

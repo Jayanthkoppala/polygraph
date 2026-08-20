@@ -371,6 +371,160 @@ describe('server (Task 8)', () => {
     const res = await fetch(`${baseUrl}/nope`);
     expect(res.status).toBe(404);
   });
+
+  it('GET /api/settings/key/status always answers ready (offline dashboard has no session/key concept)', async () => {
+    const res = await fetch(`${baseUrl}/api/settings/key/status`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: unknown };
+    expect(body.status).not.toBeNull();
+  });
+
+  it('POST /api/ledger/verify walks the real ledger and reports chain-intact', async () => {
+    ledger.append({
+      ts: '2026-08-20T09:00:00.000Z',
+      tenant: 'acme-corp',
+      collector: 'acme-catalog',
+      run_id: 'run-1',
+      verdict: 'PASS',
+      cause: 'NONE',
+      evidence: [],
+      action: 'RELEASE',
+    });
+
+    const res = await fetch(`${baseUrl}/api/ledger/verify`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; checked: number };
+    expect(body.ok).toBe(true);
+    expect(body.checked).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * `polygraph demo`/`watch` prefer the built React app (`app/dist`) over the
+ * classic single-page `web/` dashboard — see docs/demo.md and
+ * src/server.ts's `resolveDashboardDir`. These tests drive that resolution
+ * directly (via the injectable `appDir`/`webDir`), the same in-process
+ * pattern as the suite above.
+ */
+describe('server — SPA dashboard resolution (fix-demo-spa)', () => {
+  let dbDir: string;
+  let tmpDirs: string[];
+  let ledger: Ledger;
+  let governor: Governor;
+  let server: Server;
+  let baseUrl: string;
+
+  function tempAppDir(): { dir: string; appDir: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'polygraph-app-dist-test-'));
+    const appDir = join(dir, 'dist');
+    mkdirSync(join(appDir, 'assets'), { recursive: true });
+    writeFileSync(
+      join(appDir, 'index.html'),
+      '<!doctype html><html><body><div id="root">react-app-shell-fixture</div></body></html>',
+      'utf8'
+    );
+    writeFileSync(join(appDir, 'assets', 'app.js'), 'console.log("fixture-asset");', 'utf8');
+    return { dir, appDir };
+  }
+
+  function startServer(deps: Parameters<typeof createServer>[0]): void {
+    server = createServer(deps);
+  }
+
+  async function listen(): Promise<void> {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${port}`;
+  }
+
+  beforeEach(() => {
+    const db = tempDbPath();
+    dbDir = db.dir;
+    tmpDirs = [];
+    ledger = new Ledger(db.path);
+    governor = new Governor(db.path);
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    ledger.close();
+    governor.close();
+    rmSync(dbDir, { recursive: true, force: true });
+    for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
+  });
+
+  it('serves the React app shell at / when a built app/dist is present (via injectable appDir)', async () => {
+    const app = tempAppDir();
+    tmpDirs.push(app.dir);
+    startServer({ config, ledger, governor, appDir: app.appDir });
+    await listen();
+
+    const res = await fetch(`${baseUrl}/`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('react-app-shell-fixture');
+  });
+
+  it('serves a real static asset from app/dist by content type', async () => {
+    const app = tempAppDir();
+    tmpDirs.push(app.dir);
+    startServer({ config, ledger, governor, appDir: app.appDir });
+    await listen();
+
+    const res = await fetch(`${baseUrl}/assets/app.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/javascript/);
+    expect(await res.text()).toContain('fixture-asset');
+  });
+
+  it('SPA-shells an unmatched deep-link path (client-side routes like /app, /fleet) instead of 404ing', async () => {
+    const app = tempAppDir();
+    tmpDirs.push(app.dir);
+    startServer({ config, ledger, governor, appDir: app.appDir });
+    await listen();
+
+    const res = await fetch(`${baseUrl}/fleet`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('react-app-shell-fixture');
+  });
+
+  it('falls back to the classic web/ dashboard (never a blank page or crash) when app/dist has not been built', async () => {
+    const missingDir = mkdtempSync(join(tmpdir(), 'polygraph-missing-app-dist-'));
+    tmpDirs.push(missingDir);
+    const neverBuiltAppDir = join(missingDir, 'dist'); // deliberately never created
+
+    startServer({ config, ledger, governor, appDir: neverBuiltAppDir });
+    await listen();
+
+    const res = await fetch(`${baseUrl}/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/text\/html/);
+    const body = await res.text();
+    // Falls all the way back to the real repo web/ dashboard (defaultWebDir()),
+    // not a generic placeholder — this is the CLASSIC dashboard, still fully
+    // functional against the same /api/state etc. routes below.
+    expect(body).toContain('Polygraph');
+  });
+
+  it('an explicit webDir still forces classic single-page behavior even when app/dist exists (back-compat)', async () => {
+    const app = tempAppDir();
+    tmpDirs.push(app.dir);
+    const web = tempWebDir(FIXTURE_HTML);
+    tmpDirs.push(web.dir);
+
+    startServer({ config, ledger, governor, webDir: web.webDir, appDir: app.appDir });
+    await listen();
+
+    const res = await fetch(`${baseUrl}/`);
+    const body = await res.text();
+    expect(body).toContain('polygraph-dashboard-fixture');
+    expect(body).not.toContain('react-app-shell-fixture');
+
+    // Classic mode: unmatched paths still plain-404, no SPA shelling.
+    const notFound = await fetch(`${baseUrl}/fleet`);
+    expect(notFound.status).toBe(404);
+  });
 });
 
 describe('ackLedgerEvent (unit)', () => {

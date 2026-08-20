@@ -154,16 +154,20 @@ Or skip straight to a working example — no `fleet.yaml` to write, no Bright Da
 account required:
 
 ```
+cd app && npm install && npm run build && cd ..   # builds the React dashboard into app/dist
 npx tsx src/index.ts demo
 ```
 
 This seeds a demo `fleet.yaml`, resets the ledger, starts a local chaos fixture on
-`:4200`, runs one verification pass against it, and serves the dashboard on `:4141`.
-The scripted 3-minute walkthrough — breaking the fixture, watching a structural
-failure get diagnosed and a suggested fix printed, then a "well-formed lie" that gets
-correctly refused for repair — lives in **[`docs/demo.md`](docs/demo.md)**. It runs
-entirely offline, on your own machine, with zero network access required for the core
-narrative.
+`:4200`, runs one verification pass against it, and serves the dashboard on `:4141` —
+the built React app (landing page, live fleet view, verdict cards, evidence panel) if
+`app/dist` exists, or the classic single-page dashboard otherwise (`demo` never crashes
+or serves a blank page either way — see docs/demo.md's Setup section for the exact
+fallback message). The scripted 3-minute walkthrough — breaking the fixture, watching a
+structural failure get diagnosed and a suggested fix printed, then a "well-formed lie"
+that gets correctly refused for repair — lives in **[`docs/demo.md`](docs/demo.md)**. It
+runs entirely offline, on your own machine, with zero network access required for the
+core narrative.
 
 Other commands: `polygraph run [--collector <id>]`, `polygraph watch` (cron + live
 dashboard), `polygraph log` / `polygraph ack`, `polygraph ledger verify`, `polygraph
@@ -280,17 +284,19 @@ instead of a live call.
 
 **Collector wired into something downstream.** Every run — pass or fail, heal attempt
 or refusal — writes to the hash-chained ledger (`ledger.ts`), which feeds the live
-dashboard (`server.ts` + `web/`), the webhook alerting layer (`alerts.ts`, transition-
+dashboard (`server.ts`, serving the built React app in `app/dist/` when present, the
+classic `web/` page otherwise), the webhook alerting layer (`alerts.ts`, transition-
 gated and debounced), and `polygraph watch`'s per-collector cron schedule (currently one
 fixed daily time; see Current limits).
 
-**Reproducible setup.** `npm install && npx tsx src/index.ts demo` is the entire setup —
-no account, no API key, no external service. Two separate npm/vitest projects exist now
-(the root CLI/backend and `app/`, the hosted web frontend) — `npm run test:all` runs
-both correctly (`npx vitest run` for the root, `npm --prefix app run test` for `app/`)
-and fails if either does. `npm run typecheck` covers the root only; `cd app && npm run
-typecheck` covers the frontend. See `PROGRESS.md`'s live metrics block for current pass
-counts (refreshed by `npm run progress`, not hand-maintained).
+**Reproducible setup.** `npm install && cd app && npm install && npm run build && cd ..
+&& npx tsx src/index.ts demo` is the entire setup — no account, no API key, no external
+service. Two separate npm/vitest projects exist now (the root CLI/backend and `app/`,
+the hosted web frontend) — `npm run test:all` runs both correctly (`npx vitest run` for
+the root, `npm --prefix app run test` for `app/`) and fails if either does. `npm run
+typecheck` covers the root only; `cd app && npm run typecheck` covers the frontend. See
+`PROGRESS.md`'s live metrics block for current pass counts (refreshed by `npm run
+progress`, not hand-maintained).
 
 ## Deploy (hosted)
 

@@ -18,9 +18,6 @@
  * connection, confirmed empirically before relying on it here).
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { existsSync, statSync } from 'node:fs';
-import { join, extname, normalize } from 'node:path';
 import type Database from 'better-sqlite3';
 import {
   buildFleetState,
@@ -32,6 +29,7 @@ import {
   parseLimit,
   MAX_LEDGER_LIMIT,
 } from '../server.js';
+import { serveStaticOrSpa } from '../static-serve.js';
 import { Ledger } from '../ledger.js';
 import { buildTenantContext } from '../config.js';
 import { BrightDataClient, BrightDataError } from '../brightdata.js';
@@ -206,66 +204,6 @@ async function buildDashboardState(
     client,
   });
   return buildFleetState(config, ctx.ledger, ctx.governor, nowIso);
-}
-
-// ---------------------------------------------------------------------------
-// Static/SPA serving — app/dist. Never crashes when app/dist is missing (a
-// fresh clone that hasn't run `cd app && npm run build` yet still runs).
-
-const EXT_CONTENT_TYPES: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.ico': 'image/x-icon',
-  '.json': 'application/json; charset=utf-8',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.ttf': 'font/ttf',
-  '.map': 'application/json; charset=utf-8',
-};
-
-const APP_NOT_BUILT_HTML = `<!doctype html>
-<html><head><meta charset="utf-8"><title>Polygraph</title></head>
-<body style="font-family: system-ui, sans-serif; max-width: 40em; margin: 4em auto; line-height: 1.5;">
-<h1>Polygraph is running</h1>
-<p>The API is up, but the web app hasn't been built yet on this machine.</p>
-<p>Run <code>cd app &amp;&amp; npm run build</code>, then reload this page.</p>
-</body></html>`;
-
-async function serveStaticOrSpa(pathname: string, webDir: string | undefined, res: ServerResponse): Promise<void> {
-  if (!webDir || !existsSync(join(webDir, 'index.html'))) {
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(APP_NOT_BUILT_HTML);
-    return;
-  }
-
-  if (pathname !== '/' && pathname !== '/app') {
-    const safeRel = normalize(pathname).replace(/^([.][.][/\\])+/, '');
-    const candidate = join(webDir, safeRel);
-    // Path-traversal guard: only ever serve a file that resolves INSIDE
-    // webDir. A crafted `../../etc/passwd`-style pathname falls through to
-    // the SPA shell below instead of erroring — matches this codebase's
-    // "never crash on a malformed request" posture.
-    if (candidate.startsWith(webDir) && existsSync(candidate) && statSync(candidate).isFile()) {
-      const ext = extname(candidate);
-      const body = await readFile(candidate);
-      res.writeHead(200, {
-        'content-type': EXT_CONTENT_TYPES[ext] ?? 'application/octet-stream',
-        'content-length': body.length,
-      });
-      res.end(body);
-      return;
-    }
-  }
-
-  const html = await readFile(join(webDir, 'index.html'), 'utf8');
-  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-  res.end(html);
 }
 
 // ---------------------------------------------------------------------------
