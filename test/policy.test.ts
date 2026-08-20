@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   decide,
   decideWithGovernor,
@@ -8,8 +11,14 @@ import {
   worstCause,
   Governor,
 } from '../src/policy.js';
+import { ANTI_BOT_BLOCK_CODES } from '../src/classifier.js';
 import type { Evidence } from '../src/types.js';
 import type { Policy } from '../src/config.js';
+
+function tempGovernorPath(): { dir: string; path: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'polygraph-governor-test-'));
+  return { dir, path: join(dir, 'polygraph.sqlite') };
+}
 
 const okContract: Evidence = {
   check: 'contract',
@@ -133,6 +142,15 @@ describe('decide — policy truth table', () => {
     expect(action.type).toBe('QUARANTINE');
   });
 
+  it('BLOCKED reason string never quotes an advisory (peer) entry as the cause, even when it is the only failing evidence', () => {
+    const { action } = decide('BLOCKED', [advisoryPeer]);
+    expect(action.type).toBe('QUARANTINE');
+    if (action.type === 'QUARANTINE') {
+      expect(action.reason).not.toContain(advisoryPeer.detail);
+      expect(action.reason).toBe('blocked/compliance-restricted response');
+    }
+  });
+
   it('STRUCTURAL with failed contract + failed canary repairs', () => {
     const { verdict, action } = decide('STRUCTURAL', [failedContract, failedCanary], {
       entityKeyField: 'sku',
@@ -175,6 +193,18 @@ describe('decide — policy truth table', () => {
     const { verdict, action } = decide('STRUCTURAL', [failedContract, passedCanary]);
     expect(action.type).toBe('QUARANTINE');
     expect(verdict.code).toBe('FAILED_STRUCTURAL');
+  });
+
+  it('STRUCTURAL fallback reason string never quotes an advisory (peer) entry as the cause', () => {
+    // No canary/contract/coherence failure at all — only an advisory peer
+    // flag — so no HealProof is derivable and the fallback QUARANTINE reason
+    // must not cite the peer entry as if it explained the structural cause.
+    const { action } = decide('STRUCTURAL', [advisoryPeer]);
+    expect(action.type).toBe('QUARANTINE');
+    if (action.type === 'QUARANTINE') {
+      expect(action.reason).not.toContain(advisoryPeer.detail);
+      expect(action.reason).toBe('structural cause with no confirming canary or structural evidence yet');
+    }
   });
 });
 
@@ -263,6 +293,21 @@ describe('composeHealPrompt', () => {
     });
     expect(prompt.length).toBeLessThanOrEqual(1000);
   });
+
+  it('reaches the hard-truncate branch when a single field name alone exceeds the cap', () => {
+    // Only one field, so the trim-the-field-list loop (`fields.length > 1`)
+    // never runs — this exercises the slice(0, 997) + "..." fallback path.
+    const hugeField = 'x'.repeat(2000);
+    const prompt = composeHealPrompt({
+      fields: [hugeField],
+      symptom: 'default/empty values',
+      failRate: 1,
+      date: '2026-08-20',
+      entityKey: 'sku',
+    });
+    expect(prompt.length).toBe(1000);
+    expect(prompt.endsWith('...')).toBe(true);
+  });
 });
 
 describe('causeForErrorCode', () => {
@@ -282,6 +327,13 @@ describe('causeForErrorCode', () => {
   it('maps blocked and detect_block specifically to BLOCKED', () => {
     expect(causeForErrorCode('blocked')).toBe('BLOCKED');
     expect(causeForErrorCode('detect_block')).toBe('BLOCKED');
+  });
+
+  it('maps EVERY code in classifier.ANTI_BOT_BLOCK_CODES to cause BLOCKED — reads the classifier-owned set, never a duplicated literal list', () => {
+    expect(ANTI_BOT_BLOCK_CODES.size).toBeGreaterThan(0);
+    for (const code of ANTI_BOT_BLOCK_CODES) {
+      expect(causeForErrorCode(code)).toBe('BLOCKED');
+    }
   });
 
   it('maps compliance (brul) to BLOCKED', () => {
@@ -379,6 +431,18 @@ describe('Governor', () => {
     expect(gate.reason).toMatch(/daily_heal_budget/);
   });
 
+  it('ruling: daily_heal_budget is FLEET-WIDE — two different collectors share one daily budget, not one each', () => {
+    const sharedPolicy: Policy = { ...policy, max_attempts_per_incident: 5, daily_heal_budget: 2 };
+    // collector-a uses the whole budget by itself...
+    governor.recordAttempt('collector-a', '2026-08-20T08:00:00Z');
+    governor.recordAttempt('collector-a', '2026-08-20T08:30:00Z'); // cooldown irrelevant to this assertion's timing below
+    // ...so collector-b, which has made ZERO attempts of its own today,
+    // is still blocked — proving the budget isn't tracked per-collector.
+    const gate = governor.canHeal('collector-b', '2026-08-20T09:00:00Z', sharedPolicy);
+    expect(gate.allowed).toBe(false);
+    expect(gate.reason).toMatch(/daily_heal_budget/);
+  });
+
   it('does not carry attempt counts across different days', () => {
     governor.recordAttempt('demo-catalog', '2026-08-19T10:00:00Z');
     governor.recordAttempt('demo-catalog', '2026-08-19T11:30:00Z');
@@ -392,6 +456,93 @@ describe('Governor', () => {
     const gate = g2.canHeal('x', '2026-08-20T10:00:00Z', policy);
     expect(gate.allowed).toBe(true);
     g2.close();
+  });
+});
+
+describe('Governor — persistence across process/instance boundaries (real file, not :memory:)', () => {
+  // :memory: only proves the in-process logic is right; it can't prove the
+  // state actually survives being written to disk and reopened, which is
+  // the entire reason Governor uses SQLite instead of an in-memory Map (the
+  // CLI's `run`/`watch`/`ack` invocations are separate process runs against
+  // the same fleet.sqlite file). Mirrors the pattern in test/ledger.test.ts.
+  let dirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of dirs) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    dirs = [];
+  });
+
+  const policy: Policy = {
+    max_attempts_per_incident: 2,
+    cooldown_minutes: 30,
+    daily_heal_budget: 3,
+    heal_enabled: true,
+  };
+
+  it('attempts recorded by one Governor instance are visible to a second Governor opened against the same file', () => {
+    const { dir, path } = tempGovernorPath();
+    dirs.push(dir);
+
+    const writer = new Governor(path);
+    writer.recordAttempt('demo-catalog', '2026-08-20T10:00:00Z');
+    writer.close();
+
+    const reader = new Governor(path);
+    const gate = reader.canHeal('demo-catalog', '2026-08-20T10:10:00Z', policy); // 10m < 30m cooldown
+    expect(gate.allowed).toBe(false);
+    expect(gate.reason).toMatch(/cooldown/);
+    reader.close();
+  });
+
+  it('max_attempts_per_incident persists across instances against the same file', () => {
+    const { dir, path } = tempGovernorPath();
+    dirs.push(dir);
+
+    const first = new Governor(path);
+    first.recordAttempt('demo-catalog', '2026-08-20T08:00:00Z');
+    first.recordAttempt('demo-catalog', '2026-08-20T09:00:00Z'); // now at the cap (2)
+    first.close();
+
+    const second = new Governor(path);
+    const gate = second.canHeal('demo-catalog', '2026-08-20T12:00:00Z', policy); // cooldown long elapsed
+    expect(gate.allowed).toBe(false);
+    expect(gate.reason).toMatch(/max_attempts_per_incident/);
+    second.close();
+  });
+
+  it('the fleet-wide daily budget persists across instances, shared across collectors', () => {
+    const { dir, path } = tempGovernorPath();
+    dirs.push(dir);
+    const tightBudget: Policy = { ...policy, daily_heal_budget: 2 };
+
+    const first = new Governor(path);
+    first.recordAttempt('collector-a', '2026-08-20T08:00:00Z');
+    first.recordAttempt('collector-b', '2026-08-20T09:00:00Z'); // budget (2) now exhausted fleet-wide
+    first.close();
+
+    const second = new Governor(path);
+    const gate = second.canHeal('collector-c', '2026-08-20T11:00:00Z', tightBudget); // never attempted itself
+    expect(gate.allowed).toBe(false);
+    expect(gate.reason).toMatch(/daily_heal_budget/);
+    second.close();
+  });
+
+  it('a Governor opened against an existing file does not recreate/clobber the table (IF NOT EXISTS)', () => {
+    const { dir, path } = tempGovernorPath();
+    dirs.push(dir);
+
+    const first = new Governor(path);
+    first.recordAttempt('demo-catalog', '2026-08-20T08:00:00Z');
+    first.close();
+
+    const second = new Governor(path);
+    second.recordAttempt('demo-catalog', '2026-08-20T09:00:00Z'); // should increment, not reset, to attempts=2
+    const gate = second.canHeal('demo-catalog', '2026-08-20T09:05:00Z', policy); // attempts=2 >= max(2)
+    expect(gate.allowed).toBe(false);
+    expect(gate.reason).toMatch(/max_attempts_per_incident/);
+    second.close();
   });
 });
 

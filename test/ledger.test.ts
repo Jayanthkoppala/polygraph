@@ -63,7 +63,7 @@ describe('Ledger', () => {
     expect(rows[0].prev_hash).toBe(GENESIS_HASH);
     expect(GENESIS_HASH).toBe('0'.repeat(64));
     expect(rows[0].event_hash).toBe(
-      canonicalHashFor(GENESIS_HASH, rows[0])
+      canonicalHashFor(GENESIS_HASH, rows[0] as unknown as Record<string, unknown>)
     );
 
     ledger.close();

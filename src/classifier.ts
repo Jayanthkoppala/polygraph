@@ -38,11 +38,21 @@ const TERMINAL_STRUCTURAL = new Set([
   'page_too_big',
 ]);
 
+/**
+ * Anti-bot block codes: the subset of RETRYABLE_TRANSIENT that represents an
+ * actual block (not generic infra/network noise). Exported so policy.ts
+ * routes these to cause BLOCKED by reading this set directly instead of
+ * duplicating the two literals — a new anti-bot code added here
+ * automatically carries through to both this table AND policy's cause
+ * mapping, instead of silently falling through to a plain retryable/NONE
+ * classification (which policy would otherwise route straight to RELEASE).
+ */
+export const ANTI_BOT_BLOCK_CODES: ReadonlySet<string> = new Set(['blocked', 'detect_block']);
+
 /** Transient infra/network/anti-bot failures: worth a plain retry, not a
  * structural heal. */
 const RETRYABLE_TRANSIENT = new Set([
-  'blocked',
-  'detect_block',
+  ...ANTI_BOT_BLOCK_CODES,
   'crawl_error',
   'wait_element_timeout',
   'ajax_request_error',

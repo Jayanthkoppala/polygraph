@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Cause, Evidence, ReasonCode, Verdict } from './types.js';
 import type { Policy } from './config.js';
-import { classifyErrorCode } from './classifier.js';
+import { classifyErrorCode, ANTI_BOT_BLOCK_CODES } from './classifier.js';
 
 /**
  * Combines a run's Evidence[] into a Verdict + Action. This module owns two
@@ -24,15 +24,32 @@ import { classifyErrorCode } from './classifier.js';
  *     a failed structural (contract/coherence) evidence are present. No
  *     other function in or outside this module can produce a `HealProof`,
  *     so no other code path can produce a REPAIR action.
+ *   - REPAIR's *type itself* is additionally branded (see REPAIR_BRAND
+ *     below): the discriminated-union return-type restriction above only
+ *     stops the wrong decideXxx from RETURNING a REPAIR value someone else
+ *     already built. Without a brand, any caller could still hand-write
+ *     `const a: Action = {type: 'REPAIR', heal_prompt: 'x'}` for ANY cause
+ *     and tsc would accept it — the invariant would be discipline, not a
+ *     compiler guarantee. The brand closes that hole: only `mintRepairAction`
+ *     (private, called solely from decideStructural's proof-confirmed
+ *     branch) can attach the required property. See
+ *     test/policy.repair-brand.typecheck.ts for a `@ts-expect-error` proof,
+ *     checked by `npm run typecheck`.
  */
 
 // ---------------------------------------------------------------------------
 // Action
 
+/** Nominal brand for the REPAIR variant. Deliberately NOT exported: nothing
+ * outside this module can name this symbol, so nothing outside this module
+ * can write the property key `Action`'s REPAIR member requires — hand
+ * construction of a REPAIR action is a compile error everywhere but here. */
+const REPAIR_BRAND: unique symbol = Symbol('polygraph.policy.REPAIR_BRAND');
+
 export type Action =
   | { type: 'RELEASE' }
   | { type: 'QUARANTINE'; reason: string }
-  | { type: 'REPAIR'; heal_prompt: string }
+  | { type: 'REPAIR'; heal_prompt: string; readonly [REPAIR_BRAND]: true }
   | { type: 'REDISCOVER'; reason: string };
 
 export interface Decision {
@@ -55,6 +72,20 @@ type ReleaseAction = Extract<Action, { type: 'RELEASE' }>;
 type QuarantineAction = Extract<Action, { type: 'QUARANTINE' }>;
 type RepairAction = Extract<Action, { type: 'REPAIR' }>;
 type RediscoverAction = Extract<Action, { type: 'REDISCOVER' }>;
+
+/** The ONLY function that can mint a REPAIR action — attaches REPAIR_BRAND,
+ * which is unreachable from outside this module. Private; called only from
+ * decideStructural's proof-confirmed branch. */
+function mintRepairAction(heal_prompt: string): RepairAction {
+  return { type: 'REPAIR', heal_prompt, [REPAIR_BRAND]: true };
+}
+
+/** True for advisory-only evidence (currently just `peer`) — these are
+ * confidence signals, never an explanatory cause. Reason-string composers
+ * must never quote one as "the" failure. */
+function isAdvisoryEvidence(e: Evidence): boolean {
+  return e.metrics?.advisory === true;
+}
 
 // ---------------------------------------------------------------------------
 // NONE
@@ -139,7 +170,7 @@ function decideIdentity(evidence: Evidence[]): { code: ReasonCode; action: Ident
 // compliance sign-off. Always QUARANTINE.
 
 function decideBlocked(evidence: Evidence[]): { code: ReasonCode; action: QuarantineAction } {
-  const failed = evidence.find((e) => !e.ok);
+  const failed = evidence.find((e) => !e.ok && !isAdvisoryEvidence(e));
   return {
     code: 'FAILED_BLOCKED_RESPONSE',
     action: {
@@ -180,11 +211,11 @@ function decideStructural(cause: Cause, evidence: Evidence[], options: DecideOpt
   if (proof) {
     return {
       code: 'FAILED_STRUCTURAL',
-      action: { type: 'REPAIR', heal_prompt: buildHealPromptFromProof(proof, options) },
+      action: mintRepairAction(buildHealPromptFromProof(proof, options)),
     };
   }
 
-  const anyFailed = evidence.find((e) => !e.ok);
+  const anyFailed = evidence.find((e) => !e.ok && !isAdvisoryEvidence(e));
   return {
     code: 'FAILED_STRUCTURAL',
     action: {
@@ -343,17 +374,20 @@ export function decide(cause: Cause, evidence: Evidence[], options: DecideOption
  *     auto-healed).
  *   - compliance -> BLOCKED (not ours to retry or heal around, same "leave
  *     it alone, quarantine for a human" handling as an anti-bot block).
- *   - retryable_transient -> BLOCKED for the blocked/detect_block family
+ *   - retryable_transient -> BLOCKED for the ANTI_BOT_BLOCK_CODES family
  *     specifically (an actual anti-bot block, even though Bright Data
- *     classifies it as "retryable"); NONE for every other transient code
- *     (plain infra/network noise — not a verdict-worthy cause by itself,
- *     the retry loop is expected to have already handled it upstream).
+ *     classifies it as "retryable" — that set is exported by classifier.ts,
+ *     never re-listed here, so a new anti-bot code added there carries
+ *     through automatically instead of silently falling through to NONE);
+ *     NONE for every other transient code (plain infra/network noise — not
+ *     a verdict-worthy cause by itself, the retry loop is expected to have
+ *     already handled it upstream).
  *
  * IDENTITY is deliberately unreachable from this function: identity cause
  * comes only from the identity check, never from an error_code.
  */
 export function causeForErrorCode(errorCode: string): Cause {
-  if (errorCode === 'blocked' || errorCode === 'detect_block') return 'BLOCKED';
+  if (ANTI_BOT_BLOCK_CODES.has(errorCode)) return 'BLOCKED';
 
   const { class: cls } = classifyErrorCode(errorCode);
   switch (cls) {

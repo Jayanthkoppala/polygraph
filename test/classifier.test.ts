@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyErrorCode } from '../src/classifier.js';
+import { classifyErrorCode, ANTI_BOT_BLOCK_CODES } from '../src/classifier.js';
 
 describe('classifyErrorCode', () => {
   it.each([
@@ -82,5 +82,12 @@ describe('classifyErrorCode', () => {
 
   it('classifies an unrecognized code as unknown, not retryable', () => {
     expect(classifyErrorCode('some_made_up_code_zzz')).toEqual({ retryable: false, class: 'unknown' });
+  });
+
+  it('ANTI_BOT_BLOCK_CODES is a non-empty subset of the retryable_transient table (no drift between the two)', () => {
+    expect(ANTI_BOT_BLOCK_CODES.size).toBeGreaterThan(0);
+    for (const code of ANTI_BOT_BLOCK_CODES) {
+      expect(classifyErrorCode(code)).toEqual({ retryable: true, class: 'retryable_transient' });
+    }
   });
 });
