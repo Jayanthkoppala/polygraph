@@ -20,16 +20,27 @@
  * in the diff, not a silent snapshot update.
  */
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import postcss from 'postcss';
 import tailwindcss from '@tailwindcss/postcss';
 import { describe, expect, it, beforeAll } from 'vitest';
 
-// process.cwd() rather than import.meta.url: vitest runs this file through
-// vite-node, whose module URL isn't a plain file:// URL, so
-// fileURLToPath(new URL(...)) throws. Vitest's cwd is the `app/` project
-// root regardless of where `vitest` is invoked from.
-const APP_CSS = path.resolve(process.cwd(), 'src/app.css');
+// Resolved relative to THIS FILE, not process.cwd() — cwd depends on where
+// `vitest` is invoked from (this project's own `app/` when run via `cd app
+// && npx vitest`, but the repo root when the full suite runs from there),
+// so a cwd-relative path breaks depending on the caller's working
+// directory. `new URL('../app.css', import.meta.url)` looks like the
+// obvious fix but is NOT safe here: vitest runs this file through
+// vite-node, which resolves relative URLs against a virtual
+// `http://localhost:.../` module-graph base rather than the real
+// filesystem path, so that call silently produces an http: URL and
+// `fileURLToPath` throws "The URL must be of scheme file". Calling
+// `fileURLToPath(import.meta.url)` directly (no relative URL construction)
+// does return the real on-disk path correctly under vite-node, so this
+// resolves the directory with plain `path` calls instead.
+const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
+const APP_CSS = path.resolve(THIS_DIR, '../app.css');
 
 let compiled: string;
 
