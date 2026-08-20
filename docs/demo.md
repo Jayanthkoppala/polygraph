@@ -7,6 +7,25 @@ Bright Data account, no API key, no network access required. One terminal runs
 ## Setup (before you start talking)
 
 ```
+mkdir demo && cd demo
+npx polygraph-verify demo
+```
+
+The npm package is named **`polygraph-verify`** — the bare `polygraph` name belongs
+to an unrelated package on the registry. The binary it installs is still `polygraph`,
+so every `polygraph <command>` in this script is literal. The tarball ships the built
+React dashboard, so there is no UI build step on this path.
+
+> **Publication status (2026-08-20): `polygraph-verify` is built and verified but not
+> yet on the registry, so the `npx` line above does not resolve yet.** The 0.1.0
+> tarball has been packed and test-installed into a clean directory, where `--help`,
+> the offline `demo`, the chaos loop and `ledger verify` all pass; the only remaining
+> step is `npm publish`, which needs a logged-in npm account. Until that lands, run
+> the from-source path below. Delete this block the moment the publish lands.
+
+From a checkout of this repo instead:
+
+```
 cd path/to/polygraph      # a checkout of this repo
 npm install                # first time only
 cd app && npm install && npm run build && cd ..   # first time only — builds the React UI
@@ -18,10 +37,6 @@ This is the same command as the README's quickstart. `demo` seeds `./fleet.yaml`
 running it straight from a repo checkout is safe) — use a separate empty directory
 instead if you'd rather keep the checkout untouched, substituting the full path to
 `src/index.ts` in the command above.
-
-This package is **not published to npm** — `npx polygraph demo` will NOT work; there is
-no `polygraph` package to fetch. The `tsx` form above runs the CLI directly from source,
-which is the only way to run it today.
 
 This does four things, in order:
 
@@ -36,7 +51,7 @@ This does four things, in order:
    in the fleet.yaml for you to explore later, but never touch the network as part of
    the guaranteed-offline demo path.
 4. Starts the dashboard on `:4141`, serving the built React app (`app/dist/`) if the
-   build step above has been run, or the classic single-page dashboard otherwise —
+   build step has been run (it always is on the npm install), or the classic otherwise —
    `demo` prints exactly which one it picked, and never crashes or serves a blank page
    either way (see "Dashboard shows nothing" in Troubleshooting below).
 
@@ -52,12 +67,13 @@ single flat page — same underlying data, `GET /api/state`, just the older layo
 Leave that terminal running. Everything below happens in a **second terminal**, in
 the same directory.
 
-Every `polygraph <command>` below is shorthand for `npx tsx path/to/polygraph/src/index.ts
-<command>`, run from that same directory (so it reads the `fleet.yaml`/`polygraph.sqlite`
-the first terminal just seeded) — same substitution as the setup step above. If you'd
-rather type the short form literally, run `npm link` once from the repo checkout first
-(puts a `polygraph` binary on `PATH` pointing at this source tree via `dist/index.js`,
-so build it first with `npm run build`).
+Run every `polygraph <command>` below from that same directory, so it reads the
+`fleet.yaml`/`polygraph.sqlite` the first terminal just seeded. On the npm install
+(`npm i -g polygraph-verify`) they are literal. On the from-source path each one is
+shorthand for `npx tsx path/to/polygraph/src/index.ts <command>` — same substitution
+as the setup step above; to type the short form literally there, run `npm link` once
+from the repo checkout first (puts a `polygraph` binary on `PATH` pointing at this
+source tree via `dist/index.js`, so build it first with `npm run build`).
 
 ## The script
 

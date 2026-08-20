@@ -154,6 +154,27 @@ Or skip straight to a working example — no `fleet.yaml` to write, no Bright Da
 account required:
 
 ```
+npx polygraph-verify demo
+```
+
+> **Publication status (2026-08-20): `polygraph-verify` is built and verified but
+> not yet on the registry, so the `npx` line above does not resolve yet.** The
+> 0.1.0 tarball has been packed and test-installed into a clean directory, where
+> `--help`, the offline `demo`, the chaos loop and `ledger verify` all pass; the
+> only remaining step is `npm publish`, which needs a logged-in npm account.
+> Delete this block the moment that publish lands — do not leave it standing once
+> the package resolves.
+
+The npm package is named **`polygraph-verify`**, not `polygraph` — the bare name
+belongs to an unrelated package on the registry. The binary it installs is still
+called `polygraph`, so every `polygraph <command>` in this README is literal once
+the package is installed (`npm i -g polygraph-verify`). The tarball ships the
+built React dashboard, so `npx polygraph-verify demo` serves the full UI offline
+with no extra build step.
+
+To run it from a checkout of this repo instead:
+
+```
 cd app && npm install && npm run build && cd ..   # builds the React dashboard into app/dist
 npx tsx src/index.ts demo
 ```
@@ -172,11 +193,11 @@ core narrative.
 Other commands: `polygraph run [--collector <id>]`, `polygraph watch` (cron + live
 dashboard), `polygraph log` / `polygraph ack`, `polygraph ledger verify`, `polygraph
 chaos <healthy|price_dead|wrong_entity|blocked>`. `polygraph status` is still a stub.
-This package is **not published to npm** — `npx polygraph <command>` will NOT work.
-Every `polygraph <command>` above is shorthand for `npx tsx src/index.ts <command>`
-run from a checkout of this repo (or `npm run build && node dist/index.js <command>`);
-if you'd rather type the short form literally, run `npm link` once from the repo
-checkout first (see [`docs/demo.md`](docs/demo.md) for the full explanation).
+Installed from npm (`npm i -g polygraph-verify`), those are the literal commands.
+Working from a repo checkout instead, each one is shorthand for `npx tsx
+src/index.ts <command>` (or `npm run build && node dist/index.js <command>`); to
+type the short form literally there, run `npm link` once from the checkout first
+(see [`docs/demo.md`](docs/demo.md) for the full explanation).
 
 ## Hosted (multi-tenant)
 
