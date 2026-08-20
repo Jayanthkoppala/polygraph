@@ -1,0 +1,120 @@
+/**
+ * Design tokens, verbatim from docs/design/ui-system.md §1 (Design tokens).
+ * This file is the ONLY place colours, radii-inputs, elevation, and motion
+ * curves are declared. Every value below is copied character-for-character
+ * from the spec — do not "tune" anything here without updating the spec
+ * first (see ui-system.md's own warning in §2.5 about drifting the palette).
+ *
+ * Type scale (§1.5) and spacing scale (§1.6) are deliberately NOT
+ * redeclared here: both are Tailwind v4's own default scale steps
+ * (text-xs..text-6xl, spacing 0.5..24), verified to match the spec's
+ * tables exactly. The token smoke test (src/theme/tokens.smoke.test.ts)
+ * asserts this rather than trusting it silently.
+ */
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------- */
+/* §1.1 Typeface — self-hosted, no CDN, works fully offline.              */
+/* ---------------------------------------------------------------------- */
+
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-Variable.woff2') format('woff2-variations');
+  font-weight: 100 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/GeistMono-Variable.woff2') format('woff2-variations');
+  font-weight: 100 600;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, monospace;
+}
+
+/* ---------------------------------------------------------------------- */
+/* §1.2 Surfaces — flat backgrounds only, no gradients anywhere.          */
+/* ---------------------------------------------------------------------- */
+
+@theme {
+  /* Neutral chrome — live, mutable */
+  --color-void: #000000; /* page ground, landing page ground */
+  --color-sunken: #181818; /* app shell, region gutters */
+  --color-surface: #1f1f1f; /* cards, panels, inputs */
+  --color-raised: #272727; /* hover fill, popovers, drawers */
+  --color-line: #313131; /* the lightest permitted value, used as a border */
+
+  /* Warm archive — immutable record */
+  --color-archive: #131209; /* ledger stream + evidence panel only */
+}
+
+/* ---------------------------------------------------------------------- */
+/* §1.4 The verdict palette — five states. Magenta is deliberately OFF    */
+/* the red ramp (§2.5) — never "tune" it toward red.                     */
+/* ---------------------------------------------------------------------- */
+
+@theme {
+  --color-verdict-pass: #4ade80; /* VERIFIED     */
+  --color-verdict-suspect: #fbbf24; /* UNEXPLAINED  */
+  --color-verdict-shape: #f85149; /* WRONG SHAPE  — red     */
+  --color-verdict-target: #e879f9; /* WRONG TARGET — magenta */
+  --color-verdict-unchecked: #8b949e; /* NOT CHECKED  */
+}
+
+/* ---------------------------------------------------------------------- */
+/* §1.8 Elevation — border lightness + one inset hairline. No shadows     */
+/* come from a wash; flat backgrounds forbid that.                       */
+/* ---------------------------------------------------------------------- */
+
+@theme {
+  /* resting: no shadow at all, border does the work */
+  --shadow-e1: none;
+
+  /* hover / active card: a lit top edge plus a tight drop */
+  --shadow-e2:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.05), 0 8px 24px -8px rgb(0 0 0 / 0.8);
+
+  /* drawer, popover, dialog */
+  --shadow-e3:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.06),
+    0 16px 48px -12px rgb(0 0 0 / 0.9);
+
+  /* pressed: the lit edge moves to the bottom, the object sinks */
+  --shadow-e0: inset 0 -1px 0 0 rgb(255 255 255 / 0.04);
+}
+
+/* ---------------------------------------------------------------------- */
+/* §1.9 Motion — a custom curve everywhere. No ease, no ease-in-out, no   */
+/* linear except genuinely continuous loops.                             */
+/* ---------------------------------------------------------------------- */
+
+@theme {
+  --ease-fluid: cubic-bezier(0.32, 0.72, 0, 1); /* default, from B7 */
+  --ease-snap: cubic-bezier(0.16, 1, 0.3, 1); /* the fracture, the jolt */
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1); /* things leaving */
+
+  --dur-instant: 120ms; /* color and opacity crossfades */
+  --dur-fast: 180ms; /* hover, chip swaps */
+  --dur-base: 260ms; /* state changes, panel content */
+  --dur-slow: 420ms; /* rail draw, drawer open */
+  --dur-reveal: 800ms; /* landing page scroll reveals, per B7 */
+}
+
+/* ---------------------------------------------------------------------- */
+/* §6.5 Motion accessibility floor — collapses every transition to a      */
+/* 120ms opacity/colour crossfade. Every state is geometry-distinct       */
+/* (rail form), so nothing becomes ambiguous when this fires.             */
+/* ---------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 120ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 120ms !important;
+  }
+}
