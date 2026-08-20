@@ -457,6 +457,37 @@ describe('Governor', () => {
     expect(gate.allowed).toBe(true);
     g2.close();
   });
+
+  describe('snapshotForDay — read-only dashboard accessor (Task 8)', () => {
+    it('returns an empty snapshot with zero total when nothing has been attempted', () => {
+      const snapshot = governor.snapshotForDay('2026-08-20');
+      expect(snapshot).toEqual({ rows: [], totalAttempts: 0 });
+    });
+
+    it('reports per-collector attempts and a fleet-wide total for the given day', () => {
+      governor.recordAttempt('collector-a', '2026-08-20T08:00:00Z');
+      governor.recordAttempt('collector-a', '2026-08-20T08:30:00Z');
+      governor.recordAttempt('collector-b', '2026-08-20T09:00:00Z');
+      // different day — must not be included
+      governor.recordAttempt('collector-a', '2026-08-19T08:00:00Z');
+
+      const snapshot = governor.snapshotForDay('2026-08-20');
+      expect(snapshot.totalAttempts).toBe(3);
+      expect(snapshot.rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ collector: 'collector-a', day: '2026-08-20', attempts: 2 }),
+          expect.objectContaining({ collector: 'collector-b', day: '2026-08-20', attempts: 1 }),
+        ])
+      );
+      expect(snapshot.rows).toHaveLength(2);
+    });
+
+    it('never itself gates or records an attempt — read-only', () => {
+      governor.snapshotForDay('2026-08-20');
+      const gate = governor.canHeal('demo-catalog', '2026-08-20T10:00:00Z', policy);
+      expect(gate.allowed).toBe(true); // untouched by the snapshot read
+    });
+  });
 });
 
 describe('Governor — persistence across process/instance boundaries (real file, not :memory:)', () => {

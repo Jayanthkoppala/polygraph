@@ -431,6 +431,22 @@ export interface GovernorGate {
   reason?: string;
 }
 
+/** One collector/day's persisted heal-attempt row, as read (never written)
+ * by `Governor.snapshotForDay`. */
+export interface GovernorSnapshotRow {
+  collector: string;
+  day: string;
+  attempts: number;
+  last_attempt_ts: string | null;
+}
+
+export interface GovernorSnapshot {
+  rows: GovernorSnapshotRow[];
+  /** Sum of `rows[].attempts` — the same fleet-wide daily total
+   * `canHeal`'s `daily_heal_budget` check compares against. */
+  totalAttempts: number;
+}
+
 function dayKey(isoTs: string): string {
   return isoTs.slice(0, 10);
 }
@@ -518,6 +534,18 @@ export class Governor {
     }
 
     return { allowed: true };
+  }
+
+  /** Read-only snapshot of every collector's heal-attempt row for `day`
+   * (YYYY-MM-DD), plus the fleet-wide total across them — for dashboard/
+   * status display (Task 8's GET /api/state). Never gates or records
+   * anything itself; `canHeal`/`recordAttempt` remain the sole gate. */
+  snapshotForDay(day: string): GovernorSnapshot {
+    const rows = this.db
+      .prepare('SELECT collector, day, attempts, last_attempt_ts FROM governor WHERE day = ?')
+      .all(day) as GovernorSnapshotRow[];
+    const totalAttempts = rows.reduce((sum, r) => sum + r.attempts, 0);
+    return { rows, totalAttempts };
   }
 
   /** Records a heal attempt for `collector` at `nowIso`, incrementing that

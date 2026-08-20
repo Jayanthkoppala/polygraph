@@ -19,6 +19,7 @@
   "dependencies": {
     "better-sqlite3": "^11.10.0",
     "commander": "^12.1.0",
+    "node-cron": "^4.6.0",
     "yaml": "^2.5.1"
   },
   "devDependencies": {

@@ -179,6 +179,21 @@ describe('Ledger', () => {
 
     ledger.close();
   });
+
+  it('getById returns a single event by id, or undefined when missing (Task 8 ack support)', () => {
+    const { dir, path } = tempDbPath();
+    dirs.push(dir);
+    const ledger = new Ledger(path);
+
+    const appended = ledger.append(baseEvent({ run_id: 'run-1' }));
+    ledger.append(baseEvent({ run_id: 'run-2' }));
+
+    const found = ledger.getById(appended.id);
+    expect(found).toEqual(appended);
+    expect(ledger.getById(999999)).toBeUndefined();
+
+    ledger.close();
+  });
 });
 
 describe('canonicalJson', () => {

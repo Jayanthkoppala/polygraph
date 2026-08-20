@@ -205,6 +205,15 @@ export class Ledger {
     return this.appendTxn.immediate(input);
   }
 
+  /** Single event by id, or `undefined` if no such event exists. Added for
+   * Task 8's ack flow (`server.ts`'s `ackLedgerEvent` needs to look up the
+   * SUSPECT/etc. row a caller is acknowledging before it can copy its
+   * tenant/collector/verdict/cause/evidence into the new ACKED event). */
+  getById(id: number): LedgerEventRow | undefined {
+    const row = this.db.prepare('SELECT * FROM events WHERE id = ?').get(id) as RawRow | undefined;
+    return row ? deserializeRow(row) : undefined;
+  }
+
   /** All events, oldest first. */
   all(): LedgerEventRow[] {
     const rows = this.db.prepare('SELECT * FROM events ORDER BY id ASC').all() as RawRow[];
