@@ -14,6 +14,12 @@ export function Footer() {
     <footer className="border-t border-[#272727] bg-[#000000] px-6 py-10">
       <div className="mx-auto flex max-w-4xl flex-col items-center gap-3 text-center">
         <span className="font-mono text-sm text-[#9B9B9B]">Polygraph</span>
+        {/* Verified: LICENSE at the repo root is MIT, and `polygraph serve`
+            is a real CLI command (src/index.ts:516) — the self-host answer
+            in the FAQ, restated once as the quiet closing trust signal. */}
+        <p className="text-xs text-[#9B9B9B]">
+          MIT-licensed. The hosted product runs the same open-source server you can run yourself.
+        </p>
         <nav aria-label="Legal" className="flex gap-4 text-xs text-[#9B9B9B]">
           <a href="/legal/privacy" className="underline underline-offset-2 hover:text-[#EDEDED]">
             Privacy

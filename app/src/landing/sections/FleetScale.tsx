@@ -59,9 +59,18 @@ export function FleetScale() {
           page's one heading that sat left while its own content block was
           centered under it. Alignment consistency wins over a sample that
           wasn't making an alignment argument. */}
-      <h2 className="mx-auto mb-12 max-w-[680px] text-balance px-6 text-center text-3xl font-semibold text-[#EDEDED]">
-        One collector or forty. The same four checks run on every run.
+      <h2 className="mx-auto mb-4 max-w-[680px] text-balance px-6 text-center text-3xl font-semibold text-[#EDEDED]">
+        Your fleet gets watched while you don&rsquo;t watch it.
       </h2>
+      {/* Real hosted numbers, not marketing ones: five collectors is
+          `tenants.max_collectors` DEFAULT 5 (src/tenancy/migrate.ts:85),
+          hourly is the `interval_minutes >= 60` floor
+          (tenant-architecture.md §5 abuse floors). */}
+      <p className="mx-auto mb-12 max-w-[680px] text-pretty px-6 text-center text-base text-[#B4B4B4]">
+        The hosted beta runs up to five collectors per account, on a schedule as frequent as every
+        hour. Every run gets the same four checks, and every decision lands in your ledger —
+        including the ones made at 3am.
+      </p>
 
       {/* Gate (c): the canvas carries no text; the heading is above, outside it. */}
       {/* Gate (d): a contained 420px bordered element, not a surface fill. */}

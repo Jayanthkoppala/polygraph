@@ -1,43 +1,46 @@
 /**
- * FAQ — ui-system.md §4.3, order 8: eight questions, `#000000` ground. Every
- * answer here is a real fact about the code (the plan's honesty-pass
- * constraint) — no invented metrics, no claim this build can't back up.
+ * FAQ — ui-system.md §4.3, order 8: eight questions, `#000000` ground,
+ * rewritten for the HOSTED product's real objections: is my key safe, what
+ * does it cost, what if I have no Bright Data account, can I self-host.
+ * Every answer is a fact about the code or the tenant design
+ * (tenant-architecture.md §§1–5, ux-spec.md §7) — no invented metrics, no
+ * claim this build can't back up.
  */
 import { useState } from 'react';
 import { CaretDown } from '@phosphor-icons/react';
 
 const FAQS: { q: string; a: string }[] = [
   {
-    q: 'Is the sandbox above connected to a real Bright Data account?',
-    a: 'No. It runs entirely against a local, offline fixture — the same 12-product catalog the CLI’s own demo uses. No account, no API key, no network call.',
+    q: 'Is my Bright Data API key safe here?',
+    a: 'It is checked against Bright Data once, encrypted with AES-256-GCM before it touches disk, and stored under a key derived separately for your account. The decryption key lives in the server environment, never the database — someone who steals the database file cannot read your credential. No endpoint returns it, ever: you see the last four characters and a fingerprint, nothing more. Deleting your account deletes the ciphertext with it.',
   },
   {
-    q: 'What does "wrong target" actually mean?',
-    a: 'The page returned a fully-formed, genuinely real product — just not the one you asked for. Every field checks out; the identity check is the only thing that can catch it.',
+    q: 'What does this cost me?',
+    a: 'Polygraph is free while it is in hosted beta. Verification runs and any repair you approve go through your own Bright Data account, so that spend is yours, visible in your own Bright Data billing, and capped by the schedule you set. Auto-repair is off by default for exactly this reason.',
   },
   {
-    q: 'Why does "wrong target" refuse repair instead of offering one?',
-    a: 'Re-deriving a field selector cannot fix fetching the wrong page. Polygraph’s policy layer structurally excludes REPAIR for an identity failure — it routes to quarantine or rediscovery instead, never a patch that would fix the wrong problem.',
+    q: 'I don’t have a Bright Data account. Can I still use this?',
+    a: 'The hosted product watches Bright Data collectors, so it needs one. Without it you still get the whole idea: the sandbox above runs the real verification engine in your browser, and the open-source CLI runs the same pipeline offline on your machine — no account, no key, no network.',
   },
   {
-    q: 'Does the hosted product auto-repair my scrapers?',
-    a: 'No. Auto-heal stays a local-only CLI capability. The hosted server never enables it — you get the diagnosis and the exact suggested command, and you decide whether to run it.',
+    q: 'Will it change or re-run my scrapers without asking?',
+    a: 'No. The hosted server has repair execution switched off at the environment level — a structural gate, not a setting a bug could flip. When a repair is the right answer, you get the diagnosis and the exact command to run against your own account. Nothing spends your credits or mutates your collector until you act.',
   },
   {
-    q: 'Why is "blocked" mode not one of the sandbox’s break buttons?',
-    a: 'The local fixture can’t emit a real anti-bot error code, so it would produce a structural-looking failure with the wrong suggested remedy. Showing it here would teach you something false.',
+    q: 'What checks actually run on every pass?',
+    a: 'Four: contract (is everything the schema promises actually there), coherence (did one field collapse while the others held), identity (is this the exact item we asked for, or a lookalike), and canaries (do inputs with known-good answers still come back right). Together they catch what a status code cannot: a 200 with the wrong data inside.',
   },
   {
-    q: 'What proves the ledger hasn’t been tampered with?',
-    a: 'Every event is SHA-256 hash chained to the one before it. "Verify chain" walks the whole thing from genesis and recomputes every hash — a single altered byte in any row breaks the walk.',
+    q: 'Why does a "wrong target" refuse repair instead of offering one?',
+    a: 'Because the scraper is not broken — it fetched the wrong thing, perfectly. Re-deriving a field selector would make it fetch the wrong thing more reliably. The policy layer structurally excludes repair for identity failures and routes to quarantine or rediscovery instead. The refusal is the safety property you are buying.',
   },
   {
-    q: 'What checks actually run on every verification pass?',
-    a: 'Four: contract (are required fields actually filled), coherence (did one field collapse while the rest look fine), identity (is this the entity we asked for), and a live canary re-fetch that confirms a failure before anything is called repairable.',
+    q: 'What proves my ledger hasn’t been tampered with?',
+    a: 'Every decision is SHA-256 hash chained to the one before it, and your account’s chain starts from its own genesis value — so rows cannot be transplanted in from another account, and verification walks your chain alone. "Verify chain" recomputes every hash from genesis; a single altered byte anywhere breaks the walk. Your export carries the whole chain and verifies standalone.',
   },
   {
-    q: 'Can I run the whole thing without signing up for anything?',
-    a: 'Yes — the sandbox above needs no account, and `npx tsx src/index.ts demo` runs the same pipeline fully offline on your own machine.',
+    q: 'Can I self-host it instead?',
+    a: 'Yes. Polygraph is MIT-licensed and the hosted product runs the same open-source server — `polygraph serve` on your own machine, with your own encryption master key, keeps every byte including your Bright Data key on hardware you control.',
   },
 ];
 
@@ -47,7 +50,7 @@ export function FAQ() {
   return (
     <section className="bg-[#000000] px-6 py-24">
       <h2 className="mx-auto mb-8 max-w-[680px] text-balance text-center text-3xl font-semibold text-[#EDEDED]">
-        Questions
+        The questions you should be asking
       </h2>
       <div className="mx-auto max-w-3xl divide-y divide-[#272727] rounded-2xl border border-[#272727]">
         {FAQS.map((item, i) => {
@@ -69,7 +72,7 @@ export function FAQ() {
                   className={`shrink-0 text-[#9B9B9B] transition-transform duration-[var(--dur-fast)] ${open ? 'rotate-180' : ''}`}
                 />
               </button>
-              {open && <p className="px-4 pb-4 text-sm text-[#9B9B9B]">{item.a}</p>}
+              {open && <p className="px-4 pb-4 text-pretty text-sm text-[#9B9B9B]">{item.a}</p>}
             </div>
           );
         })}

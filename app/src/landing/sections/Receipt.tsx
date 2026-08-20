@@ -49,9 +49,18 @@ export function Receipt({ sandbox }: { sandbox: UseSandboxEngineResult }) {
 
   return (
     <section className="bg-[#181818] px-6 py-24">
-      <h2 className="mx-auto mb-6 max-w-[680px] text-balance text-center text-3xl font-semibold text-[#EDEDED]">
+      <h2 className="mx-auto mb-4 max-w-[680px] text-balance text-center text-3xl font-semibold text-[#EDEDED]">
         Every decision, hash chained.
       </h2>
+      {/* The hosted per-tenant chain facts are tenant-architecture.md §3:
+          per-account chain, per-account genesis, standalone export, clean
+          delete. The strip below is the visitor's OWN sandbox chain (same
+          engine instance as the hero), which the copy says outright. */}
+      <p className="mx-auto mb-6 max-w-[680px] text-pretty text-center text-base text-[#B4B4B4]">
+        On the hosted product, your account gets its own chain with its own genesis — it verifies
+        standalone, exports standalone, and nobody else&rsquo;s rows are in it. The strip below is
+        the chain you just built in the sandbox above. Try the button; then try distrusting it.
+      </p>
 
       <div
         aria-label="Sandbox ledger"
