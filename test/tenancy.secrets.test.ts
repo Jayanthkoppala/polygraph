@@ -47,7 +47,7 @@ describe('ScopedSecrets — never render the key back', () => {
     const status: TenantSecretStatus = secrets.save(VALID_KEY);
 
     expect(Object.keys(status).sort()).toEqual(
-      ['key_added_at', 'key_fingerprint', 'key_last4', 'key_rotated_at', 'key_status'].sort()
+      ['key_added_at', 'key_fingerprint', 'key_last4', 'key_rotated_at', 'key_status', 'key_verification'].sort()
     );
     expect(status.key_last4).toBe(VALID_KEY.slice(-4));
     expect(status.key_fingerprint).toMatch(/^[0-9a-f]{8}$/);

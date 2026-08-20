@@ -329,6 +329,27 @@ function up006(db: Database.Database): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// M007 — key verification state on `tenant_secrets`. Non-destructive.
+//
+// Controller ruling: `saveVerifiedTenantKey` (key-verification.ts) used to
+// treat ANY non-401 failure of the collectors-list verification call —
+// including a 403 — as "Bright Data unreachable" and refused to persist the
+// key at all, dead-ending onboarding. A 403 means the LISTING endpoint is
+// gated for that account; it says nothing about whether the credential
+// itself is valid, and a network/transport failure says even less. Only a
+// 401 (or another unambiguous invalid-credential signal) may now refuse to
+// persist a key — everything else persists it, honestly marked
+// 'unverified', so the first real run against it is what actually proves
+// it. Existing rows (saved before this column existed, when `save()` was
+// only ever reached after a full successful verification) backfill to
+// 'verified' — the honest read of what already happened to them.
+function up007(db: Database.Database): void {
+  if (!columnExists(db, 'tenant_secrets', 'key_verification')) {
+    db.exec(`ALTER TABLE tenant_secrets ADD COLUMN key_verification TEXT NOT NULL DEFAULT 'verified'`);
+  }
+}
+
 const MIGRATIONS: Migration[] = [
   { version: 1, destructive: false, up: up001 },
   { version: 2, destructive: false, up: up002 },
@@ -336,6 +357,7 @@ const MIGRATIONS: Migration[] = [
   { version: 4, destructive: true, up: up004 },
   { version: 5, destructive: false, up: up005 },
   { version: 6, destructive: false, up: up006 },
+  { version: 7, destructive: false, up: up007 },
 ];
 
 /** One consistent snapshot before the first destructive step. VACUUM INTO

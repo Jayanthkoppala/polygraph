@@ -42,6 +42,20 @@ export interface TenantSecretStatus {
   key_status: string;
   key_added_at: string;
   key_rotated_at: string | null;
+  /**
+   * Whether Bright Data has actually confirmed this credential works, as
+   * opposed to merely being stored. Controller ruling (superseding the
+   * original save-time design): a saved key whose verification call
+   * couldn't confirm it — a 403 (the collectors-list endpoint gated for
+   * that account, which says nothing about the credential's own validity)
+   * or a transport/network failure — must still be persisted, honestly
+   * marked `'unverified'`, rather than discarded. Only an unambiguous
+   * invalid-credential signal (a 401) refuses to persist at all. Flips to
+   * `'verified'` the moment a real run against this tenant's own key
+   * actually succeeds (`ScopedSecrets.markVerified` below) — that first
+   * live run is the actual proof, not another standalone listing call.
+   */
+  key_verification: 'verified' | 'unverified';
 }
 
 interface TenantSecretRow extends TenantSecretStatus {
@@ -75,9 +89,15 @@ export class ScopedSecrets {
    * Network verification against Bright Data (§2 step 2, `GET
    * /dca/collectors_list`) is the caller's responsibility — it needs an
    * adapter/network call this module deliberately does not make, to keep
-   * key custody testable with no network in tests.
+   * key custody testable with no network in tests. `options.verified`
+   * records what that caller actually observed (default `true`, matching
+   * this method's original behaviour/every pre-existing call site: a
+   * direct `.save()` with no options is an explicit "trust this key" —
+   * `key-verification.ts`'s `saveVerifiedTenantKey` is the one caller that
+   * passes `verified: false` when Bright Data's own response couldn't
+   * confirm the key, per the controller ruling on `TenantSecretStatus.key_verification`).
    */
-  save(plaintext: string): TenantSecretStatus {
+  save(plaintext: string, options: { verified?: boolean } = {}): TenantSecretStatus {
     if (!KEY_FORMAT.test(plaintext)) throw new InvalidApiKeyFormatError();
 
     const material = encryptTenantKey(this.masterKey, this.tenantId, plaintext);
@@ -85,24 +105,26 @@ export class ScopedSecrets {
     const last4 = plaintext.slice(-4);
     const fingerprint = fingerprintOf(plaintext);
     const existing = this.status();
+    const verification: 'verified' | 'unverified' = options.verified === false ? 'unverified' : 'verified';
 
     this.db
       .prepare(
         `INSERT INTO tenant_secrets
            (tenant_id, key_ciphertext, key_iv, key_tag, key_salt, key_version,
-            key_last4, key_fingerprint, key_status, key_added_at, key_rotated_at)
+            key_last4, key_fingerprint, key_status, key_verification, key_added_at, key_rotated_at)
          VALUES (@tenant_id, @ciphertext, @iv, @tag, @salt, @version,
-                 @last4, @fingerprint, 'ok', @added_at, @rotated_at)
+                 @last4, @fingerprint, 'ok', @verification, @added_at, @rotated_at)
          ON CONFLICT(tenant_id) DO UPDATE SET
-           key_ciphertext  = excluded.key_ciphertext,
-           key_iv          = excluded.key_iv,
-           key_tag         = excluded.key_tag,
-           key_salt        = excluded.key_salt,
-           key_version     = excluded.key_version,
-           key_last4       = excluded.key_last4,
-           key_fingerprint = excluded.key_fingerprint,
-           key_status      = 'ok',
-           key_rotated_at  = excluded.key_rotated_at`
+           key_ciphertext   = excluded.key_ciphertext,
+           key_iv           = excluded.key_iv,
+           key_tag          = excluded.key_tag,
+           key_salt         = excluded.key_salt,
+           key_version      = excluded.key_version,
+           key_last4        = excluded.key_last4,
+           key_fingerprint  = excluded.key_fingerprint,
+           key_status       = 'ok',
+           key_verification = excluded.key_verification,
+           key_rotated_at   = excluded.key_rotated_at`
       )
       .run({
         tenant_id: this.tenantId,
@@ -113,6 +135,7 @@ export class ScopedSecrets {
         version: material.version,
         last4,
         fingerprint,
+        verification,
         added_at: existing ? existing.key_added_at : now,
         rotated_at: existing ? now : null,
       });
@@ -127,7 +150,7 @@ export class ScopedSecrets {
   status(): TenantSecretStatus | undefined {
     const row = this.db
       .prepare(
-        `SELECT tenant_id, key_last4, key_fingerprint, key_status, key_added_at, key_rotated_at
+        `SELECT tenant_id, key_last4, key_fingerprint, key_status, key_verification, key_added_at, key_rotated_at
            FROM tenant_secrets WHERE tenant_id = ?`
       )
       .get(this.tenantId) as (TenantSecretStatus & { tenant_id: string }) | undefined;
@@ -135,6 +158,25 @@ export class ScopedSecrets {
     assertOwned([row], this.tenantId);
     const { tenant_id: _tenantId, ...status } = row;
     return status;
+  }
+
+  /**
+   * Flips an existing tenant's `key_verification` to `'verified'`, without
+   * touching the ciphertext/last4/fingerprint/rotated_at — for the moment a
+   * real run against the tenant's OWN key actually succeeds. That first
+   * live success is the genuine proof a listing call couldn't give (§2's
+   * 403/network case); whichever code path runs a tenant's first real job
+   * (the scheduler, or a user-triggered probe) should call this on success.
+   * A no-op returning `undefined` if no key row exists at all — never
+   * throws, matching this module's "degrade the one tenant, never crash
+   * the caller" posture.
+   */
+  markVerified(): TenantSecretStatus | undefined {
+    const result = this.db
+      .prepare(`UPDATE tenant_secrets SET key_verification = 'verified' WHERE tenant_id = ?`)
+      .run(this.tenantId);
+    if (result.changes === 0) return undefined;
+    return this.status();
   }
 
   /**
