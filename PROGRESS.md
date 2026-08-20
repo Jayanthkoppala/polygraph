@@ -12,9 +12,9 @@ Refresh the live numbers with `npm run progress` (rewrites the Live metrics bloc
 <!-- METRICS:START -->
 | Metric | Value |
 |---|---|
-| Commits | 52 |
-| Backend tests | 588 passing, 1 skipped |
-| App tests | 268 passing |
+| Commits | 60 |
+| Backend tests | 591 passing, 1 skipped |
+| App tests | 276 passing |
 | Typecheck | clean |
 | Backend suite | `npx vitest run` |
 | App suite | `npm --prefix app run test` |
