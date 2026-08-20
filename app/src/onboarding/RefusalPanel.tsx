@@ -16,6 +16,7 @@
  * otherwise." `onRediscover` is the ONLY action this panel can offer.
  */
 import { Prohibit, ArrowsClockwise } from '@phosphor-icons/react';
+import { Button } from '@/components/ui/button';
 
 export interface RefusalPanelProps {
   collectorName: string;
@@ -39,15 +40,10 @@ export function RefusalPanel({ collectorName, reason, ledgerId, onRediscover }: 
       </h2>
       <p className="text-sm text-[#EDEDED]">{reason}</p>
       <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={onRediscover}
-          data-testid="rediscover-button"
-          className="flex h-9 items-center gap-2 rounded-sm border border-[var(--color-line)] px-3 text-sm font-medium text-[#EDEDED]"
-        >
+        <Button type="button" variant="outline" onClick={onRediscover} data-testid="rediscover-button" className="gap-2">
           <ArrowsClockwise size={14} weight="regular" aria-hidden />
           Re-discover the target
-        </button>
+        </Button>
         {ledgerId != null && (
           <span className="font-mono text-xs text-[#8B949E]">Ledger #{ledgerId} records this refusal.</span>
         )}

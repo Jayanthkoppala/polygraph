@@ -18,14 +18,12 @@
 import { useCallback, useReducer } from 'react';
 import { onboardingReducer, initialOnboardingState, currentCandidate, type OnboardingStage } from './machine';
 import { exchangeTokenUrl } from './api';
-import { Stepper } from './Stepper';
+import ReactBitsStepper, { Step } from './ReactBitsStepper';
 import { SignupStep } from './steps/SignupStep';
 import { KeyPasteStep } from './steps/KeyPasteStep';
 import { CollectorsFoundStep, CollectorsFallbackStep } from './steps/CollectorsStep';
 import { SchemaConfirmStep } from './steps/SchemaConfirmStep';
 import { FirstVerdictStep } from './steps/FirstVerdictStep';
-
-const STEP_LABELS = ['Connect', 'Point at a collector', 'First verification pass'];
 
 /** Collapses the machine's finer stages into the 3-dot rail position. */
 function stepperPosition(stage: OnboardingStage): number {
@@ -73,76 +71,78 @@ export function OnboardingWizard({ initialStage, onComplete }: OnboardingWizardP
 
   const position = stepperPosition(state.stage);
 
+  if (state.stage === 'signup') {
+    // ui-system.md §3.3 scopes the 3-dot rail to exactly the 3 steps it
+    // names (paste key / point at a collector / first pass) — signup
+    // itself isn't one of them, so it renders with no Stepper chrome.
+    return (
+      <SignupStep
+        onSignedUp={({ token, tenantId }) => {
+          dispatch({ type: 'SIGNUP_SUCCEEDED', tenantId });
+          // Real navigation — sets the session cookie via the 302 at
+          // GET /t/:token. See api.ts's `exchangeTokenUrl` doc.
+          window.location.assign(exchangeTokenUrl(token));
+        }}
+      />
+    );
+  }
+
+  const collectorContent = currentCandidate(state) ? (
+    <SchemaConfirmStep
+      key={currentCandidate(state)!.id}
+      collector={currentCandidate(state)!}
+      position={{ index: state.confirmIndex, total: state.candidates.length }}
+      onConfirmed={(id) => dispatch({ type: 'COLLECTOR_CONFIRMED', id })}
+      onSkippedEmpty={(id) => dispatch({ type: 'COLLECTOR_SKIPPED_EMPTY', id })}
+    />
+  ) : state.stage === 'collectors-found' ? (
+    <CollectorsFoundStep
+      last4={state.keyLast4 ?? ''}
+      discovered={state.candidates}
+      onContinue={(selected) => dispatch({ type: 'COLLECTORS_SELECTED', collectors: selected })}
+    />
+  ) : state.stage === 'collectors-fallback' ? (
+    <CollectorsFallbackStep onContinue={(collectors) => dispatch({ type: 'MANUAL_COLLECTORS_ENTERED', collectors })} />
+  ) : null;
+
   return (
-    <div className="flex min-h-screen flex-col">
-      {position > 0 && (
-        <div className="pt-8">
-          <Stepper currentStep={position} totalSteps={3} labels={STEP_LABELS} />
-        </div>
-      )}
-
-      {state.stage === 'signup' && (
-        <SignupStep
-          onSignedUp={({ token, tenantId }) => {
-            dispatch({ type: 'SIGNUP_SUCCEEDED', tenantId });
-            // Real navigation — sets the session cookie via the 302 at
-            // GET /t/:token. See api.ts's `exchangeTokenUrl` doc.
-            window.location.assign(exchangeTokenUrl(token));
-          }}
-        />
-      )}
-
-      {(state.stage === 'key-paste' || state.stage === 'key-verifying' || state.stage === 'key-rejected') && (
-        <KeyPasteStep
-          onVerified={(last4, collectors) => dispatch({ type: 'KEY_VERIFIED', last4, collectors })}
-          onRejected={(message) => dispatch({ type: 'KEY_REJECTED', message })}
-          onListUnavailable={() => dispatch({ type: 'KEY_LIST_UNAVAILABLE' })}
-        />
-      )}
-
-      {state.stage === 'collectors-found' && (
-        <CollectorsFoundStep
-          last4={state.keyLast4 ?? ''}
-          discovered={state.candidates}
-          onContinue={(selected) => dispatch({ type: 'COLLECTORS_SELECTED', collectors: selected })}
-        />
-      )}
-
-      {state.stage === 'collectors-fallback' && (
-        <CollectorsFallbackStep
-          onContinue={(collectors) => dispatch({ type: 'MANUAL_COLLECTORS_ENTERED', collectors })}
-        />
-      )}
-
-      {state.stage === 'schema-confirm' &&
-        (currentCandidate(state) ? (
-          <SchemaConfirmStep
-            key={currentCandidate(state)!.id}
-            collector={currentCandidate(state)!}
-            position={{ index: state.confirmIndex, total: state.candidates.length }}
-            onConfirmed={(id) => dispatch({ type: 'COLLECTOR_CONFIRMED', id })}
-            onSkippedEmpty={(id) => dispatch({ type: 'COLLECTOR_SKIPPED_EMPTY', id })}
+    // Remounted by `key={position}` on every macro-step change — the
+    // packaged Stepper owns its `currentStep` internally (no controlled
+    // prop exists), so a fresh mount with a new `initialStep` is how this
+    // async/branching flow drives it from the outside. `disableStepIndicators`
+    // (no clicking ahead/behind) and a hidden footer (`footerClassName`)
+    // remove ITS OWN Back/Continue chrome — ux-spec.md §2/§6: "no skipping,
+    // no side navigation," and every real advance here is gated by an
+    // async result (a key verifying, a probe completing), never a free
+    // "Continue" click, so each step component owns its own submit button.
+    <ReactBitsStepper
+      key={position}
+      initialStep={position}
+      disableStepIndicators
+      footerClassName="hidden"
+      stepCircleContainerClassName="!rounded-2xl !border-[var(--color-line)] bg-[var(--color-surface)] shadow-[var(--shadow-e3)]"
+      contentClassName="text-[#EDEDED]"
+    >
+      <Step>
+        {position === 1 && (
+          <KeyPasteStep
+            onVerified={(last4, collectors) => dispatch({ type: 'KEY_VERIFIED', last4, collectors })}
+            onRejected={(message) => dispatch({ type: 'KEY_REJECTED', message })}
+            onListUnavailable={() => dispatch({ type: 'KEY_LIST_UNAVAILABLE' })}
           />
-        ) : (
-          // Defensive: every candidate resolved without the reducer
-          // advancing to `first-verdict` yet — should be unreachable, but
-          // never render a blank screen.
+        )}
+      </Step>
+      <Step>{position === 2 && collectorContent}</Step>
+      <Step>
+        {position === 3 && (
           <FirstVerdictStep
             fleetName={state.fleetName}
             confirmedIds={state.confirmedIds}
             skippedIds={state.skippedIds}
             onGoToFleet={goToFleet}
           />
-        ))}
-
-      {state.stage === 'first-verdict' && (
-        <FirstVerdictStep
-          fleetName={state.fleetName}
-          confirmedIds={state.confirmedIds}
-          skippedIds={state.skippedIds}
-          onGoToFleet={goToFleet}
-        />
-      )}
-    </div>
+        )}
+      </Step>
+    </ReactBitsStepper>
   );
 }

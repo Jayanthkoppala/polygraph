@@ -18,6 +18,9 @@
 import { useState } from 'react';
 import { CheckCircle } from '@phosphor-icons/react';
 import { OnboardingPanel } from '../OnboardingPanel';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Textarea } from '@/components/ui/textarea';
+import { Button } from '@/components/ui/button';
 import type { CollectorCandidate } from '../machine';
 
 const MAX_COLLECTORS = 5;
@@ -49,6 +52,7 @@ export function CollectorsFoundStep({ last4, discovered, onContinue }: Collector
 
   return (
     <OnboardingPanel
+      bare
       title="Connected."
       subtitle={`Found ${discovered.length} collector${discovered.length === 1 ? '' : 's'} on the key ending ${last4}.`}
     >
@@ -57,12 +61,10 @@ export function CollectorsFoundStep({ last4, discovered, onContinue }: Collector
           {discovered.map((c) => (
             <li key={c.id}>
               <label className="flex cursor-pointer items-center gap-3 rounded-sm border border-[var(--color-line)] bg-[var(--color-sunken)] px-3 py-2 text-sm text-[#EDEDED]">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={checked.has(c.id)}
-                  onChange={() => toggle(c.id)}
+                  onCheckedChange={() => toggle(c.id)}
                   disabled={!checked.has(c.id) && checked.size >= MAX_COLLECTORS}
-                  className="accent-[#EDEDED]"
                 />
                 <span className="flex-1 truncate">{c.name}</span>
                 {checked.has(c.id) && <CheckCircle size={14} weight="fill" className="text-[var(--color-verdict-pass)]" aria-hidden />}
@@ -73,14 +75,9 @@ export function CollectorsFoundStep({ last4, discovered, onContinue }: Collector
         {discovered.length > MAX_COLLECTORS && (
           <p className="text-xs text-[#8B949E]">Up to {MAX_COLLECTORS} collectors to start — you can add more from Settings later.</p>
         )}
-        <button
-          type="button"
-          disabled={selected.length === 0}
-          onClick={() => onContinue(selected)}
-          className="flex h-10 items-center justify-center rounded-sm bg-[#EDEDED] text-sm font-medium text-[#131209] transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-        >
+        <Button type="button" disabled={selected.length === 0} onClick={() => onContinue(selected)} className="h-10 w-full">
           Watch {selected.length || ''} collector{selected.length === 1 ? '' : 's'}
-        </button>
+        </Button>
       </div>
     </OnboardingPanel>
   );
@@ -102,26 +99,21 @@ export function CollectorsFallbackStep({ onContinue }: CollectorsFallbackStepPro
 
   return (
     <OnboardingPanel
+      bare
       title="Point us at your collectors"
       subtitle="Your account doesn't expose the collector list to us. Paste the collector IDs instead, one per line."
     >
       <div className="flex flex-col gap-4">
-        <textarea
+        <Textarea
           data-testid="manual-collector-ids"
           rows={6}
           value={raw}
           onChange={(e) => setRaw(e.target.value)}
           placeholder={'amazon-prices\nshopify-skus\nbestbuy-stock'}
-          className="rounded-sm border border-[var(--color-line)] bg-[var(--color-sunken)] px-3 py-2 font-mono text-sm text-[#EDEDED] outline-none placeholder:text-[#8B949E] focus-visible:border-[#EDEDED]"
         />
-        <button
-          type="button"
-          disabled={collectors.length === 0}
-          onClick={() => onContinue(collectors)}
-          className="flex h-10 items-center justify-center rounded-sm bg-[#EDEDED] text-sm font-medium text-[#131209] transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-        >
+        <Button type="button" disabled={collectors.length === 0} onClick={() => onContinue(collectors)} className="h-10 w-full">
           Continue
-        </button>
+        </Button>
       </div>
     </OnboardingPanel>
   );

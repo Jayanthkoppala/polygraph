@@ -22,6 +22,13 @@
 import { useState } from 'react';
 import { ClipboardText, WarningCircle } from '@phosphor-icons/react';
 import { OnboardingPanel } from '../OnboardingPanel';
+import { Textarea } from '@/components/ui/textarea';
+import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   createCollectorDraft,
   inferCollectorSchema,
@@ -33,6 +40,11 @@ import {
 import type { CollectorCandidate } from '../machine';
 
 type Phase = 'inputs' | 'running' | 'ready' | 'error';
+
+/** Radix `Select.Item` forbids an empty-string `value` — this sentinel
+ * stands in for "no entity key chosen" and is translated back to `null`
+ * at the one point it leaves this component (`handleConfirm`). */
+const NO_ENTITY_KEY = '__none__';
 
 interface FieldRow extends ProbeFieldDraft {
   required: boolean;
@@ -107,32 +119,27 @@ export function SchemaConfirmStep({ collector, position, onConfirmed, onSkippedE
   if (phase === 'inputs') {
     return (
       <OnboardingPanel
+        bare
         title={`Point at ${collector.name}`}
         subtitle={`Collector ${position.index + 1} of ${position.total}. What input(s) trigger a run?`}
       >
         <div className="flex flex-col gap-4">
-          <textarea
+          <Textarea
             data-testid="canary-inputs"
             rows={4}
             value={canaryRaw}
             onChange={(e) => setCanaryRaw(e.target.value)}
             placeholder={'SKU-4471\nSKU-4482'}
-            className="rounded-sm border border-[var(--color-line)] bg-[var(--color-sunken)] px-3 py-2 font-mono text-sm text-[#EDEDED] outline-none placeholder:text-[#8B949E] focus-visible:border-[#EDEDED]"
           />
           <p className="text-xs text-[#8B949E]">Up to 5. We&rsquo;ll run one of these live, once, to see what comes back.</p>
           {error && (
-            <p role="alert" className="text-sm text-[var(--color-verdict-shape)]">
-              {error}
-            </p>
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           )}
-          <button
-            type="button"
-            disabled={canaryInputs.length === 0}
-            onClick={runProbe}
-            className="flex h-10 items-center justify-center rounded-sm bg-[#EDEDED] text-sm font-medium text-[#131209] transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-          >
+          <Button type="button" disabled={canaryInputs.length === 0} onClick={runProbe} className="h-10 w-full">
             Run it once
-          </button>
+          </Button>
         </div>
       </OnboardingPanel>
     );
@@ -140,7 +147,7 @@ export function SchemaConfirmStep({ collector, position, onConfirmed, onSkippedE
 
   if (phase === 'running') {
     return (
-      <OnboardingPanel title={`Point at ${collector.name}`} subtitle="Running it once, live…" busy>
+      <OnboardingPanel bare title={`Point at ${collector.name}`} subtitle="Running it once, live…" busy>
         <div className="flex h-24 items-center justify-center text-sm text-[#8B949E]">Checking…</div>
       </OnboardingPanel>
     );
@@ -148,18 +155,14 @@ export function SchemaConfirmStep({ collector, position, onConfirmed, onSkippedE
 
   if (phase === 'error') {
     return (
-      <OnboardingPanel title={`Point at ${collector.name}`} subtitle="That run didn't go through.">
+      <OnboardingPanel bare title={`Point at ${collector.name}`} subtitle="That run didn't go through.">
         <div className="flex flex-col gap-4">
-          <p role="alert" className="text-sm text-[var(--color-verdict-shape)]">
-            {error}
-          </p>
-          <button
-            type="button"
-            onClick={() => setPhase('inputs')}
-            className="flex h-10 items-center justify-center rounded-sm border border-[var(--color-line)] text-sm font-medium text-[#EDEDED]"
-          >
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+          <Button type="button" variant="outline" onClick={() => setPhase('inputs')} className="h-10 w-full">
             Try again
-          </button>
+          </Button>
         </div>
       </OnboardingPanel>
     );
@@ -168,84 +171,78 @@ export function SchemaConfirmStep({ collector, position, onConfirmed, onSkippedE
   // ready
   return (
     <OnboardingPanel
+      bare
       title="What does a good row look like?"
       subtitle={`We ran ${collector.name} once. Here's what came back. (${position.index + 1} of ${position.total})`}
     >
       <div className="flex flex-col gap-5">
         <ClipboardText size={16} weight="regular" className="text-[#8B949E]" aria-hidden />
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm" data-testid="schema-confirm-table">
-            <thead>
-              <tr className="text-xs uppercase tracking-wide text-[#8B949E]">
-                <th className="pb-2 pr-3 font-medium">Field</th>
-                <th className="pb-2 pr-3 font-medium">Observed</th>
-                <th className="pb-2 pr-3 font-medium">Sample</th>
-                <th className="pb-2 font-medium">Required?</th>
-              </tr>
-            </thead>
-            <tbody>
+        <div className="overflow-x-auto rounded-sm border border-[var(--color-line)]">
+          <Table data-testid="schema-confirm-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Field</TableHead>
+                <TableHead>Observed</TableHead>
+                <TableHead>Sample</TableHead>
+                <TableHead>Required?</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {fields.map((f, i) => (
-                <tr key={f.name} className="border-t border-[var(--color-line)]">
-                  <td className="py-2 pr-3 font-mono text-[#EDEDED]">{f.name}</td>
-                  <td className="py-2 pr-3 text-[#9B9B9B]">
-                    {f.everFilled ? 'Always filled' : (
+                <TableRow key={f.name}>
+                  <TableCell className="font-mono">{f.name}</TableCell>
+                  <TableCell className="text-[#9B9B9B]">
+                    {f.everFilled ? (
+                      'Always filled'
+                    ) : (
                       <span className="flex items-center gap-1">
                         <WarningCircle size={12} weight="regular" aria-hidden />
                         Sometimes empty
                       </span>
                     )}
-                  </td>
-                  <td className="py-2 pr-3 truncate font-mono text-[#9B9B9B]">{String(f.sample ?? '—')}</td>
-                  <td className="py-2">
-                    <input
-                      type="checkbox"
+                  </TableCell>
+                  <TableCell className="truncate font-mono text-[#9B9B9B]">{String(f.sample ?? '—')}</TableCell>
+                  <TableCell>
+                    <Checkbox
                       checked={f.required}
-                      onChange={() =>
+                      onCheckedChange={() =>
                         setFields((prev) => prev.map((row, idx) => (idx === i ? { ...row, required: !row.required } : row)))
                       }
-                      className="accent-[#EDEDED]"
                     />
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="entity-key-select" className="text-sm font-medium text-[#EDEDED]">
-            Which field identifies the thing you asked for?
-          </label>
-          <select
-            id="entity-key-select"
-            value={entityKey ?? ''}
-            onChange={(e) => setEntityKey(e.target.value || null)}
-            className="rounded-sm border border-[var(--color-line)] bg-[var(--color-sunken)] px-3 py-2 text-sm text-[#EDEDED] outline-none focus-visible:border-[#EDEDED]"
-          >
-            <option value="">Don&rsquo;t check identity for this collector</option>
-            {fields.map((f) => (
-              <option key={f.name} value={f.name}>
-                {f.name}
-              </option>
-            ))}
-          </select>
+          <Label htmlFor="entity-key-select">Which field identifies the thing you asked for?</Label>
+          <Select value={entityKey ?? NO_ENTITY_KEY} onValueChange={(v) => setEntityKey(v === NO_ENTITY_KEY ? null : v)}>
+            <SelectTrigger id="entity-key-select" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_ENTITY_KEY}>Don&rsquo;t check identity for this collector</SelectItem>
+              {fields.map((f) => (
+                <SelectItem key={f.name} value={f.name}>
+                  {f.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {entityKey && <p className="text-xs text-[#8B949E]">This is what catches the wrong-product failure.</p>}
         </div>
 
         {error && (
-          <p role="alert" className="text-sm text-[var(--color-verdict-shape)]">
-            {error}
-          </p>
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         )}
 
-        <button
-          type="button"
-          disabled={saving}
-          onClick={handleConfirm}
-          className="flex h-10 items-center justify-center rounded-sm bg-[#EDEDED] text-sm font-medium text-[#131209] transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-        >
+        <Button type="button" disabled={saving} onClick={handleConfirm} className="h-10 w-full">
           {saving ? 'Saving…' : 'Looks right — start watching'}
-        </button>
+        </Button>
       </div>
     </OnboardingPanel>
   );

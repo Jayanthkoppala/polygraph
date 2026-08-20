@@ -4,7 +4,8 @@
  * involved." Always switch + daily budget + an explicit "spends your
  * Bright Data credits" statement, gated behind the ONLY confirm dialog in
  * the entire product (ux-spec.md §6: "That is the only confirmation
- * dialog in the entire product").
+ * dialog in the entire product") — built on shadcn's `AlertDialog`, the
+ * primitive whose entire purpose is a blocking, must-choose confirmation.
  *
  * Plan ruling R6: hosted v2's server never sets POLYGRAPH_HEAL_ENABLED, so
  * live heals are structurally impossible regardless of what a tenant
@@ -21,6 +22,16 @@
  */
 import { useState } from 'react';
 import { Wrench } from '@phosphor-icons/react';
+import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from '@/components/ui/alert-dialog';
 
 export interface RepairBudget {
   dailyBudget: number;
@@ -38,6 +49,7 @@ export interface RepairsConsentPanelProps {
 }
 
 const DEFAULT_BUDGET: RepairBudget = { dailyBudget: 3, maxAttemptsPerIncident: 2, cooldownMinutes: 60 };
+const BUDGET_OPTIONS = [1, 2, 3, 4, 5, 10, 30, 60];
 
 export function RepairsConsentPanel({
   hostedHealAvailable = false,
@@ -49,20 +61,20 @@ export function RepairsConsentPanel({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [budget, setBudget] = useState<RepairBudget>(DEFAULT_BUDGET);
 
-  function requestEnable() {
+  function handleSwitchClick() {
     if (!hostedHealAvailable) return;
-    setDialogOpen(true);
+    if (enabled) {
+      setEnabled(false);
+      onDisable?.();
+    } else {
+      setDialogOpen(true);
+    }
   }
 
   function confirmEnable() {
     setEnabled(true);
     setDialogOpen(false);
     onConfirmEnable?.(budget);
-  }
-
-  function disable() {
-    setEnabled(false);
-    onDisable?.();
   }
 
   return (
@@ -75,21 +87,17 @@ export function RepairsConsentPanel({
           <Wrench size={14} weight="regular" aria-hidden />
           Repairs
         </h2>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enabled}
+        <Switch
           data-testid="repairs-switch"
+          checked={enabled}
           disabled={!hostedHealAvailable}
-          onClick={() => (enabled ? disable() : requestEnable())}
-          className="flex h-6 w-11 items-center rounded-full border border-[var(--color-line)] px-0.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-          style={{ background: enabled ? 'var(--color-verdict-pass)' : 'var(--color-sunken)' }}
-        >
-          <span
-            className="h-4 w-4 rounded-full bg-[#EDEDED] transition-transform"
-            style={{ transform: enabled ? 'translateX(20px)' : 'translateX(0)' }}
-          />
-        </button>
+          onClick={handleSwitchClick}
+          // Radix Switch drives its own state via onCheckedChange; this
+          // panel needs the click INTERCEPTED first (to open the confirm
+          // dialog instead of flipping immediately), so onCheckedChange is
+          // a no-op and onClick (which fires first) owns the behaviour.
+          onCheckedChange={() => {}}
+        />
       </div>
 
       <p className="text-sm text-[#9B9B9B]">
@@ -99,7 +107,10 @@ export function RepairsConsentPanel({
       </p>
 
       {!hostedHealAvailable && (
-        <p data-testid="repairs-hosted-unavailable" className="rounded-sm border border-[var(--color-line)] bg-[var(--color-sunken)] px-3 py-2 text-sm text-[#9B9B9B]">
+        <p
+          data-testid="repairs-hosted-unavailable"
+          className="rounded-sm border border-[var(--color-line)] bg-[var(--color-sunken)] px-3 py-2 text-sm text-[#9B9B9B]"
+        >
           Not available in the hosted beta yet — auto-repair stays a local-only capability. You&rsquo;ll
           always get the exact command to run yourself, with nothing spent automatically.
         </p>
@@ -131,39 +142,20 @@ export function RepairsConsentPanel({
         </div>
       )}
 
-      {dialogOpen && (
-        <div
-          role="alertdialog"
-          aria-modal="true"
-          data-testid="repairs-confirm-dialog"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-8"
-        >
-          <div className="w-full max-w-sm rounded-2xl border border-[var(--color-line)] bg-[var(--color-raised)] p-6 shadow-[var(--shadow-e3)]">
-            <p className="text-sm text-[#EDEDED]">
-              Polygraph will be able to spend your Bright Data credits, up to {budget.dailyBudget}{' '}
-              repairs a day. Every one lands on your ledger.
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                data-testid="repairs-dialog-cancel"
-                onClick={() => setDialogOpen(false)}
-                className="flex h-9 items-center justify-center rounded-sm border border-[var(--color-line)] px-3 text-sm text-[#EDEDED]"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                data-testid="repairs-dialog-confirm"
-                onClick={confirmEnable}
-                className="flex h-9 items-center justify-center rounded-sm bg-[#EDEDED] px-3 text-sm font-medium text-[#131209]"
-              >
-                Turn on repairs
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <AlertDialogContent data-testid="repairs-confirm-dialog" size="sm">
+          <AlertDialogDescription>
+            Polygraph will be able to spend your Bright Data credits, up to {budget.dailyBudget} repairs a
+            day. Every one lands on your ledger.
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="repairs-dialog-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction data-testid="repairs-dialog-confirm" onClick={confirmEnable}>
+              Turn on repairs
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }
@@ -180,20 +172,21 @@ function BudgetRow({
   onChange: (v: number) => void;
 }) {
   return (
-    <label className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <span>{label}</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="rounded-sm border border-[var(--color-line)] bg-[var(--color-sunken)] px-2 py-1 text-[#EDEDED]"
-      >
-        {[1, 2, 3, 4, 5, 10, 30, 60].map((n) => (
-          <option key={n} value={n}>
-            {n}
-          </option>
-        ))}
-      </select>
+      <Select value={String(value)} onValueChange={(v) => onChange(Number(v))}>
+        <SelectTrigger size="sm" className="w-16">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {BUDGET_OPTIONS.map((n) => (
+            <SelectItem key={n} value={String(n)}>
+              {n}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <span>{suffix}</span>
-    </label>
+    </div>
   );
 }

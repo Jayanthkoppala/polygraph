@@ -9,7 +9,7 @@
  * isolation) but at every later step of the whole flow.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { OnboardingWizard } from './OnboardingWizard';
 import * as api from './api';
 
@@ -56,7 +56,11 @@ describe('OnboardingWizard — full 403 fallback path, key never re-rendered', (
     expect(document.body.textContent).not.toMatch(/your account is broken/i);
 
     fireEvent.change(screen.getByTestId('manual-collector-ids'), { target: { value: 'amazon-prices' } });
-    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    // Scoped to this step's own panel: the packaged ReactBits Stepper also
+    // renders its own generic (hidden-in-production-CSS, but still present
+    // in jsdom without compiled Tailwind) "Continue" button in its footer —
+    // see OnboardingWizard.tsx's footerClassName="hidden" comment.
+    fireEvent.click(within(screen.getByTestId('onboarding-panel')).getByRole('button', { name: /continue/i }));
 
     // Schema-confirm: point at the (only) collector, run the probe.
     await screen.findByTestId('canary-inputs');

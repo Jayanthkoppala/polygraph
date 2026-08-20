@@ -11,6 +11,7 @@
  */
 import { SealCheck, EyeSlash, ArrowRight } from '@phosphor-icons/react';
 import { OnboardingPanel } from '../OnboardingPanel';
+import { Button } from '@/components/ui/button';
 
 export interface FirstVerdictStepProps {
   fleetName: string;
@@ -21,7 +22,7 @@ export interface FirstVerdictStepProps {
 
 export function FirstVerdictStep({ fleetName, confirmedIds, skippedIds, onGoToFleet }: FirstVerdictStepProps) {
   return (
-    <OnboardingPanel title={`${fleetName} is set up.`} subtitle="Nothing has run yet — that's expected.">
+    <OnboardingPanel bare title={`${fleetName} is set up.`} subtitle="Nothing has run yet — that's expected.">
       <div className="flex flex-col gap-5">
         <div
           data-testid="first-verdict-status"
@@ -60,15 +61,10 @@ export function FirstVerdictStep({ fleetName, confirmedIds, skippedIds, onGoToFl
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={onGoToFleet}
-          data-testid="go-to-fleet"
-          className="flex h-10 items-center justify-center gap-2 rounded-sm bg-[#EDEDED] text-sm font-medium text-[#131209]"
-        >
+        <Button type="button" onClick={onGoToFleet} data-testid="go-to-fleet" className="h-10 w-full gap-2">
           Go to your fleet
           <ArrowRight size={14} weight="bold" aria-hidden />
-        </button>
+        </Button>
       </div>
     </OnboardingPanel>
   );

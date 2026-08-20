@@ -1,10 +1,19 @@
 /**
- * The shared step shell — ui-system.md §3.3: "Three steps, one visible at a
- * time, in a 480px column centered on #000000." `borderBeam` is skipped
- * (Magic UI's `border-beam` is not an installed dependency, same situation
- * as Stepper.tsx) in favour of a plain lit border on the active state,
- * which reads the same "something is genuinely in progress" signal per
- * §3.3's own reasoning without adding a second animation library surface.
+ * The shared step content shell — ux-spec.md §6: "Three steps, a
+ * persistent 3-dot progress rail." The bordered 480px card and page
+ * centering ux-spec.md §3.3 describes now live on the real ReactBits
+ * `Stepper`'s own `stepCircleContainerClassName` (see `OnboardingWizard.tsx`)
+ * for steps 1-3, since nesting a second bordered box inside the Stepper's
+ * own card would double the border. `bare` selects which shell this
+ * component renders:
+ *
+ *   - `bare = false` (default): the full standalone page — centered,
+ *     bordered card, own background. Used only by `SignupStep`, which
+ *     renders outside the Stepper entirely (ui-system.md §3.3 scopes the
+ *     3-dot rail to the 3 named steps; signup isn't one of them).
+ *   - `bare = true`: title/subtitle/children only, no outer wrapper — for
+ *     every step mounted inside the Stepper's own `<Step>`, which already
+ *     provides the page centering and the bordered card.
  */
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
@@ -13,12 +22,33 @@ export interface OnboardingPanelProps {
   title: string;
   subtitle?: string;
   children: ReactNode;
-  /** Pulses the border while something genuinely async is in flight
-   * (key verification, a probe run) — never a decorative loop. */
+  /** Reserved for a future lit-border "in progress" treatment on the
+   * standalone (`bare=false`) shell — Magic UI's `border-beam` isn't an
+   * installed dependency, so this only toggles a plain border colour, per
+   * this module's own note. */
   busy?: boolean;
+  bare?: boolean;
 }
 
-export function OnboardingPanel({ title, subtitle, children, busy = false }: OnboardingPanelProps) {
+export function OnboardingPanel({ title, subtitle, children, busy = false, bare = false }: OnboardingPanelProps) {
+  const inner = (
+    <>
+      <div className="mb-8 flex flex-col gap-1">
+        <h1 className="text-2xl font-semibold text-[#EDEDED]">{title}</h1>
+        {subtitle && <p className="text-sm text-[#9B9B9B]">{subtitle}</p>}
+      </div>
+      {children}
+    </>
+  );
+
+  if (bare) {
+    return (
+      <div data-testid="onboarding-panel" data-busy={busy}>
+        {inner}
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--color-void)] p-8">
       <div className="w-full max-w-[480px]">
@@ -30,11 +60,7 @@ export function OnboardingPanel({ title, subtitle, children, busy = false }: Onb
             busy ? 'border-[#EDEDED]/40' : 'border-[var(--color-line)]',
           )}
         >
-          <div className="mb-8 flex flex-col gap-1">
-            <h1 className="text-2xl font-semibold text-[#EDEDED]">{title}</h1>
-            {subtitle && <p className="text-sm text-[#9B9B9B]">{subtitle}</p>}
-          </div>
-          {children}
+          {inner}
         </div>
       </div>
     </div>

@@ -20,6 +20,10 @@
 import { useState } from 'react';
 import { LockKey, Info } from '@phosphor-icons/react';
 import { OnboardingPanel } from '../OnboardingPanel';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { saveApiKey, ApiError } from '../api';
 import type { CollectorCandidate } from '../machine';
 
@@ -63,16 +67,11 @@ export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyP
   }
 
   return (
-    <OnboardingPanel
-      title="Connect your Bright Data account"
-      busy={verifying}
-    >
+    <OnboardingPanel bare title="Connect your Bright Data account" busy={verifying}>
       <form onSubmit={handleSubmit} className="flex flex-col gap-6">
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="bd-api-key" className="text-sm font-medium text-[#EDEDED]">
-            Bright Data API key
-          </label>
-          <input
+          <Label htmlFor="bd-api-key">Bright Data API key</Label>
+          <Input
             id="bd-api-key"
             type="password"
             autoComplete="off"
@@ -80,7 +79,7 @@ export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyP
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder="•••••••••••••••••••••••••••••••••••••"
-            className="rounded-sm border border-[var(--color-line)] bg-[var(--color-sunken)] px-3 py-2 font-mono text-sm text-[#EDEDED] outline-none focus-visible:border-[#EDEDED]"
+            className="font-mono"
           />
         </div>
 
@@ -110,20 +109,15 @@ export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyP
         </div>
 
         {rejectMessage && (
-          <p role="alert" className="text-sm text-[var(--color-verdict-shape)]">
-            Bright Data rejected that key. {rejectMessage}
-          </p>
+          <Alert variant="destructive" data-testid="key-reject-alert">
+            <AlertDescription>Bright Data rejected that key. {rejectMessage}</AlertDescription>
+          </Alert>
         )}
 
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          data-testid="connect-button"
-          className="flex h-10 items-center justify-center gap-2 rounded-sm bg-[#EDEDED] text-sm font-medium text-[#131209] transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-        >
+        <Button type="submit" disabled={!canSubmit} data-testid="connect-button" className="h-10 w-full gap-2">
           <LockKey size={14} weight="bold" aria-hidden />
           {verifying ? 'Connecting…' : 'Connect'}
-        </button>
+        </Button>
       </form>
     </OnboardingPanel>
   );

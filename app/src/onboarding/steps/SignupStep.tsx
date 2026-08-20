@@ -10,6 +10,10 @@
 import { useState } from 'react';
 import { ArrowRight } from '@phosphor-icons/react';
 import { OnboardingPanel } from '../OnboardingPanel';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { signup, ApiError } from '../api';
 
 export interface SignupStepProps {
@@ -43,46 +47,38 @@ export function SignupStep({ onSignedUp }: SignupStepProps) {
     <OnboardingPanel title="Start your fleet" subtitle="One name, no password to remember yet.">
       <form onSubmit={handleSubmit} className="flex flex-col gap-5">
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="fleet-name" className="text-sm font-medium text-[#EDEDED]">
-            Fleet name
-          </label>
-          <input
+          <Label htmlFor="fleet-name">Fleet name</Label>
+          <Input
             id="fleet-name"
             type="text"
             autoComplete="off"
             value={fleetName}
             onChange={(e) => setFleetName(e.target.value)}
             placeholder="acme-data"
-            className="rounded-sm border border-[var(--color-line)] bg-[var(--color-sunken)] px-3 py-2 text-sm text-[#EDEDED] outline-none placeholder:text-[#8B949E] focus-visible:border-[#EDEDED]"
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="recovery-email" className="text-sm font-medium text-[#EDEDED]">
+          <Label htmlFor="recovery-email">
             Recovery email <span className="font-normal text-[#8B949E]">(optional)</span>
-          </label>
-          <input
+          </Label>
+          <Input
             id="recovery-email"
             type="email"
             autoComplete="email"
             value={recoveryEmail}
             onChange={(e) => setRecoveryEmail(e.target.value)}
             placeholder="you@company.com"
-            className="rounded-sm border border-[var(--color-line)] bg-[var(--color-sunken)] px-3 py-2 text-sm text-[#EDEDED] outline-none placeholder:text-[#8B949E] focus-visible:border-[#EDEDED]"
           />
         </div>
         {error && (
-          <p role="alert" className="text-sm text-[var(--color-verdict-shape)]">
-            {error}
-          </p>
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         )}
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className="flex h-10 items-center justify-center gap-2 rounded-sm bg-[#EDEDED] text-sm font-medium text-[#131209] transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-        >
+        <Button type="submit" disabled={!canSubmit} className="h-10 w-full gap-2">
           {submitting ? 'Starting…' : 'Continue'}
           {!submitting && <ArrowRight size={14} weight="bold" aria-hidden />}
-        </button>
+        </Button>
       </form>
     </OnboardingPanel>
   );
