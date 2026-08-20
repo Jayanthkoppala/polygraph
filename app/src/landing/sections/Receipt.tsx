@@ -1,0 +1,116 @@
+/**
+ * Receipt — ux-spec.md §1a below-the-fold item 3 / ui-system.md §4.3 order
+ * 7 ("the ledger, chain proof"). The SAME sandbox engine the hero's
+ * `SandboxPanel` drives (passed down from `LandingPage`, not a second
+ * instance) — so `Verify chain` here is walking the exact chain the
+ * visitor just built by clicking break buttons above.
+ *
+ * Deliberately NOT `components/ledger/LedgerStream`: that component's
+ * `Verify chain` button is hardwired to the real `/api/ledger/verify`
+ * fetch (`lib/api.ts`), which has nothing to check against a client-only
+ * sandbox chain. Reuses `VerdictRail` directly instead — one of the four
+ * primitives this task was told to reuse, never re-implement — for each
+ * row's geometry, matching the ledger's warm-archive look.
+ */
+import { useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { VerdictRail } from '@/components/verdict/VerdictRail';
+import { VERDICT, toVerdictState } from '@/lib/verdict';
+import type { CollectorState } from '@/lib/api';
+import type { UseSandboxEngineResult } from '../sandbox/useSandboxEngine';
+
+/** Same engine->display mapping App.tsx uses for a real ledger row, applied
+ * to a sandbox ledger row — neither carries an `unverified` flag (that's a
+ * `CollectorState`-only derived field), so it's always false here. */
+function ledgerRowState(verdict: string, cause: string | null) {
+  return toVerdictState({ verdict, cause, unverified: false } as CollectorState);
+}
+
+type VerifyStatus = 'idle' | 'checking' | 'ok' | 'broken';
+
+export function Receipt({ sandbox }: { sandbox: UseSandboxEngineResult }) {
+  const rows = sandbox.ledgerRowsForDisplay();
+  const [status, setStatus] = useState<VerifyStatus>('idle');
+  const [message, setMessage] = useState<string | null>(null);
+
+  function handleVerify() {
+    setStatus('checking');
+    const result = sandbox.verifyChain();
+    setStatus(result.ok ? 'ok' : 'broken');
+    setMessage(
+      result.ok
+        ? `OK — ${result.checked.toLocaleString('en-US')} events verified, chain intact`
+        : (result.reason ?? `Chain broken after ${result.checked.toLocaleString('en-US')} event(s)`),
+    );
+  }
+
+  const statusColor = status === 'ok' ? 'var(--color-verdict-pass)' : status === 'broken' ? 'var(--color-verdict-shape)' : '#9B9B9B';
+
+  return (
+    <section className="bg-[#181818] px-6 py-16">
+      <h2 className="mx-auto mb-6 max-w-[680px] text-balance text-center text-3xl font-semibold text-[#EDEDED]">
+        Every decision, hash chained.
+      </h2>
+
+      <div
+        aria-label="Sandbox ledger"
+        data-testid="receipt-ledger"
+        className="mx-auto flex max-h-96 max-w-3xl flex-col overflow-hidden rounded-2xl border border-[#272727] bg-[var(--color-archive)]"
+      >
+        <header className="flex items-center gap-3 border-b border-[#272727] px-3 py-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-[#9B9B9B]">Your sandbox ledger</span>
+          <span className="font-mono text-xs tabular-nums text-[#6E7681]">{rows.length} events</span>
+          <button
+            type="button"
+            onClick={handleVerify}
+            disabled={status === 'checking'}
+            data-testid="sandbox-verify-chain-button"
+            className="ml-auto rounded-sm border border-[#272727] px-2 py-1 font-mono text-xs text-[#9B9B9B] outline-none
+                       focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]"
+          >
+            {status === 'checking' ? 'Verifying…' : 'Verify chain'}
+          </button>
+        </header>
+
+        {message && (
+          <div role="status" data-testid="sandbox-verify-result" className="border-b border-[#272727] px-3 py-2 font-mono text-xs tabular-nums" style={{ color: statusColor }}>
+            {message}
+          </div>
+        )}
+
+        <div role="log" aria-live="polite" aria-label="Sandbox ledger events" className="flex-1 overflow-y-auto">
+          <ol className="divide-y divide-[#272727]">
+            <AnimatePresence initial={false}>
+              {rows.map((row) => {
+                const state = ledgerRowState(row.verdict, row.cause);
+                const meta = VERDICT[state];
+                return (
+                  <motion.li
+                    key={row.id}
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.26, ease: [0.32, 0.72, 0, 1] }}
+                    className="relative flex items-baseline gap-3 px-3 py-2 font-mono text-xs"
+                  >
+                    <VerdictRail state={state} />
+                    <time dateTime={row.ts} className="shrink-0 pl-3 tabular-nums text-[#9B9B9B]">
+                      {row.ts.slice(11, 19)}
+                    </time>
+                    <span className="min-w-0 flex-1 truncate text-[#EDEDED]">{row.collector}</span>
+                    <span className="shrink-0" style={{ color: meta.color }}>
+                      {meta.label}
+                    </span>
+                    <span className="shrink-0 text-[#9B9B9B]">{row.action}</span>
+                    <span className="shrink-0 tabular-nums text-[#6E7681]" title={row.eventHash}>
+                      {row.eventHash.slice(0, 8)}
+                    </span>
+                  </motion.li>
+                );
+              })}
+            </AnimatePresence>
+          </ol>
+        </div>
+      </div>
+    </section>
+  );
+}
