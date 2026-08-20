@@ -19,6 +19,7 @@ import { useState } from 'react';
 import { CheckCircle } from '@phosphor-icons/react';
 import { OnboardingPanel } from '../OnboardingPanel';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import type { CollectorCandidate } from '../machine';
@@ -62,6 +63,10 @@ export function CollectorsFoundStep({ last4, discovered, onContinue }: Collector
             <li key={c.id}>
               <label className="flex cursor-pointer items-center gap-3 rounded-sm border border-[var(--color-line)] bg-[var(--color-sunken)] px-3 py-2 text-sm text-[#EDEDED]">
                 <Checkbox
+                  // Radix renders this as `<button role="checkbox">`, and a
+                  // wrapping `<label>` does not name a button — without this
+                  // every row announces as an unlabelled checkbox.
+                  aria-label={`Watch ${c.name}`}
                   checked={checked.has(c.id)}
                   onCheckedChange={() => toggle(c.id)}
                   disabled={!checked.has(c.id) && checked.size >= MAX_COLLECTORS}
@@ -104,13 +109,17 @@ export function CollectorsFallbackStep({ onContinue }: CollectorsFallbackStepPro
       subtitle="Your account doesn't expose the collector list to us. Paste the collector IDs instead, one per line."
     >
       <div className="flex flex-col gap-4">
-        <Textarea
-          data-testid="manual-collector-ids"
-          rows={6}
-          value={raw}
-          onChange={(e) => setRaw(e.target.value)}
-          placeholder={'amazon-prices\nshopify-skus\nbestbuy-stock'}
-        />
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="manual-collector-ids">Collector IDs, one per line</Label>
+          <Textarea
+            id="manual-collector-ids"
+            data-testid="manual-collector-ids"
+            rows={6}
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            placeholder={'amazon-prices\nshopify-skus\nbestbuy-stock'}
+          />
+        </div>
         <Button type="button" disabled={collectors.length === 0} onClick={() => onContinue(collectors)} className="h-10 w-full">
           Continue
         </Button>

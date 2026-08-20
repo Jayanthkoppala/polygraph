@@ -87,3 +87,39 @@ describe('OnboardingWizard — full 403 fallback path, key never re-rendered', (
     await waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
   });
 });
+
+describe('the verified-key path reaches ux-spec.md §6\'s payoff screen', () => {
+  it('shows "Connected. Found N collectors." with their names BEFORE any schema-confirm screen', async () => {
+    vi.mocked(api.saveApiKey).mockResolvedValue({
+      kind: 'verified',
+      last4: '3f2a',
+      collectors: [
+        { id: 'amazon-prices', name: 'amazon-prices' },
+        { id: 'shopify-skus', name: 'shopify-skus' },
+      ],
+    });
+
+    render(<OnboardingWizard initialStage="key-paste" />);
+    fireEvent.change(screen.getByTestId('api-key-input'), { target: { value: FAKE_KEY } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('connect-button'));
+    });
+
+    // The reciprocity moment — "Instant reciprocity is the real antidote to
+    // paste anxiety". `KEY_VERIFIED` populates `candidates` in the same
+    // transition that sets `stage: 'collectors-found'`, so a wizard that
+    // branches on the candidate before the stage skips this screen
+    // entirely. It did, for every tenant whose key verified.
+    const list = await screen.findByTestId('discovered-collectors');
+    expect(within(list).getByText('amazon-prices')).toBeInTheDocument();
+    expect(within(list).getByText('shopify-skus')).toBeInTheDocument();
+    expect(screen.getByText(/found 2 collectors on the key ending 3f2a/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('canary-inputs')).not.toBeInTheDocument();
+
+    // ...and only then does the schema-confirm step take over.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /watch 2 collectors/i }));
+    });
+    expect(await screen.findByTestId('canary-inputs')).toBeInTheDocument();
+  });
+});

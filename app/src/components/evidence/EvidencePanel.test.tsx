@@ -198,6 +198,60 @@ describe('EvidencePanel — the refusal panel (ux-spec.md §6)', () => {
     expect(panel).not.toHaveTextContent('selector likely broken');
   });
 
+  /**
+   * ux-spec.md §6 mandates THREE parts, always, in order. Part 3 — the one
+   * thing that can actually be done, plus the ledger citation — was missing
+   * entirely (docs/design/critique.md #2).
+   */
+  it('renders part 3: a live re-discover action that says exactly what it does, plus the ledger citation', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+
+    const collector = baseCollector({
+      id: 'shopify-skus',
+      verdict: 'FAILED_IDENTITY',
+      cause: 'IDENTITY',
+      ledgerId: 1283,
+    });
+    render(<EvidencePanel collector={collector} />);
+    const panel = screen.getByTestId('refusal-panel');
+
+    // 3a — the action exists, is enabled, and carries the spec's own label.
+    const action = within(panel).getByTestId('rediscover-button');
+    expect(action).toBeEnabled();
+    expect(action).toHaveTextContent('Re-discover the target');
+
+    // 3b — it never implies Polygraph will re-point the collector itself,
+    // and the command it hands over is visible before it is pressed.
+    expect(panel).toHaveTextContent('polygraph run --collector shopify-skus');
+    expect(panel).toHaveTextContent('Polygraph will not re-point a collector for you.');
+
+    // 3c — the ledger citation, from the collector's real ledger id.
+    expect(screen.getByTestId('refusal-ledger-ref')).toHaveTextContent('Ledger #1283 records this refusal.');
+
+    // The action is live, not decorative.
+    fireEvent.click(action);
+    expect(writeText).toHaveBeenCalledWith('polygraph run --collector shopify-skus');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('never invents a ledger number when the collector has no ledger record yet', () => {
+    const collector = baseCollector({ verdict: 'FAILED_IDENTITY', cause: 'IDENTITY', ledgerId: null });
+    render(<EvidencePanel collector={collector} />);
+    const ref = screen.getByTestId('refusal-ledger-ref');
+    expect(ref).toHaveTextContent('Not on the ledger yet');
+    expect(ref).not.toHaveTextContent('#');
+  });
+
+  it('offers no "force repair anyway" escape hatch — re-discover is the only control on the panel', () => {
+    const collector = baseCollector({ verdict: 'FAILED_IDENTITY', cause: 'IDENTITY' });
+    render(<EvidencePanel collector={collector} />);
+    const buttons = within(screen.getByTestId('refusal-panel')).getAllByRole('button');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveAttribute('data-testid', 'rediscover-button');
+  });
+
   it('does not render for a WRONG_SHAPE (repairable) collector', () => {
     const collector = baseCollector({ verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL' });
     render(<EvidencePanel collector={collector} />);

@@ -19,8 +19,8 @@
  * §6: "it goes to NOT VERIFIED... and onboarding continues rather than
  * blocking" — never renders a fabricated table.
  */
-import { useState } from 'react';
-import { ClipboardText, WarningCircle } from '@phosphor-icons/react';
+import { useEffect, useRef, useState } from 'react';
+import { WarningCircle } from '@phosphor-icons/react';
 import { OnboardingPanel } from '../OnboardingPanel';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -64,6 +64,18 @@ export function SchemaConfirmStep({ collector, position, onConfirmed, onSkippedE
   const [fields, setFields] = useState<FieldRow[]>([]);
   const [entityKey, setEntityKey] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Each phase of this step swaps the whole panel — heading, body and
+  // action — but it is one screen to the wizard, so `OnboardingWizard`'s
+  // step-change focus move never fires here. Without this, finishing a
+  // probe silently replaces everything under a keyboard user's feet with
+  // focus still on a button that no longer exists.
+  const previousPhase = useRef<Phase>(phase);
+  useEffect(() => {
+    if (previousPhase.current === phase) return;
+    previousPhase.current = phase;
+    document.querySelector<HTMLElement>('[data-onboarding-heading]')?.focus();
+  }, [phase]);
 
   const canaryInputs = canaryRaw
     .split('\n')
@@ -124,13 +136,17 @@ export function SchemaConfirmStep({ collector, position, onConfirmed, onSkippedE
         subtitle={`Collector ${position.index + 1} of ${position.total}. What input(s) trigger a run?`}
       >
         <div className="flex flex-col gap-4">
-          <Textarea
-            data-testid="canary-inputs"
-            rows={4}
-            value={canaryRaw}
-            onChange={(e) => setCanaryRaw(e.target.value)}
-            placeholder={'SKU-4471\nSKU-4482'}
-          />
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="canary-inputs">Trigger input(s), one per line</Label>
+            <Textarea
+              id="canary-inputs"
+              data-testid="canary-inputs"
+              rows={4}
+              value={canaryRaw}
+              onChange={(e) => setCanaryRaw(e.target.value)}
+              placeholder={'SKU-4471\nSKU-4482'}
+            />
+          </div>
           <p className="text-xs text-[#8B949E]">Up to 5. We&rsquo;ll run one of these live, once, to see what comes back.</p>
           {error && (
             <Alert variant="destructive">
@@ -176,22 +192,30 @@ export function SchemaConfirmStep({ collector, position, onConfirmed, onSkippedE
       subtitle={`We ran ${collector.name} once. Here's what came back. (${position.index + 1} of ${position.total})`}
     >
       <div className="flex flex-col gap-5">
-        <ClipboardText size={16} weight="regular" className="text-[#8B949E]" aria-hidden />
+        {/* `table-fixed` plus explicit column widths, because the default
+          * auto layout blew the table 110px wider than its own card at every
+          * viewport (measured in Chrome at 1512x805 and 1280x700) and pushed
+          * the REQUIRED? column — the only interactive thing on this screen,
+          * and the entire point of ux-spec.md §6's "Confirm what good looks
+          * like" — off the right edge into a horizontal scroll with no
+          * visible scrollbar. Same defect class as the clipped Connect
+          * button: a control that exists, reports visible, and cannot be
+          * seen or reached. The sample column truncates instead. */}
         <div className="overflow-x-auto rounded-sm border border-[var(--color-line)]">
-          <Table data-testid="schema-confirm-table">
+          <Table data-testid="schema-confirm-table" className="table-fixed">
             <TableHeader>
               <TableRow>
-                <TableHead>Field</TableHead>
-                <TableHead>Observed</TableHead>
-                <TableHead>Sample</TableHead>
-                <TableHead>Required?</TableHead>
+                <TableHead className="w-[26%]">Field</TableHead>
+                <TableHead className="w-[28%] whitespace-normal">Observed</TableHead>
+                <TableHead className="w-[26%]">Sample</TableHead>
+                <TableHead className="w-[20%] whitespace-normal">Required?</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {fields.map((f, i) => (
                 <TableRow key={f.name}>
-                  <TableCell className="font-mono">{f.name}</TableCell>
-                  <TableCell className="text-[#9B9B9B]">
+                  <TableCell className="truncate font-mono">{f.name}</TableCell>
+                  <TableCell className="whitespace-normal text-[#9B9B9B]">
                     {f.everFilled ? (
                       'Always filled'
                     ) : (
@@ -201,9 +225,16 @@ export function SchemaConfirmStep({ collector, position, onConfirmed, onSkippedE
                       </span>
                     )}
                   </TableCell>
-                  <TableCell className="truncate font-mono text-[#9B9B9B]">{String(f.sample ?? '—')}</TableCell>
+                  <TableCell className="truncate font-mono text-[#9B9B9B]" title={String(f.sample ?? '—')}>
+                    {String(f.sample ?? '—')}
+                  </TableCell>
                   <TableCell>
                     <Checkbox
+                      // Column headers do not name a Radix checkbox (it is a
+                      // `<button role="checkbox">`, not a form control), so
+                      // without this the whole table is a column of
+                      // identical unlabelled toggles to a screen reader.
+                      aria-label={`Require ${f.name}`}
                       checked={f.required}
                       onCheckedChange={() =>
                         setFields((prev) => prev.map((row, idx) => (idx === i ? { ...row, required: !row.required } : row)))

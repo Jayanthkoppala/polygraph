@@ -271,3 +271,228 @@ describe('VerdictCard — animateEntrance overrides the mount-based motion gate 
     expect(received.style.transform).not.toBe('');
   });
 });
+
+/** A WRONG_TARGET collector whose every field is filled — the whole point
+ * of the state: schema-perfect data about the wrong thing. */
+function wrongTargetCollector() {
+  return baseCollector({
+    verdict: 'FAILED_IDENTITY',
+    cause: 'IDENTITY',
+    action: 'REDISCOVER',
+    pureAction: 'REDISCOVER',
+    fillPct: 100,
+    rows: 20,
+    evidence: [
+      {
+        check: 'identity',
+        ok: false,
+        detail: 'mismatchRate=1',
+        metrics: {
+          compared: 1,
+          mismatched: 1,
+          mismatches: [{ input: 'books-detail', requestedKey: 'SKU-4471', extractedKey: 'SKU-9012' }],
+        },
+      },
+    ],
+  });
+}
+
+/**
+ * Regression for critique.md next-tier #6: the entity-key substitution
+ * REPLACED the metric row, so `FILL 100%` never rendered on the one card
+ * that needs it most. ui-system.md §4.2 draws both and says why: "Note also
+ * FILL 100% on the right card. Every field present, schema perfect, nothing
+ * missing. That single number is the argument, because by every measure a
+ * status monitor has, that card is passing."
+ */
+describe('VerdictCard — the wrong-target card keeps its own best argument (critique.md next-tier #6, §4.2)', () => {
+  it('hero density shows the key substitution AND Fill/Rows together', () => {
+    stubMatchMedia(false);
+    render(
+      <VerdictCard collector={wrongTargetCollector()} density="hero" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    expect(screen.getByTestId('entity-key-swap')).toBeInTheDocument();
+    expect(screen.getByText('SKU-9012')).toBeInTheDocument();
+    // The argument: schema-perfect data about the wrong entity.
+    expect(screen.getByText('Fill')).toBeInTheDocument();
+    expect(screen.getByText('100%')).toBeInTheDocument();
+    expect(screen.getByText('Rows')).toBeInTheDocument();
+    expect(screen.getByText('20')).toBeInTheDocument();
+  });
+
+  it('hero density holds the §3.4 six-fact floor: name, verdict, asked-for/received, fill, rows, age, slot', () => {
+    stubMatchMedia(false);
+    render(
+      <VerdictCard collector={wrongTargetCollector()} density="hero" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    const facts = [
+      screen.queryByText('amazon-prices'),
+      screen.queryByText('Wrong target'),
+      screen.queryByText('SKU-4471'),
+      screen.queryByText('SKU-9012'),
+      screen.queryByText('100%'),
+      screen.queryByText('20'),
+      screen.queryByText('refused'),
+    ];
+    expect(facts.filter(Boolean).length).toBeGreaterThanOrEqual(6);
+  });
+
+  it('card density keeps the same facts, compacted — never dropped (§5.4 rule 1, "at every density")', () => {
+    stubMatchMedia(false);
+    render(
+      <VerdictCard collector={wrongTargetCollector()} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    expect(screen.getByTestId('entity-key-swap')).toBeInTheDocument();
+    const compact = screen.getByTestId('compact-metrics');
+    expect(compact).toBeInTheDocument();
+    // §5.4 rule 5: every number still carries its unit and its label.
+    expect(compact.textContent).toContain('Fill');
+    expect(compact.textContent).toContain('100%');
+    expect(compact.textContent).toContain('Rows');
+    expect(compact.textContent).toContain('20');
+  });
+
+  it('card density holds the five-fact floor: name, verdict, asked-for/received, fill, rows, slot', () => {
+    stubMatchMedia(false);
+    render(
+      <VerdictCard collector={wrongTargetCollector()} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    const facts = [
+      screen.queryByText('amazon-prices'),
+      screen.queryByText('Wrong target'),
+      screen.queryByText('SKU-4471'),
+      screen.queryByText('SKU-9012'),
+      screen.queryByTestId('compact-metrics'),
+      screen.queryByText('refused'),
+    ];
+    expect(facts.filter(Boolean).length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('hero uses the display metrics, not the compact line — §4.2 sets "FILL 100%" large because it IS the argument', () => {
+    stubMatchMedia(false);
+    render(
+      <VerdictCard collector={wrongTargetCollector()} density="hero" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    expect(screen.queryByTestId('compact-metrics')).not.toBeInTheDocument();
+    expect(screen.getByText('Fill')).toBeInTheDocument();
+  });
+
+  it('a healthy card is untouched: metrics, no substitution', () => {
+    stubMatchMedia(false);
+    render(<VerdictCard collector={baseCollector()} density="hero" onSelect={noop} onRepair={noop} onAcknowledge={noop} />);
+    expect(screen.queryByTestId('entity-key-swap')).not.toBeInTheDocument();
+    expect(screen.getByText('Fill')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Regression for critique.md next-tier #6: the strikethrough is the repair
+ * slot's own idiom and means exactly one thing — a repair that was
+ * withdrawn (§2.8, "the strikethrough crosses only the word 'Repair'").
+ * The requested key was never the problem.
+ */
+describe('VerdictCard — only the withdrawn repair is struck through (critique.md next-tier #6, §2.8)', () => {
+  it('the requested key carries no strikethrough', () => {
+    stubMatchMedia(false);
+    render(
+      <VerdictCard collector={wrongTargetCollector()} density="hero" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    const requested = screen.getByText('SKU-4471');
+    expect(requested.className).not.toMatch(/line-through/);
+    expect(requested.style.textDecoration).toBe('');
+  });
+
+  it('nothing inside the key substitution is struck through at all', () => {
+    stubMatchMedia(false);
+    render(
+      <VerdictCard collector={wrongTargetCollector()} density="hero" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    const swap = screen.getByTestId('entity-key-swap');
+    expect(swap.innerHTML).not.toMatch(/line-through/);
+  });
+
+  it('the strike still lives where it belongs — across the withdrawn Repair control', () => {
+    stubMatchMedia(false);
+    render(
+      <VerdictCard collector={wrongTargetCollector()} density="hero" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    expect(screen.getByTestId('repair-slot-strike')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Regression for critique.md next-tier #6: `w-16` is 64px, which is exactly
+ * the measured width of "asked for" at 12px Geist Mono, so the label wrapped
+ * to two lines on every wrong-target card (measured live: dt height 32px
+ * against a 16px line-height, while "received" measured 16px).
+ */
+describe('VerdictCard — the substitution labels never wrap (critique.md next-tier #6)', () => {
+  it('both labels are nowrap and wider than the text they hold', () => {
+    stubMatchMedia(false);
+    render(
+      <VerdictCard collector={wrongTargetCollector()} density="hero" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    for (const label of ['asked for', 'received']) {
+      const dt = screen.getByText(label);
+      expect(dt.className).toContain('whitespace-nowrap');
+      expect(dt.className).not.toMatch(/\bw-16\b/);
+      expect(dt.className).toContain('w-20');
+    }
+  });
+
+  it('the two labels share one width, so the values stay in a column', () => {
+    stubMatchMedia(false);
+    render(
+      <VerdictCard collector={wrongTargetCollector()} density="hero" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    const widths = ['asked for', 'received'].map(
+      (label) => screen.getByText(label).className.match(/\bw-\d+\b/)?.[0],
+    );
+    expect(widths[0]).toBe(widths[1]);
+  });
+});
+
+/**
+ * Regression for critique.md "Beautiful but wrong". The cursor-tracked ring
+ * meant the verdict colour only existed within 240px of the pointer, so a
+ * failing card's border — one of the four places §2.5 says state lives —
+ * was plain grey at rest and lit up as a reward for mousing over it. The
+ * ring is now flat and always on, and §2.6's own resting values decide
+ * which states take a hue.
+ */
+describe('VerdictCard — the ring is a resting state channel, not a hover reward (critique.md "Beautiful but wrong")', () => {
+  const RING: Array<[string, Partial<CollectorState>, string]> = [
+    ['WRONG_SHAPE', { verdict: 'FAILED_CONTRACT', cause: 'STRUCTURAL' }, 'var(--color-verdict-shape)'],
+    ['WRONG_TARGET', { verdict: 'FAILED_IDENTITY', cause: 'IDENTITY' }, 'var(--color-verdict-target)'],
+    ['UNEXPLAINED', { verdict: 'SUSPECT_UNEXPLAINED_ANOMALY', cause: 'COHERENCE' }, 'var(--color-verdict-suspect)'],
+  ];
+
+  it.each(RING)('%s carries its state colour in the ring with no pointer anywhere near it', (_name, overrides, expected) => {
+    stubMatchMedia(false);
+    const { container } = render(
+      <VerdictCard collector={baseCollector(overrides)} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    const shell = container.querySelector('[data-testid="verdict-card-shell"]') as HTMLElement;
+    expect(shell.getAttribute('data-ring')).toBe(expected);
+    expect(shell.style.background).toContain(`${expected} 0 0) border-box`);
+  });
+
+  it('VERIFIED settles to the neutral #272727 border — §2.6, "the reward for a healthy fleet is stillness"', () => {
+    stubMatchMedia(false);
+    const { container } = render(
+      <VerdictCard collector={baseCollector()} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    const shell = container.querySelector('[data-testid="verdict-card-shell"]') as HTMLElement;
+    expect(shell.getAttribute('data-ring')).toBe('#272727');
+    expect(shell.style.background).not.toContain('verdict-pass');
+  });
+
+  it('NOT_CHECKED gets no hue either — §2.5, "it is not a judgement, so it gets no hue"', () => {
+    stubMatchMedia(false);
+    const { container } = render(
+      <VerdictCard collector={baseCollector({ unverified: true })} density="card" onSelect={noop} onRepair={noop} onAcknowledge={noop} />,
+    );
+    const shell = container.querySelector('[data-testid="verdict-card-shell"]') as HTMLElement;
+    expect(shell.getAttribute('data-ring')).toBe('#272727');
+  });
+});

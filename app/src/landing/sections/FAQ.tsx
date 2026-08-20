@@ -45,7 +45,7 @@ export function FAQ() {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
   return (
-    <section className="bg-[#000000] px-6 py-16">
+    <section className="bg-[#000000] px-6 py-24">
       <h2 className="mx-auto mb-8 max-w-[680px] text-balance text-center text-3xl font-semibold text-[#EDEDED]">
         Questions
       </h2>

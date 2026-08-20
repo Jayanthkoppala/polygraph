@@ -99,7 +99,7 @@ export function ProofMoment() {
   }, []);
 
   return (
-    <section className="bg-[#000000] px-6 py-16">
+    <section className="bg-[#000000] px-6 py-24">
       <div ref={sectionRef} className="mx-auto grid max-w-4xl grid-cols-1 gap-2 sm:grid-cols-2">
         <div className="flex flex-col gap-2">
           <HttpTag />

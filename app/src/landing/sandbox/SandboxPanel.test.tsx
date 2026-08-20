@@ -93,8 +93,93 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
     // Past 600ms (breaking) + 1600ms (floor): now it resolves.
     await vi.advanceTimersByTimeAsync(1600);
     expect(screen.queryByTestId('sandbox-card-skeleton')).not.toBeInTheDocument();
-    expect(screen.getAllByText('Wrong shape')).toHaveLength(3);
+    expect(screen.getAllByText('Wrong shape')).toHaveLength(1);
     expect(screen.getByTestId('sandbox-proof-line')).toHaveTextContent(/price/i);
+  });
+
+  it('re-verifies ONLY the target card — the other two collectors stay green on screen throughout (ux-spec.md §3)', async () => {
+    vi.useFakeTimers();
+    render(<Harness testId="h" />);
+
+    fireEvent.click(screen.getByTestId('sandbox-break-price_dead'));
+    await vi.advanceTimersByTimeAsync(900);
+
+    // Exactly one skeleton, not three: erasing the whole grid reads as a
+    // page reload rather than as one collector being caught, and leaves the
+    // failing accent nothing to be read against (ui-system.md §5.4 rule 8).
+    expect(screen.getAllByTestId('sandbox-card-skeleton')).toHaveLength(1);
+    expect(screen.getAllByText('Verified')).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(screen.getAllByText('Wrong shape')).toHaveLength(1);
+    expect(screen.getAllByText('Verified')).toHaveLength(2);
+  });
+
+  it('plays the withdrawal choreography on the card that just re-verified — and only on that card (§2.6 beat 4 / §2.8)', async () => {
+    vi.useFakeTimers();
+    render(<Harness testId="h" />);
+
+    const grid = screen.getByRole('list', { name: 'Sandbox fleet' });
+
+    // First paint is not an event (§1.9). Nothing is force-animated, even
+    // though `targetId` is already known — gating on `targetId` alone would
+    // animate the default target on page load, which is the exact thing the
+    // motion budget forbids.
+    expect(grid).toHaveAttribute('data-just-resolved', '');
+    expect(screen.queryByTestId('repair-slot-glyph-outgoing')).not.toBeInTheDocument();
+
+    clickWrongEntityBreakButton(screen);
+
+    // Mid-sequence the flag is cleared, so a stale "just resolved" from the
+    // previous action can never leak into this one.
+    await vi.advanceTimersByTimeAsync(900);
+    expect(grid).toHaveAttribute('data-just-resolved', '');
+
+    await vi.advanceTimersByTimeAsync(1600);
+
+    // The skeleton->card swap is a real remount, so `useSkipEntrance` reads
+    // it as first paint and would mount the card already settled. The
+    // explicit `animateEntrance` override is what makes the run count as the
+    // event it actually is.
+    expect(grid).toHaveAttribute('data-just-resolved', 'catalog-a');
+    // `repair-slot-glyph-outgoing` is the wrench that is on its way OUT —
+    // RepairSlot only mounts it when the entrance is genuinely playing, so
+    // its presence is proof the withdrawal ran rather than being skipped.
+    expect(screen.getAllByTestId('repair-slot-glyph-outgoing')).toHaveLength(1);
+  });
+
+  it('never force-animates the two collectors that did not break', async () => {
+    vi.useFakeTimers();
+    render(<Harness testId="h" />);
+
+    fireEvent.click(screen.getByTestId('sandbox-break-price_dead'));
+    await vi.advanceTimersByTimeAsync(600 + 1600);
+
+    // Exactly one card is named as "just resolved"; the other two keep the
+    // natural mount-based gate (`animateEntrance` undefined, not false —
+    // they never re-verified, so nothing should have an opinion about them).
+    expect(screen.getByRole('list', { name: 'Sandbox fleet' })).toHaveAttribute('data-just-resolved', 'catalog-a');
+    expect(screen.getAllByText('Verified')).toHaveLength(2);
+  });
+
+  it('the re-verify skeleton carries a rail and reserves the repair slot (ui-system.md §5.4 finish rule 3)', async () => {
+    vi.useFakeTimers();
+    render(<Harness testId="h" />);
+
+    fireEvent.click(screen.getByTestId('sandbox-break-price_dead'));
+    await vi.advanceTimersByTimeAsync(900);
+
+    const rail = screen.getByTestId('sandbox-skeleton-rail');
+    expect(rail).toBeInTheDocument();
+    // Rule 3 wants "the exact shape of the card it will become, including
+    // the rail"; rule 7 wants that rail inset 8px top and bottom rather than
+    // flush. Assert the geometry, not the colour.
+    expect(rail.className).toContain('w-[3px]');
+    expect(rail.className).toContain('inset-y-2');
+    expect(rail.className).toContain('rounded-full');
+    // ...and it must NOT claim one of the five verdict geometries, because
+    // the verdict is exactly what is not yet known.
+    expect(rail).not.toHaveAttribute('data-verdict-geometry');
   });
 
   it('serving the wrong product resolves to Wrong target with the repair slot refused, computed not hardcoded', async () => {
@@ -104,12 +189,14 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
     clickWrongEntityBreakButton(screen);
     await vi.advanceTimersByTimeAsync(600 + 1600);
 
-    expect(screen.getAllByText('Wrong target')).toHaveLength(3);
+    expect(screen.getAllByText('Wrong target')).toHaveLength(1);
     expect(screen.getAllByText(/refused/).length).toBeGreaterThan(0);
     // WRONG_TARGET swaps the metrics row for the requested/received entity
-    // comparison (VerdictCard.tsx) — every card shows a genuinely distinct
-    // requested/received pair, computed per collector, not one canned pair.
-    expect(screen.getAllByTestId('entity-key-swap')).toHaveLength(3);
+    // comparison (VerdictCard.tsx), computed from the fixture catalog rather
+    // than canned — and only on the collector whose page was actually
+    // substituted.
+    expect(screen.getAllByTestId('entity-key-swap')).toHaveLength(1);
+    expect(screen.getAllByText('Verified')).toHaveLength(2);
   });
 
   it('put it back genuinely returns the fleet to Verified after a prior break', async () => {
@@ -118,7 +205,7 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
 
     fireEvent.click(screen.getByTestId('sandbox-break-price_dead'));
     await vi.advanceTimersByTimeAsync(600 + 1600);
-    expect(screen.getAllByText('Wrong shape')).toHaveLength(3);
+    expect(screen.getAllByText('Wrong shape')).toHaveLength(1);
 
     fireEvent.click(screen.getByTestId('sandbox-break-healthy'));
     await vi.advanceTimersByTimeAsync(600 + 1600);
@@ -142,7 +229,7 @@ describe('SandboxPanel — R8: two concurrent visitors never affect each other',
     clickWrongEntityBreakButton(panelA);
     await vi.advanceTimersByTimeAsync(600 + 1600);
 
-    expect(panelA.getAllByText('Wrong target')).toHaveLength(3);
+    expect(panelA.getAllByText('Wrong target')).toHaveLength(1);
     // Visitor B's own panel is completely unaffected.
     expect(panelB.getAllByText('Verified')).toHaveLength(3);
     expect(panelB.queryByText('Wrong target')).not.toBeInTheDocument();

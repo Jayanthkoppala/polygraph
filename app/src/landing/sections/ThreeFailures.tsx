@@ -4,14 +4,18 @@
  * to the hero's sandbox break buttons (`#sandbox`), the same anchor Hero's
  * CTA uses.
  */
+/** Wording pass: no "selector", no "entity" — each failure described in
+ * words someone who has never scraped a page already understands. */
 const FAILURES = [
   {
     title: 'A field quietly stops filling.',
-    detail: 'A selector breaks, one field collapses to empty, everything else still renders. Still HTTP 200.',
+    detail:
+      'The page changes shape, the scraper stops finding the price, and everything else still looks fine. Still HTTP 200.',
   },
   {
     title: 'The page serves the wrong thing.',
-    detail: 'Right shape, right fields, wrong entity — every value is real, just for something you did not ask for.',
+    detail:
+      'Right shape, right fields, every value real — just for a different product than the one you asked about.',
   },
   {
     title: 'A run reports success with nothing behind it.',
@@ -21,7 +25,7 @@ const FAILURES = [
 
 export function ThreeFailures() {
   return (
-    <section className="bg-[#181818] px-6 py-16">
+    <section className="bg-[#181818] px-6 py-24">
       <div className="mx-auto grid max-w-4xl grid-cols-1 gap-6 sm:grid-cols-3">
         {FAILURES.map((f) => (
           <div key={f.title} className="flex flex-col gap-2">

@@ -18,8 +18,9 @@
 import { motion, useReducedMotion } from 'motion/react';
 import { Wrench, Prohibit, Check, ArrowClockwise, SealCheck } from '@phosphor-icons/react';
 import type { VerdictState } from '@/lib/verdict';
-import { EASE_FLUID, EASE_SNAP } from '@/lib/motion';
+import { EASE_FLUID, EASE_SNAP, REFUSAL_BEAT } from '@/lib/motion';
 import { useSkipEntrance } from '@/hooks/useSkipEntrance';
+import { useFrozen } from '@/hooks/useFrozen';
 
 // Literal mirrors of --shadow-e2/--shadow-e0 and --color-verdict-shape/
 // --color-verdict-target (app.css). motion/react cannot tween a raw var()
@@ -76,63 +77,7 @@ export function RepairSlot({ state, collectorId, onRepair, onAcknowledge, animat
   }
 
   if (state === 'WRONG_TARGET') {
-    return (
-      <>
-        {/* §2.6 beat 4 / §2.8's "the motion, which is the point": the live
-            e2/red button de-elevates to sunken e0/magenta 520ms into the
-            WRONG_TARGET transition — late on purpose, after beats 1-3 (the
-            entity-key rotation, the rail doubling) have already read "the
-            target is wrong". Firing this together with beat 1 would make
-            the refusal look like a system limitation instead of a
-            conclusion. The static classes below are the settled/no-motion
-            state (also what a page-load-straight-into-WRONG_TARGET card
-            shows, since `initial={false}` when skipEntrance is true skips
-            the crossfade and renders here directly). */}
-        <motion.button
-          type="button"
-          disabled
-          aria-disabled="true"
-          aria-describedby={`refusal-${collectorId}`}
-          data-verdict-state={state}
-          data-repair-elevation="sunken"
-          className={`${SLOT_BOX} cursor-not-allowed border-[var(--color-verdict-target)] bg-[#1F1F1F]
-                      text-[var(--color-verdict-target)] shadow-[var(--shadow-e0)]`}
-          initial={
-            skipEntrance
-              ? false
-              : { boxShadow: SHADOW_E2, borderColor: COLOR_SHAPE, color: COLOR_SHAPE }
-          }
-          animate={{ boxShadow: SHADOW_E0, borderColor: COLOR_TARGET, color: COLOR_TARGET }}
-          transition={skipEntrance ? { duration: 0 } : { duration: 0.18, delay: 0.52, ease: EASE_FLUID }}
-        >
-          <Prohibit size={12} weight="regular" aria-hidden />
-          <span className="relative">
-            Repair
-            <motion.span
-              aria-hidden
-              data-testid="repair-slot-strike"
-              initial={skipEntrance ? false : { scaleX: 0 }}
-              animate={{ scaleX: 1 }}
-              transition={
-                skipEntrance ? { duration: 0 } : { duration: 0.18, delay: 0.56, ease: EASE_SNAP }
-              }
-              style={{ transformOrigin: 'left' }}
-              className="absolute inset-x-0 top-1/2 h-px bg-[var(--color-verdict-target)]"
-            />
-          </span>
-          <motion.span
-            initial={skipEntrance ? false : { opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={skipEntrance ? { duration: 0 } : { duration: 0.12, delay: 0.7 }}
-          >
-            refused
-          </motion.span>
-        </motion.button>
-        <span id={`refusal-${collectorId}`} className="sr-only">
-          {REFUSAL_REASON}
-        </span>
-      </>
-    );
+    return <RefusedRepair collectorId={collectorId} skipEntrance={skipEntrance} />;
   }
 
   if (state === 'UNEXPLAINED') {
@@ -176,5 +121,146 @@ export function RepairSlot({ state, collectorId, onRepair, onAcknowledge, animat
       <SealCheck size={12} weight="regular" aria-hidden />
       Released
     </div>
+  );
+}
+
+/**
+ * The refused control, and beat 4 of the WRONG_TARGET transition with it.
+ *
+ * §2.6 / §2.8: the live e2/red Repair button de-elevates to sunken
+ * e0/magenta starting 520ms into the transition — late on purpose, after
+ * beats 1-3 (the entity-key rotation, the rail doubling) have already read
+ * "the target is wrong". Firing this together with beat 1 would make the
+ * refusal look like a system limitation instead of a conclusion. The static
+ * Tailwind classes below are the settled state, which is also exactly what
+ * a page-load-straight-into-WRONG_TARGET card shows: `initial={false}`
+ * renders them directly with no crossfade.
+ *
+ * **This is a separate component so its entrance gate can be frozen.** It
+ * mounts only when a card actually becomes WRONG_TARGET, so its own first
+ * render is the only moment that carries information — see `useFrozen`.
+ * Read live instead, `skipEntrance` flips from true to false shortly after
+ * mount (that is how `useSkipEntrance` reports "I have painted now"), and a
+ * settled card would resurrect the outgoing wrench on the next unrelated
+ * re-render: a withdrawal animation replaying for a decision that was made
+ * seconds ago. Reproduced live in the sandbox before this was frozen.
+ */
+function RefusedRepair({
+  collectorId,
+  skipEntrance: skipEntranceProp,
+}: {
+  collectorId: string;
+  skipEntrance: boolean;
+}) {
+  const skipEntrance = useFrozen(skipEntranceProp);
+  return (
+    <>
+      <motion.button
+        type="button"
+        disabled
+        aria-disabled="true"
+        aria-describedby={`refusal-${collectorId}`}
+        data-verdict-state="WRONG_TARGET"
+        data-repair-elevation="sunken"
+        className={`${SLOT_BOX} cursor-not-allowed border-[var(--color-verdict-target)] bg-[#1F1F1F]
+                    text-[var(--color-verdict-target)] shadow-[var(--shadow-e0)]`}
+        initial={
+          skipEntrance
+            ? false
+            : { boxShadow: SHADOW_E2, borderColor: COLOR_SHAPE, color: COLOR_SHAPE }
+        }
+        animate={{ boxShadow: SHADOW_E0, borderColor: COLOR_TARGET, color: COLOR_TARGET }}
+        transition={
+          skipEntrance
+            ? { duration: 0 }
+            : {
+                duration: REFUSAL_BEAT.deElevate.duration,
+                delay: REFUSAL_BEAT.deElevate.start,
+                ease: EASE_FLUID,
+              }
+        }
+      >
+        {/* The glyph crossfades on beat 4's own clock rather than swapping
+            at t=0. §2.8: "the button in the slot does not appear. It is
+            already there ... it is taken away in front of you." A Wrench
+            that becomes a Prohibit the instant the verdict flips is a 0ms
+            tell that the repair is gone, which would give away beat 4
+            before beats 1-3 have said what kind of failure this is — the
+            exact "system limitation, not a conclusion" reading §2.6 warns
+            against. Both icons are decorative; the visible word "refused",
+            the disabled state, and aria-describedby carry the meaning. */}
+        <span className="relative flex h-3 w-3 shrink-0 items-center justify-center">
+          {!skipEntrance && (
+            <motion.span
+              aria-hidden
+              data-testid="repair-slot-glyph-outgoing"
+              className="absolute inset-0"
+              initial={{ opacity: 1 }}
+              animate={{ opacity: 0 }}
+              transition={{
+                duration: REFUSAL_BEAT.deElevate.duration,
+                delay: REFUSAL_BEAT.deElevate.start,
+                ease: EASE_FLUID,
+              }}
+            >
+              <Wrench size={12} weight="regular" aria-hidden />
+            </motion.span>
+          )}
+          <motion.span
+            aria-hidden
+            data-testid="repair-slot-glyph"
+            className="absolute inset-0"
+            initial={skipEntrance ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={
+              skipEntrance
+                ? { duration: 0 }
+                : {
+                    duration: REFUSAL_BEAT.deElevate.duration,
+                    delay: REFUSAL_BEAT.deElevate.start,
+                    ease: EASE_FLUID,
+                  }
+            }
+          >
+            <Prohibit size={12} weight="regular" aria-hidden />
+          </motion.span>
+        </span>
+        <span className="relative">
+          Repair
+          <motion.span
+            aria-hidden
+            data-testid="repair-slot-strike"
+            initial={skipEntrance ? false : { scaleX: 0 }}
+            animate={{ scaleX: 1 }}
+            transition={
+              skipEntrance
+                ? { duration: 0 }
+                : {
+                    duration: REFUSAL_BEAT.strike.duration,
+                    delay: REFUSAL_BEAT.strike.start,
+                    ease: EASE_SNAP,
+                  }
+            }
+            style={{ transformOrigin: 'left' }}
+            className="absolute inset-x-0 top-1/2 h-px bg-[var(--color-verdict-target)]"
+          />
+        </span>
+        <motion.span
+          data-testid="repair-slot-refused"
+          initial={skipEntrance ? false : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={
+            skipEntrance
+              ? { duration: 0 }
+              : { duration: REFUSAL_BEAT.refused.duration, delay: REFUSAL_BEAT.refused.start }
+          }
+        >
+          refused
+        </motion.span>
+      </motion.button>
+      <span id={`refusal-${collectorId}`} className="sr-only">
+        {REFUSAL_REASON}
+      </span>
+    </>
   );
 }

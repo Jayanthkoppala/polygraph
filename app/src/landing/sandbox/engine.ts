@@ -183,12 +183,6 @@ function buildCollector(def: SandboxCollectorDef, mode: SandboxMode, ts: string,
   };
 }
 
-function actionLabel(mode: SandboxMode): string {
-  if (mode === 'healthy') return 'RELEASE';
-  if (mode === 'price_dead') return 'REPAIR';
-  return 'QUARANTINE';
-}
-
 /** 128-bit-ish opaque id, browser-random — matches ux-spec.md §3's "opaque,
  * 128-bit" `sandbox_id`, generated client-side since there is no backend
  * issuing one here (see the module doc above). */
@@ -206,6 +200,27 @@ function randomId(): string {
 
 export class SandboxEngine {
   readonly id: string;
+  /**
+   * THE ONE COLLECTOR THE BREAK BUTTONS ACT ON (ux-spec.md §3's interaction
+   * contract, which is written in the singular throughout: "Target card
+   * enters a re-verify skeleton", "Card resolves", and §0.2's "get it"
+   * moment is "a green card flips to red while the HTTP status stays 200").
+   *
+   * This used to apply the chaos mode to all three collectors at once, so a
+   * single click turned the whole panel red. Two things went wrong with
+   * that. Behaviourally, ux-spec.md §3 asks one card to re-verify while the
+   * rest hold still. Visually, it breaks ui-system.md §5.4 rule 8 ("one
+   * accent per screen ... when something breaks, the red or magenta has the
+   * screen to itself and therefore reads instantly") — three simultaneously
+   * red cards have nothing to be read against, and the flip reads as a page
+   * reload rather than as one collector being caught.
+   *
+   * Every collector still RE-RUNS on every action (all three append a
+   * ledger row, exactly as `polygraph run` over a fleet would), and the two
+   * untargeted collectors genuinely pass — their PASS rows are computed the
+   * same way the target's failure is, never asserted.
+   */
+  readonly targetId: string = SANDBOX_COLLECTORS[0].id;
   private readonly genesisHash: string;
   private mode: SandboxMode = 'healthy';
   private fleet: CollectorState[];
@@ -225,7 +240,7 @@ export class SandboxEngine {
 
     let prevHash = this.genesisHash;
     for (const c of this.fleet) {
-      const row = this.hashRow(this.ledger.length + 1, ts, c.name, c.verdict!, c.cause, actionLabel('healthy'), prevHash);
+      const row = this.hashRow(this.ledger.length + 1, ts, c.name, c.verdict!, c.cause, c.pureAction!, prevHash);
       this.ledger.push(row);
       prevHash = row.eventHash;
     }
@@ -266,11 +281,13 @@ export class SandboxEngine {
   }
 
   /**
-   * Applies a chaos mode across the whole sandbox fleet — mirrors
-   * `polygraph chaos <mode>` flipping the one fixture site every collector
-   * in the demo watches. Synchronous and real: every field on every
-   * returned `CollectorState` is computed from `mode`, not looked up from a
-   * table of canned responses per button.
+   * Applies a chaos mode to the TARGET collector's page and re-runs the
+   * whole fleet — mirrors `polygraph chaos <mode>` followed by a fleet run,
+   * where only the collector watching the broken page can fail. See
+   * `targetId` above for why this is one collector and not all three.
+   * Synchronous and real: every field on every returned `CollectorState` is
+   * computed from that collector's own mode, not looked up from a table of
+   * canned responses per button — including the two that pass.
    */
   applyMode(mode: SandboxMode): CollectorState[] {
     if (!isSandboxMode(mode)) throw new SandboxBlockedModeError();
@@ -280,11 +297,13 @@ export class SandboxEngine {
     this.mode = mode;
     const ts = new Date().toISOString();
 
-    this.fleet = SANDBOX_COLLECTORS.map((def, i) => buildCollector(def, mode, ts, this.ledger.length + i + 1));
+    this.fleet = SANDBOX_COLLECTORS.map((def, i) =>
+      buildCollector(def, def.id === this.targetId ? mode : 'healthy', ts, this.ledger.length + i + 1),
+    );
 
     let prevHash = this.ledger.length > 0 ? this.ledger[this.ledger.length - 1].eventHash : this.genesisHash;
     for (const c of this.fleet) {
-      const row = this.hashRow(this.ledger.length + 1, ts, c.name, c.verdict!, c.cause, actionLabel(mode), prevHash);
+      const row = this.hashRow(this.ledger.length + 1, ts, c.name, c.verdict!, c.cause, c.pureAction!, prevHash);
       this.ledger.push(row);
       prevHash = row.eventHash;
     }

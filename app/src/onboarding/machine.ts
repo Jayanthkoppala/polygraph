@@ -159,12 +159,19 @@ export function onboardingReducer(state: OnboardingState, event: OnboardingEvent
   }
 }
 
-/** True once `collectors-found` has been reached and every candidate has
- * moved into `schema-confirm` — used by the wizard shell to know when to
- * render the schema-confirm step vs. the collectors-found transition
- * screen. Kept as a pure helper (rather than another stage) since
- * `collectors-found` and `schema-confirm`'s first collector are the same
- * moment from the user's point of view, just gated by a "continue" click. */
+/**
+ * The collector currently being schema-confirmed, or `null` when the list
+ * is exhausted.
+ *
+ * WHICH SCREEN TO SHOW IS NOT THIS FUNCTION'S QUESTION. `candidates` is
+ * populated by `KEY_VERIFIED`, one transition BEFORE the user has picked
+ * anything, so this returns a candidate while the stage is still
+ * `collectors-found`. A caller that branches on this before branching on
+ * `state.stage` will skip the collectors-found payoff screen entirely —
+ * that shipped, and ux-spec.md §6's "Connected. Found N collectors." was
+ * unreachable for every tenant whose key verified. Branch on the stage
+ * first; use this only to answer "which one am I confirming".
+ */
 export function currentCandidate(state: OnboardingState): CollectorCandidate | null {
   return state.candidates[state.confirmIndex] ?? null;
 }

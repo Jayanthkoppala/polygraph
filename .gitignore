@@ -11,3 +11,4 @@ dist/
 /fleet.yaml
 /fixture/state.json
 *.tgz
+.vercel

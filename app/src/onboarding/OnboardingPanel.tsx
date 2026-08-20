@@ -34,7 +34,26 @@ export function OnboardingPanel({ title, subtitle, children, busy = false, bare 
   const inner = (
     <>
       <div className="mb-8 flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold text-[#EDEDED]">{title}</h1>
+        {/* `tabIndex={-1}` + the marker attribute make this the focus target
+          * when the wizard advances a step. Without it, advancing dumps
+          * focus on `<body>` (the whole Stepper is remounted on every macro
+          * step), so a keyboard or screen-reader user is silently returned
+          * to the top of the document with no announcement of the new
+          * step. Not in the tab order — only programmatically focusable. */}
+        <h1
+          data-onboarding-heading
+          tabIndex={-1}
+          // No focus ring: this is never reached by Tab (it is not a
+          // control, and `-1` keeps it out of the tab order). It receives
+          // focus only programmatically, so the browser announces the new
+          // screen — Chrome still applies `:focus-visible` there, which
+          // painted a 3px white box the full width of the card around the
+          // heading on every step change. Focus rings belong on things a
+          // keyboard user is aiming at.
+          className="text-2xl font-semibold text-[#EDEDED] outline-none focus:outline-none focus-visible:outline-none"
+        >
+          {title}
+        </h1>
         {subtitle && <p className="text-sm text-[#9B9B9B]">{subtitle}</p>}
       </div>
       {children}

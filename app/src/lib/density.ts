@@ -82,6 +82,84 @@ export function partitionByAttention(collectors: CollectorState[]): {
  * virtualized group. */
 export const MAX_ATTENTION_CARDS = 6;
 
+/**
+ * Which collector the FOCUS region is showing, and *why* it is showing it
+ * (docs/design/critique.md next-tier #4). The `source` is the whole point:
+ * a selection nobody asked for must keep following the story, and a
+ * selection the user made deliberately must not be yanked out from under
+ * them mid-read.
+ */
+export interface FocusSelection {
+  id: string | null;
+  /** `auto` — nobody chose this; it is whatever the fleet's worst
+   * collector currently is, recomputed on every poll.
+   * `user` — a deliberate click (or a deliberate close, `id: null`). */
+  source: 'auto' | 'user';
+  /** Only meaningful for `source: 'user'`: the verdict state the pinned
+   * collector was in at the moment it was pinned. A pin is only ever handed
+   * back to the auto-follower when the thing that was pinned has since gone
+   * healthy — i.e. there is nothing left on that panel to read. */
+  pinnedState?: VerdictState;
+}
+
+/** The initial (and post-handback) selection: follow the worst collector,
+ * whatever it turns out to be. */
+export const AUTO_FOCUS: FocusSelection = { id: null, source: 'auto' };
+
+/** A deliberate click on a card, stamped with the state it was in when
+ * clicked so `resolveFocusSelection` can tell "still worth reading" from
+ * "this has since resolved itself". */
+export function pinFocus(id: string, collectors: CollectorState[]): FocusSelection {
+  const collector = collectors.find((c) => c.id === id);
+  return { id, source: 'user', pinnedState: collector ? toVerdictState(collector) : undefined };
+}
+
+/**
+ * FOCUS follows the story (ux-spec.md §4's eye path, critique.md #4).
+ *
+ * Selection used to be captured once from the initial sort, so a collector
+ * that started lying an hour into the session turned the headline red while
+ * FOCUS kept showing whatever happened to sort first at page load.
+ *
+ * The rules, in order:
+ *  - An `auto` selection is not a selection at all — it re-resolves to the
+ *    worst-ranked collector on every poll. This is the load default, so the
+ *    common case (nobody has clicked anything) always shows the thing the
+ *    headline is talking about.
+ *  - A `user` selection is never stolen while the collector it points at
+ *    still has something to say. Clicking a healthy collector while
+ *    something is lying is a deliberate, legitimate act (it is how you check
+ *    a passing collector's evidence) and is left alone.
+ *  - The one exception: if the pinned collector was *not* healthy when it
+ *    was pinned and has since gone VERIFIED — the incident the user was
+ *    reading is over — and something worse exists, focus is handed back to
+ *    the auto-follower. Nothing is taken away except a panel that now says
+ *    "everything's fine".
+ *  - A user who closes the FOCUS sheet (`id: null`) keeps it closed; a new
+ *    failure must not re-open a panel they just dismissed.
+ *  - A pinned collector that leaves the fleet entirely reverts to auto —
+ *    there is no selection left to protect.
+ */
+export function resolveFocusSelection(selection: FocusSelection, collectors: CollectorState[]): FocusSelection {
+  const worst = sortBySeverityThenRecency(collectors)[0] ?? null;
+  const worstId = worst?.id ?? null;
+
+  if (selection.source === 'auto') {
+    return selection.id === worstId ? selection : { id: worstId, source: 'auto' };
+  }
+
+  if (selection.id === null) return selection; // deliberately closed
+
+  const current = collectors.find((c) => c.id === selection.id);
+  if (!current) return { id: worstId, source: 'auto' };
+
+  const resolvedSincePinned = selection.pinnedState !== 'VERIFIED' && toVerdictState(current) === 'VERIFIED';
+  const somethingWorseExists = worst != null && toVerdictState(worst) !== 'VERIFIED';
+  if (resolvedSincePinned && somethingWorseExists) return { id: worstId, source: 'auto' };
+
+  return selection;
+}
+
 export interface HeadlineResult {
   sentence: string;
   /** The worst true thing this sentence is about — drives which colour (if

@@ -182,4 +182,58 @@ describe('AppRoutes', () => {
     );
     await waitFor(() => expect(screen.getByText('POLYGRAPH')).toBeInTheDocument());
   });
+
+  it('/fleet under `polygraph demo` renders the seeded dashboard — the sentinel routes explicitly, not by being mistaken for a keyed tenant', async () => {
+    mockApi({
+      '/api/settings/key/status': { status: 200, body: { status: 'offline-demo' } },
+      '/api/state': { status: 200, body: EMPTY_FLEET },
+      '/api/ledger': { status: 200, body: { events: [] } },
+    });
+    render(
+      <MemoryRouter initialEntries={['/fleet']}>
+        <AppRoutes />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByText('POLYGRAPH')).toBeInTheDocument());
+  });
+
+  it('a session probe that cannot answer never ejects a live session to the landing page', async () => {
+    // Every attempt fails — not a 401, which would be a real answer.
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network error')));
+    render(
+      <MemoryRouter initialEntries={['/fleet']}>
+        <AppRoutes />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByTestId('session-unavailable')).toBeInTheDocument());
+    // The landing page's hero must NOT be what a transient blip shows an
+    // authenticated user mid-session.
+    expect(screen.queryByRole('heading', { name: /your scrapers return 200/i })).not.toBeInTheDocument();
+  });
+
+  it('retrying from the unreachable screen recovers the real session without a reload', async () => {
+    let attempt = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = (typeof input === 'string' ? input : input.toString()).split('?')[0];
+        if (path === '/api/settings/key/status') {
+          attempt += 1;
+          // Both probes of the first mount fail (fetchSessionStatus retries
+          // once internally); everything after succeeds.
+          if (attempt <= 2) throw new TypeError('network error');
+          return { ok: true, status: 200, statusText: 'OK', json: async () => ({ status: null }) };
+        }
+        return { ok: true, status: 200, statusText: 'OK', json: async () => EMPTY_FLEET };
+      }),
+    );
+    render(
+      <MemoryRouter initialEntries={['/fleet']}>
+        <AppRoutes />
+      </MemoryRouter>,
+    );
+    const retry = await screen.findByTestId('session-retry');
+    retry.click();
+    await waitFor(() => expect(screen.getByTestId('connect-button')).toBeInTheDocument());
+  });
 });

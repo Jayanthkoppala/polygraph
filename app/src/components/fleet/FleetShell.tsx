@@ -23,7 +23,7 @@ import { VerdictCard } from './VerdictCard';
 import { Headline } from './Headline';
 import { EvidencePanel } from '@/components/evidence/EvidencePanel';
 import { LedgerStream, type LedgerRow } from '@/components/ledger/LedgerStream';
-import { layoutFor, sortBySeverityThenRecency } from '@/lib/density';
+import { layoutFor, resolveFocusSelection, pinFocus, AUTO_FOCUS, type FocusSelection } from '@/lib/density';
 import { EASE_FLUID } from '@/lib/motion';
 import type { CollectorState, FleetState } from '@/lib/api';
 
@@ -37,9 +37,17 @@ export interface FleetShellProps {
 export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: FleetShellProps) {
   const collectors = fleet.collectors;
   const layout = layoutFor(collectors.length);
-  const sorted = useMemo(() => sortBySeverityThenRecency(collectors), [collectors]);
-  const [selectedId, setSelectedId] = useState<string | null>(sorted[0]?.id ?? null);
+
+  // FOCUS follows the story (critique.md #4). The selection is *resolved*
+  // on every render against the current fleet rather than captured once at
+  // mount, so a collector that starts lying an hour in pulls the panel with
+  // it — while a card the user deliberately clicked stays put. All of that
+  // judgement lives in `resolveFocusSelection`, tested on its own.
+  const [selection, setSelection] = useState<FocusSelection>(AUTO_FOCUS);
+  const focus = useMemo(() => resolveFocusSelection(selection, collectors), [selection, collectors]);
+  const selectedId = focus.id;
   const selected = collectors.find((c) => c.id === selectedId) ?? null;
+  const selectCollector = (id: string) => setSelection(pinFocus(id, collectors));
 
   const shellMode: 'hero' | 'docked' | 'overlay' =
     layout.kind === 'hero' ? 'hero' : layout.kind === 'single-column' ? 'docked' : 'overlay';
@@ -66,7 +74,7 @@ export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: Fleet
                 collector={collectors[0]}
                 density="hero"
                 selected
-                onSelect={setSelectedId}
+                onSelect={selectCollector}
                 onRepair={onRepair}
                 onAcknowledge={onAcknowledge}
               />
@@ -76,7 +84,7 @@ export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: Fleet
             <FleetColumn
               collectors={collectors}
               selectedId={selectedId}
-              onSelect={setSelectedId}
+              onSelect={selectCollector}
               onRepair={onRepair}
               onAcknowledge={onAcknowledge}
             />
@@ -95,7 +103,7 @@ export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: Fleet
       </div>
 
       {shellMode === 'overlay' && selectedId != null && (
-        <FocusOverlay collector={selected} onClose={() => setSelectedId(null)} />
+        <FocusOverlay collector={selected} onClose={() => setSelection({ id: null, source: 'user' })} />
       )}
     </div>
   );
@@ -146,20 +154,57 @@ function ShellHeader({ fleet, ledgerRows }: { fleet: FleetState; ledgerRows: Led
   );
 }
 
+/**
+ * E2, "zero collectors" (ux-spec.md §2): "Not an illustration, not 'Nothing
+ * here yet.' A single card, centre, with the one action" — a bold refusal
+ * sentence and the two ways out, `[ Connect collectors ]` ·
+ * `[ Open the sandbox instead ]`. It used to be a lone grey sentence with
+ * nothing to click (critique.md #11), which is exactly ui-system.md §5.4
+ * rule 4's "empty state is composed, never blank".
+ *
+ * The two destinations are the app's own real routes (`App.tsx`): `/signup`
+ * is the onboarding entry, and the sandbox is the landing page's live demo
+ * section, so neither button promises a surface that doesn't exist.
+ */
 function EmptyFleet() {
   return (
     <div
       data-testid="empty-fleet"
-      className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-[#272727] p-8 text-center"
+      className="flex flex-1 flex-col items-center justify-center gap-4 rounded-2xl border border-[#272727] bg-[var(--color-surface)] p-8 text-center"
     >
-      <p className="text-sm text-[#9B9B9B]">No collectors connected yet. Polygraph has nothing to watch.</p>
+      <div className="flex flex-col gap-1">
+        <p className="text-base font-semibold text-[#EDEDED]">No collectors connected yet.</p>
+        <p className="text-sm text-[#9B9B9B]">Polygraph has nothing to watch.</p>
+      </div>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <a
+          href="/signup"
+          data-testid="empty-fleet-connect"
+          className="rounded-lg border border-[#313131] bg-[var(--color-raised)] px-3 py-2 text-sm font-medium text-[#EDEDED] shadow-[var(--shadow-e2)] outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]"
+        >
+          Connect collectors
+        </a>
+        <a
+          href="/#sandbox"
+          data-testid="empty-fleet-sandbox"
+          className="rounded-lg border border-[#272727] px-3 py-2 text-sm text-[#9B9B9B] outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]"
+        >
+          Open the sandbox instead
+        </a>
+      </div>
     </div>
   );
 }
 
 /** §5.3's "sheet that slides in from the right", n>=4 only — FLEET keeps
  * the whole main width for its grid/rows, FOCUS becomes an overlay rather
- * than a permanent column. */
+ * than a permanent column.
+ *
+ * The border goes all the way around (ui-system.md §1.2/B4, and its own
+ * §5.4 checklist grep for `border-l-`): this sheet was the codebase's one
+ * remaining single-sided border (critique.md #11). Three of the four edges
+ * sit flush against the viewport, so a full border costs nothing visually
+ * and the rule stays absolute rather than "absolute except here". */
 function FocusOverlay({ collector, onClose }: { collector: CollectorState | null; onClose: () => void }) {
   const reduceMotion = useReducedMotion();
   return (
@@ -167,7 +212,7 @@ function FocusOverlay({ collector, onClose }: { collector: CollectorState | null
       role="dialog"
       aria-label="Collector evidence"
       data-testid="focus-overlay"
-      className="fixed inset-y-0 right-0 z-20 flex w-[420px] max-w-full flex-col gap-3 border-l border-[#272727] bg-[var(--color-sunken)] p-4 shadow-[var(--shadow-e3)]"
+      className="fixed inset-y-0 right-0 z-20 flex w-[420px] max-w-full flex-col gap-3 border border-[#272727] bg-[var(--color-sunken)] p-4 shadow-[var(--shadow-e3)]"
       initial={reduceMotion ? false : { x: '100%' }}
       animate={{ x: 0 }}
       transition={{ duration: reduceMotion ? 0 : 0.42, ease: EASE_FLUID }}

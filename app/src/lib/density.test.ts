@@ -2,7 +2,15 @@
  * Density/layout/headline tests (ui-system.md §5.3, ux-spec.md §4).
  */
 import { describe, expect, it } from 'vitest';
-import { layoutFor, sortBySeverityThenRecency, partitionByAttention, computeHeadline } from './density';
+import {
+  layoutFor,
+  sortBySeverityThenRecency,
+  partitionByAttention,
+  computeHeadline,
+  resolveFocusSelection,
+  pinFocus,
+  AUTO_FOCUS,
+} from './density';
 import type { CollectorState } from '@/lib/api';
 
 function collector(overrides: Partial<CollectorState> & Pick<CollectorState, 'id'>): CollectorState {
@@ -154,5 +162,71 @@ describe('computeHeadline — one sentence, the worst true thing, exact preceden
       collector({ id: 'b', verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL' }),
     ];
     expect(computeHeadline(collectors).worstState).toBe('WRONG_SHAPE');
+  });
+});
+
+/**
+ * FOCUS follows the story (docs/design/critique.md next-tier #4). Selection
+ * used to be captured once at mount, so a collector that started lying
+ * later turned the headline red while the FOCUS panel kept showing whatever
+ * sorted first at page load.
+ */
+describe('resolveFocusSelection — FOCUS follows the story, but never steals a deliberate pin', () => {
+  const healthy = (id: string) => collector({ id, verdict: 'PASS' });
+  const lying = (id: string) => collector({ id, verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL' });
+  const unchecked = (id: string) => collector({ id, verdict: null, unverified: true });
+
+  it('an untouched (auto) selection resolves to the worst collector on every poll, not to load order', () => {
+    const before = [unchecked('a'), healthy('b')];
+    expect(resolveFocusSelection(AUTO_FOCUS, before).id).toBe('a');
+
+    // 'b' starts lying an hour later: the headline goes red, and so does FOCUS.
+    const after = [unchecked('a'), lying('b')];
+    expect(resolveFocusSelection(AUTO_FOCUS, after)).toEqual({ id: 'b', source: 'auto' });
+  });
+
+  it('keeps a deliberate pin on a still-broken collector even when something worse appears', () => {
+    const collectors = [collector({ id: 'a', verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL' }), lying('worse')];
+    const pinned = pinFocus('a', collectors);
+    expect(resolveFocusSelection(pinned, collectors).id).toBe('a');
+  });
+
+  it('keeps a deliberate pin on a healthy collector — inspecting a passing collector is a legitimate act', () => {
+    const collectors = [healthy('a'), lying('b')];
+    const pinned = pinFocus('a', collectors);
+    expect(resolveFocusSelection(pinned, collectors)).toBe(pinned);
+  });
+
+  it('hands focus back only when the pinned incident has resolved itself and something worse exists', () => {
+    const during = [lying('a'), lying('b')];
+    const pinned = pinFocus('a', during);
+    expect(pinned.pinnedState).toBe('WRONG_SHAPE');
+
+    // 'a' is repaired; 'b' is still lying. The panel the user was reading
+    // now says "everything's fine", so focus returns to the worst thing.
+    const after = [healthy('a'), lying('b')];
+    expect(resolveFocusSelection(pinned, after)).toEqual({ id: 'b', source: 'auto' });
+  });
+
+  it('does not hand focus back when the pinned incident resolves and the whole fleet is healthy', () => {
+    const during = [lying('a'), healthy('b')];
+    const pinned = pinFocus('a', during);
+    const after = [healthy('a'), healthy('b')];
+    expect(resolveFocusSelection(pinned, after).id).toBe('a');
+  });
+
+  it('a deliberately closed panel stays closed — a new failure never re-opens it', () => {
+    const closed = { id: null, source: 'user' as const };
+    expect(resolveFocusSelection(closed, [lying('a')])).toBe(closed);
+  });
+
+  it('reverts to auto when the pinned collector leaves the fleet entirely', () => {
+    const before = [healthy('gone'), lying('b')];
+    const pinned = pinFocus('gone', before);
+    expect(resolveFocusSelection(pinned, [lying('b')])).toEqual({ id: 'b', source: 'auto' });
+  });
+
+  it('resolves to null on an empty fleet rather than a stale id', () => {
+    expect(resolveFocusSelection(AUTO_FOCUS, [])).toEqual({ id: null, source: 'auto' });
   });
 });

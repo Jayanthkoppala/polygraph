@@ -34,10 +34,17 @@ const STEPS = [
 
 export function HowItWorks() {
   return (
-    <section className="bg-[#000000] px-6 py-16">
-      <h2 className="mx-auto mb-10 max-w-[680px] text-balance text-center text-3xl font-semibold text-[#EDEDED]">
+    <section className="bg-[#000000] px-6 py-24">
+      <h2 className="mx-auto mb-4 max-w-[680px] text-balance text-center text-3xl font-semibold text-[#EDEDED]">
         The same three-minute script, every time.
       </h2>
+      {/* Wording pass: say what a stranger is about to look at before
+          showing them terminal output. These are real transcripts from
+          docs/demo.md, and saying so is the honesty pass. */}
+      <p className="mx-auto mb-10 max-w-[680px] text-pretty text-center text-base text-[#B4B4B4]">
+        These are the real commands and real output from the built-in demo — break a scraper, watch
+        the well-formed lie get caught, then check the receipt. Run it yourself with one command.
+      </p>
       <div className="mx-auto flex max-w-3xl flex-col gap-6">
         {STEPS.map((step, i) => (
           <motion.div
@@ -50,12 +57,19 @@ export function HowItWorks() {
           >
             <header className="flex items-center gap-2 border-b border-[#272727] px-3 py-2">
               <span className="text-xs font-medium text-[#EDEDED]">{step.title}</span>
-              <span className="ml-auto font-mono text-xs text-[#6E7681]">demo-fixture-catalog</span>
+              {/* The collector this transcript is about — a fact, not chrome,
+                  so --text-muted (§1.3: --text-faint is "decoration only.
+                  Never for text that carries meaning"). */}
+              <span className="ml-auto font-mono text-xs text-[#9B9B9B]">demo-fixture-catalog</span>
             </header>
             <div className="flex flex-col gap-1 p-3 font-mono text-xs">
               {step.commands.map((c) => (
                 <div key={c} className="text-[#EDEDED]">
-                  <span className="text-[#6E7681]">$ </span>
+                  {/* The one --text-faint that stays: a shell prompt glyph
+                      carries no meaning a reader has to recover — it is the
+                      "rail hairline" case §1.3 keeps the token for. The
+                      command beside it is --text-primary. */}
+                  <span aria-hidden className="text-[#6E7681]">$ </span>
                   {c}
                 </div>
               ))}

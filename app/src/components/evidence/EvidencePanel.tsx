@@ -12,7 +12,7 @@
  * fleet cards for exactly that reason.
  */
 import { useState } from 'react';
-import { CheckCircle, XCircle, Minus, Copy, Check } from '@phosphor-icons/react';
+import { CheckCircle, XCircle, Minus, Copy, Check, ArrowsClockwise } from '@phosphor-icons/react';
 import { translateEvidence, type EvidenceLine, type IdentityMismatch, type CanaryOutcome } from '@/lib/evidence';
 import { VERDICT, toVerdictState } from '@/lib/verdict';
 import type { CollectorState } from '@/lib/api';
@@ -88,8 +88,12 @@ export function EvidencePanel({ collector }: { collector: CollectorState | null 
               ))}
             </tbody>
           </table>
+          {/* The overflow count is the scope of the mismatch, not chrome —
+              "+ 40 more" is part of the proof, so it takes the muted text
+              token (#9B9B9B, 5.93:1) rather than the decoration-only
+              #6E7681 that fails AA (ui-system.md §1.3/§6.1). */}
           {identityMismatches.length > 5 && (
-            <p className="font-mono text-xs text-[#6E7681]">+ {identityMismatches.length - 5} more</p>
+            <p className="font-mono text-xs text-[#9B9B9B]">+ {identityMismatches.length - 5} more</p>
           )}
         </section>
       )}
@@ -117,7 +121,7 @@ export function EvidencePanel({ collector }: { collector: CollectorState | null 
 
       {collector.suggestedHealCommand && <HealCommand command={collector.suggestedHealCommand} />}
 
-      {state === 'WRONG_TARGET' && <RefusalPanel />}
+      {state === 'WRONG_TARGET' && <RefusalPanel collector={collector} />}
     </div>
   );
 }
@@ -153,7 +157,7 @@ function EvidenceRow({ line }: { line: EvidenceLine }) {
             type="button"
             onClick={() => setShowRaw((v) => !v)}
             aria-expanded={showRaw}
-            className="font-mono text-xs text-[#6E7681] underline decoration-dotted outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]"
+            className="font-mono text-xs text-[#9B9B9B] underline decoration-dotted outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]"
           >
             ⌄ raw
           </button>
@@ -210,33 +214,97 @@ function HealCommand({ command }: { command: string }) {
 /**
  * The refusal panel (ux-spec.md §6, "the heal refused moment"): calm,
  * bordered, confident — never error-red styling. Three parts always, in
- * order: the refusal plainly, the reason in the user's terms, the one
- * thing that can actually be done. No "force repair anyway" escape hatch —
- * there isn't one in the engine and the UI must not imply otherwise.
+ * order, and all three now render (critique.md #2 — part 3 was missing):
  *
- * Deliberately ignores `collector.actionReason` here — that string is
- * `policy.ts`'s REDISCOVER reason ("entity_key mismatch on N% of
- * comparable rows — selector likely broken"), which is the *structural*
- * diagnosis and argues FOR repairability at the exact moment the product
- * is refusing to repair. The fixed sentence below says what is actually
- * true: the target was wrong, not the parser.
+ *   1. The refusal, plainly.            "Repair refused."
+ *   2. The reason, in the user's terms.
+ *   3. The one thing that can actually be done, plus the ledger citation.
+ *
+ * No "force repair anyway" escape hatch — there isn't one in the engine and
+ * the UI must not imply otherwise.
+ *
+ * Deliberately ignores `collector.actionReason` for part 2 — that string is
+ * `policy.ts`'s REDISCOVER reason ("entity_key mismatch on N% of comparable
+ * rows — selector likely broken"), which is the *structural* diagnosis and
+ * argues FOR repairability at the exact moment the product is refusing to
+ * repair. The fixed sentence below says what is actually true: the target
+ * was wrong, not the parser. (The panel header suppresses the same string
+ * for WRONG_TARGET, above.)
+ *
+ * Part 3, honestly: v1 has no rediscover endpoint — `policy.ts` emits the
+ * REDISCOVER *decision*, but nothing in the engine executes it, and
+ * `src/server.ts` sends `suggestedHealCommand: null` for it. So the control
+ * does the one real thing available, exactly as the Repair button already
+ * does when repairs are off (FleetApp.tsx): it hands over the command that
+ * re-verifies this collector once a human has re-pointed it, and says so in
+ * plain sight rather than implying Polygraph will do the re-pointing. The
+ * affordance is live and never lies about what pressing it does.
  */
-function RefusalPanel() {
+function RefusalPanel({ collector }: { collector: CollectorState }) {
+  const [copied, setCopied] = useState(false);
+  const command = `polygraph run --collector ${collector.id}`;
+
+  const onRediscover = () => {
+    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+    void clipboard
+      ?.writeText(command)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {
+        // Clipboard unavailable (permissions, insecure context) — the
+        // command stays visible as selectable plain text below.
+      });
+  };
+
   return (
     <section
       aria-label="Repair refused"
       data-testid="refusal-panel"
-      className="mt-auto flex flex-col gap-2 rounded-2xl border p-4"
+      className="mt-auto flex flex-col gap-3 rounded-2xl border p-4"
       style={{ borderColor: 'var(--color-verdict-target)' }}
     >
       <p className="text-sm font-semibold" style={{ color: 'var(--color-verdict-target)' }}>
         Repair refused.
       </p>
       <p className="text-sm text-[#B4B4B4]">
-        This collector returned well-formed data for the wrong entity. Repairing a field
-        selector fixes a broken parser, not a request that landed on the wrong page — so
-        Polygraph will not offer a repair it can&apos;t justify.
+        This collector returned well-formed data for the wrong entity. Repairing a field selector fixes a broken parser,
+        not a request that landed on the wrong page — so Polygraph will not offer a repair it can&apos;t justify.
       </p>
+
+      <div className="flex flex-col gap-2">
+        {/* The action and its ledger citation share a row: ux-spec.md §6
+            part 3 is one beat ("here is the one thing you can do, and here
+            is where the refusal is recorded"), and keeping them on one line
+            is what lets the whole panel land inside the FOCUS region at
+            1512x805 instead of pushing the citation below the fold. */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={onRediscover}
+            data-testid="rediscover-button"
+            aria-label="Re-discover the target — copies the command that re-verifies this collector"
+            className="flex w-fit items-center gap-2 rounded-lg border border-[#313131] bg-[var(--color-raised)] px-3 py-2 text-sm font-medium text-[#EDEDED] shadow-[var(--shadow-e2)] outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]"
+          >
+            {copied ? (
+              <Check size={14} weight="regular" aria-hidden />
+            ) : (
+              <ArrowsClockwise size={14} weight="regular" aria-hidden />
+            )}
+            {copied ? 'Command copied' : 'Re-discover the target'}
+          </button>
+          <p data-testid="refusal-ledger-ref" className="font-mono text-xs tabular-nums text-[#9B9B9B]">
+            {collector.ledgerId != null
+              ? `Ledger #${collector.ledgerId} records this refusal.`
+              : 'Not on the ledger yet — no run has been recorded.'}
+          </p>
+        </div>
+        <p className="text-xs text-[#9B9B9B]">
+          Re-point this collector at the right target, then re-verify —{' '}
+          <code className="font-mono text-[#EDEDED]">{command}</code>. Polygraph will not re-point a collector for you.
+        </p>
+      </div>
     </section>
   );
 }

@@ -48,7 +48,7 @@ export function Receipt({ sandbox }: { sandbox: UseSandboxEngineResult }) {
   const statusColor = status === 'ok' ? 'var(--color-verdict-pass)' : status === 'broken' ? 'var(--color-verdict-shape)' : '#9B9B9B';
 
   return (
-    <section className="bg-[#181818] px-6 py-16">
+    <section className="bg-[#181818] px-6 py-24">
       <h2 className="mx-auto mb-6 max-w-[680px] text-balance text-center text-3xl font-semibold text-[#EDEDED]">
         Every decision, hash chained.
       </h2>
@@ -65,7 +65,9 @@ export function Receipt({ sandbox }: { sandbox: UseSandboxEngineResult }) {
         <NoiseTexture aria-hidden className="!opacity-[0.03]" />
         <header className="relative flex items-center gap-3 border-b border-[#272727] px-3 py-2">
           <span className="text-xs font-medium uppercase tracking-wide text-[#9B9B9B]">Your sandbox ledger</span>
-          <span className="font-mono text-xs tabular-nums text-[#6E7681]">{rows.length} events</span>
+          {/* Chain length is the receipt's own headline number — meaning, not
+              decoration, so --text-muted per §1.3. */}
+          <span className="font-mono text-xs tabular-nums text-[#9B9B9B]">{rows.length} events</span>
           <button
             type="button"
             onClick={handleVerify}
@@ -112,7 +114,11 @@ export function Receipt({ sandbox }: { sandbox: UseSandboxEngineResult }) {
                       {meta.label}
                     </span>
                     <span className="shrink-0 text-[#9B9B9B]">{row.action}</span>
-                    <span className="shrink-0 tabular-nums text-[#6E7681]" title={row.eventHash}>
+                    {/* The hash prefix IS the proof this section exists to
+                        show — the most load-bearing string in the row, and
+                        the one a reader compares against `Verify chain`.
+                        --text-muted, never --text-faint (§1.3). */}
+                    <span className="shrink-0 tabular-nums text-[#9B9B9B]" title={row.eventHash}>
                       {row.eventHash.slice(0, 8)}
                     </span>
                   </motion.li>

@@ -118,3 +118,44 @@ describe('SchemaConfirmStep', () => {
     expect(onConfirmed).toHaveBeenCalledWith('amazon-prices');
   });
 });
+
+async function renderReady() {
+  vi.mocked(api.probeCollectorLive).mockResolvedValue({
+    fields: [
+      { name: 'sku', type: 'string', sample: 'B08N5WRWNW', everFilled: true },
+      { name: 'price', type: 'number', sample: 49.99, everFilled: true },
+      { name: 'breadcrumb', type: 'string', sample: 'Electronics > Smart Home', everFilled: false },
+    ],
+    empty: false,
+  });
+  render(
+    <SchemaConfirmStep collector={collector} position={{ index: 0, total: 1 }} onConfirmed={vi.fn()} onSkippedEmpty={vi.fn()} />,
+  );
+  await enterCanaryAndRun();
+}
+
+describe('the schema table fits its card (the REQUIRED? column must be on screen)', () => {
+  it('uses a fixed layout with explicit column widths instead of auto layout', async () => {
+    // Measured in Chrome at 1512x805 and again at 1280x700: with the default
+    // auto table layout this table rendered 110px wider than the 448px card
+    // that contains it, pushing the REQUIRED? column — the only interactive
+    // control on ux-spec.md §6's "Confirm what good looks like" screen —
+    // past the right edge of an `overflow-x-auto` wrapper with no visible
+    // scrollbar. The toggles existed, reported visible, and could not be
+    // seen. jsdom cannot measure that, so this guards the layout decision
+    // that fixes it.
+    await renderReady();
+    const table = await screen.findByTestId('schema-confirm-table');
+    expect(table.className).toContain('table-fixed');
+    const widths = Array.from(table.querySelectorAll('th')).map((th) => th.className);
+    expect(widths).toHaveLength(4);
+    for (const cls of widths) expect(cls).toMatch(/w-\[\d+%\]/);
+  });
+
+  it('every required-toggle is individually addressable by name', async () => {
+    await renderReady();
+    await screen.findByTestId('schema-confirm-table');
+    expect(screen.getByRole('checkbox', { name: /require sku/i })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /require price/i })).toBeInTheDocument();
+  });
+});

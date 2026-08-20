@@ -4,7 +4,7 @@
  * that got magic-card vetoed in the first place).
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { VerdictCardShell } from './VerdictCardShell';
 
 afterEach(() => cleanup());
@@ -55,5 +55,63 @@ describe('VerdictCardShell — border-ring illumination only, no interior gradie
     const shell = getByTestId('verdict-card-shell');
     expect(shell.className).toContain('focus-within:outline');
     expect(shell.className).toContain('focus-within:outline-2');
+  });
+});
+
+/**
+ * Regression for critique.md "Beautiful but wrong". §3.4's original sketch
+ * lit the ring with `radial-gradient(240px circle at ${x}px ${y}px, accent,
+ * #313131 60%, #272727 100%)` driven by pointer position. It was the most
+ * elegant thing in the UI and it made the verdict colour a reward for
+ * moving a mouse: measured on the live build, every shell — including the
+ * WRONG_TARGET one — resolved to a plain grey ring while idle. §2.5 names
+ * the border as one of the four places state lives, and §1.9's motion
+ * budget exists to stop exactly this ("nothing animates unless something
+ * happened"; a pointer drifting across a failing card is not the verdict
+ * changing). The ring is now flat, always on, and hover is elevation only.
+ */
+describe('VerdictCardShell — the ring is flat and always on (critique.md "Beautiful but wrong")', () => {
+  it('paints the accent at rest, with no pointer interaction of any kind', () => {
+    const { getByTestId } = render(
+      <VerdictCardShell accent="var(--color-verdict-target)">
+        <span>content</span>
+      </VerdictCardShell>,
+    );
+    const shell = getByTestId('verdict-card-shell');
+    expect(shell.style.background).toContain('var(--color-verdict-target) 0 0) border-box');
+  });
+
+  it('the ring layer is not a radial gradient and does not track a position', () => {
+    const { getByTestId } = render(
+      <VerdictCardShell accent="var(--color-verdict-shape)">
+        <span>content</span>
+      </VerdictCardShell>,
+    );
+    const bg = getByTestId('verdict-card-shell').style.background;
+    expect(bg).not.toContain('radial-gradient');
+    expect(bg).not.toContain('circle at');
+    expect(bg).not.toContain('px');
+  });
+
+  it('moving the pointer across the shell changes nothing', () => {
+    const { getByTestId } = render(
+      <VerdictCardShell accent="var(--color-verdict-target)">
+        <span>content</span>
+      </VerdictCardShell>,
+    );
+    const shell = getByTestId('verdict-card-shell');
+    const before = shell.style.background;
+    fireEvent.pointerMove(shell, { clientX: 40, clientY: 20 });
+    fireEvent.pointerMove(shell, { clientX: 200, clientY: 90 });
+    expect(shell.style.background).toBe(before);
+  });
+
+  it('hover still responds — but with elevation, which is what §1.8 prescribes', () => {
+    const { getByTestId } = render(
+      <VerdictCardShell accent="var(--color-verdict-pass)">
+        <span>content</span>
+      </VerdictCardShell>,
+    );
+    expect(getByTestId('verdict-card-shell').className).toContain('hover:shadow-[var(--shadow-e2)]');
   });
 });

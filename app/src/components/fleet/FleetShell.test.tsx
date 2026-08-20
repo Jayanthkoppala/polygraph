@@ -4,7 +4,7 @@
  * No region is empty at n=1; the empty-fleet state is composed at n=0.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { FleetShell } from './FleetShell';
 import type { CollectorState, FleetState } from '@/lib/api';
 
@@ -176,5 +176,96 @@ describe('FleetShell — the docked grid never lets a region blow out past its c
     const code = healButton.querySelector('code')!;
     expect(code.className).toContain('truncate');
     expect(code.className).toContain('min-w-0');
+  });
+});
+
+/**
+ * Regression for docs/design/critique.md next-tier #4: selection was set
+ * once from the initial sort, so when a collector started lying later the
+ * headline turned red while FOCUS kept showing whatever was picked at load
+ * ("1 collector is lying to you" beside an irrelevant NOT CHECKED panel).
+ * The resolution rules themselves are unit-tested in lib/density.test.ts;
+ * these assert the shell is actually wired to them.
+ */
+describe('FleetShell — FOCUS follows the story (critique.md #4)', () => {
+  const focusName = () => within(screen.getByTestId('focus-region')).getByRole('heading', { level: 2 }).textContent;
+
+  it('re-points FOCUS at a collector that starts lying after load', () => {
+    const before = [makeCollector('quiet', 'PASS'), makeCollector('later', 'PASS')];
+    const { rerender } = render(
+      <FleetShell fleet={fleetState(before)} ledgerRows={[]} onRepair={noop} onAcknowledge={noop} />,
+    );
+
+    const after = [makeCollector('quiet', 'PASS'), makeCollector('later', 'FAILED_STRUCTURAL')];
+    rerender(<FleetShell fleet={fleetState(after)} ledgerRows={[]} onRepair={noop} onAcknowledge={noop} />);
+    expect(focusName()).toBe('later');
+  });
+
+  it('does not steal a selection the user made deliberately', () => {
+    const collectors = [makeCollector('broken', 'FAILED_STRUCTURAL'), makeCollector('quieter', 'SUSPECT_DRIFT')];
+    const { rerender } = render(
+      <FleetShell fleet={fleetState(collectors)} ledgerRows={[]} onRepair={noop} onAcknowledge={noop} />,
+    );
+    expect(focusName()).toBe('broken');
+
+    // Reading a less severe collector while something worse is lying is a
+    // legitimate, deliberate act — the shell must leave it alone.
+    fireEvent.click(screen.getByRole('button', { name: 'quieter, Unexplained' }));
+    expect(focusName()).toBe('quieter');
+
+    // A later poll must not yank it back to the worst collector.
+    rerender(<FleetShell fleet={fleetState(collectors)} ledgerRows={[]} onRepair={noop} onAcknowledge={noop} />);
+    expect(focusName()).toBe('quieter');
+  });
+
+  it('a closed FOCUS sheet stays closed when a new failure arrives', () => {
+    const before = [
+      makeCollector('a', 'PASS'),
+      ...Array.from({ length: 4 }, (_, i) => makeCollector(`c${i}`, 'PASS')),
+    ];
+    const { rerender } = render(
+      <FleetShell fleet={fleetState(before)} ledgerRows={[]} onRepair={noop} onAcknowledge={noop} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Close evidence panel' }));
+    expect(screen.queryByTestId('focus-overlay')).not.toBeInTheDocument();
+
+    const after = [
+      makeCollector('a', 'FAILED_IDENTITY'),
+      ...Array.from({ length: 4 }, (_, i) => makeCollector(`c${i}`, 'PASS')),
+    ];
+    rerender(<FleetShell fleet={fleetState(after)} ledgerRows={[]} onRepair={noop} onAcknowledge={noop} />);
+    expect(screen.queryByTestId('focus-overlay')).not.toBeInTheDocument();
+  });
+});
+
+/** ux-spec.md §2 E2: the zero-collector state is a composed card with the
+ * two real ways out, not a lone sentence (critique.md #11). */
+describe('FleetShell — E2, the empty fleet offers both actions', () => {
+  it('renders Connect collectors and Open the sandbox instead, pointing at real routes', () => {
+    render(<FleetShell fleet={fleetState([])} ledgerRows={[]} onRepair={noop} onAcknowledge={noop} />);
+    const panel = screen.getByTestId('empty-fleet');
+    expect(panel).toHaveTextContent('No collectors connected yet.');
+    expect(panel).toHaveTextContent('Polygraph has nothing to watch.');
+
+    const connect = screen.getByTestId('empty-fleet-connect');
+    expect(connect).toHaveTextContent('Connect collectors');
+    expect(connect).toHaveAttribute('href', '/signup');
+
+    const sandbox = screen.getByTestId('empty-fleet-sandbox');
+    expect(sandbox).toHaveTextContent('Open the sandbox instead');
+    expect(sandbox).toHaveAttribute('href', '/#sandbox');
+  });
+});
+
+/** ui-system.md §1.2/B4 and its §5.4 checklist: borders go all the way
+ * around a shape or the shape has no border. The FOCUS sheet was the one
+ * `border-l` left in the codebase (critique.md #11). */
+describe('FleetShell — no single-sided borders', () => {
+  it('the FOCUS sheet carries a full border', () => {
+    const collectors = Array.from({ length: 5 }, (_, i) => makeCollector(`c${i}`, 'FAILED_STRUCTURAL'));
+    render(<FleetShell fleet={fleetState(collectors)} ledgerRows={[]} onRepair={noop} onAcknowledge={noop} />);
+    const sheet = screen.getByTestId('focus-overlay');
+    expect(sheet.className).toContain('border ');
+    expect(sheet.className).not.toMatch(/border-[ltrb](-|\s|$)/);
   });
 });

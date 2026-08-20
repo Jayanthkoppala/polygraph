@@ -14,7 +14,7 @@ const BENEFITS = [
 
 export function Benefits() {
   return (
-    <section className="bg-[#181818] px-6 py-16">
+    <section className="bg-[#181818] px-6 py-24">
       <div className="mx-auto grid max-w-4xl grid-cols-1 gap-8 sm:grid-cols-2">
         {BENEFITS.map(({ Icon, title, detail }) => (
           <div key={title} className="flex gap-3">

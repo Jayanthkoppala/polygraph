@@ -30,6 +30,11 @@ function wait(ms: number): Promise<void> {
 
 export interface UseSandboxEngineResult {
   fleet: CollectorState[];
+  /** The one collector the break buttons act on — see `SandboxEngine.targetId`.
+   * Exposed so the panel can skeleton exactly that card while the rest of the
+   * fleet holds still (ux-spec.md §3: "Target card enters a re-verify
+   * skeleton"), instead of erasing the whole grid on every click. */
+  targetId: string;
   mode: SandboxMode;
   phase: SandboxPhase;
   actionsRemaining: number;
@@ -91,6 +96,7 @@ export function useSandboxEngine(): UseSandboxEngineResult {
   return useMemo(
     () => ({
       fleet,
+      targetId: engine.targetId,
       mode,
       phase,
       actionsRemaining,
@@ -100,6 +106,6 @@ export function useSandboxEngine(): UseSandboxEngineResult {
       verifyChain,
       ledgerRowsForDisplay,
     }),
-    [fleet, mode, phase, actionsRemaining, ledgerCount, trigger, verifyChain, ledgerRowsForDisplay],
+    [engine, fleet, mode, phase, actionsRemaining, ledgerCount, trigger, verifyChain, ledgerRowsForDisplay],
   );
 }

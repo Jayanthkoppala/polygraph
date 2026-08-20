@@ -15,7 +15,7 @@
  * this component's) so a returning, authenticated-but-keyless tenant lands
  * on step 2, not back at signup.
  */
-import { useCallback, useReducer } from 'react';
+import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { onboardingReducer, initialOnboardingState, currentCandidate, type OnboardingStage } from './machine';
 import { exchangeTokenUrl } from './api';
 import ReactBitsStepper, { Step } from './ReactBitsStepper';
@@ -47,6 +47,37 @@ function stepperPosition(stage: OnboardingStage): number {
   }
 }
 
+/**
+ * Which SCREEN is on show, which is not the same thing as the stage or the
+ * rail position. `key-paste`/`key-verifying`/`key-rejected` are three stages
+ * of one screen (focus must stay near the input on a rejection, not jump to
+ * the heading), while `collectors-found` and `schema-confirm` are two
+ * screens at one rail position — and each collector confirmed is another.
+ * Focus follows THIS.
+ */
+function screenKey(state: { stage: OnboardingStage; candidates: Array<{ id: string }>; confirmIndex: number }): string {
+  switch (state.stage) {
+    case 'signup':
+      return 'signup';
+    case 'key-paste':
+    case 'key-verifying':
+    case 'key-rejected':
+      return 'key';
+    case 'collectors-found':
+      return 'collectors-found';
+    case 'collectors-fallback':
+      return 'collectors-fallback';
+    case 'schema-confirm':
+      return `schema:${state.candidates[state.confirmIndex]?.id ?? 'done'}`;
+    case 'first-verdict':
+      return 'first-verdict';
+    default: {
+      const _exhaustive: never = state.stage;
+      return _exhaustive;
+    }
+  }
+}
+
 export interface OnboardingWizardProps {
   initialStage?: OnboardingStage;
   /** Called once onboarding is fully done — the wizard itself never routes
@@ -71,6 +102,22 @@ export function OnboardingWizard({ initialStage, onComplete }: OnboardingWizardP
 
   const position = stepperPosition(state.stage);
 
+  // Focus follows the step. Each macro step remounts the Stepper (see the
+  // `key={position}` note below), which leaves focus on `<body>` — so a
+  // keyboard user who just pressed Enter on "Connect" would land nowhere
+  // and a screen-reader user would get no announcement that the screen
+  // changed. Moving focus to the new step's heading is the standard fix
+  // and doubles as the announcement. Skipped on first render: stealing
+  // focus on initial page load is not the same event.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const lastScreen = useRef<string>(screenKey(state));
+  useEffect(() => {
+    const next = screenKey(state);
+    if (lastScreen.current === next) return;
+    lastScreen.current = next;
+    rootRef.current?.querySelector<HTMLElement>('[data-onboarding-heading]')?.focus();
+  }, [state]);
+
   if (state.stage === 'signup') {
     // ui-system.md §3.3 scopes the 3-dot rail to exactly the 3 steps it
     // names (paste key / point at a collector / first pass) — signup
@@ -87,62 +134,79 @@ export function OnboardingWizard({ initialStage, onComplete }: OnboardingWizardP
     );
   }
 
-  const collectorContent = currentCandidate(state) ? (
-    <SchemaConfirmStep
-      key={currentCandidate(state)!.id}
-      collector={currentCandidate(state)!}
-      position={{ index: state.confirmIndex, total: state.candidates.length }}
-      onConfirmed={(id) => dispatch({ type: 'COLLECTOR_CONFIRMED', id })}
-      onSkippedEmpty={(id) => dispatch({ type: 'COLLECTOR_SKIPPED_EMPTY', id })}
-    />
-  ) : state.stage === 'collectors-found' ? (
-    <CollectorsFoundStep
-      last4={state.keyLast4 ?? ''}
-      discovered={state.candidates}
-      onContinue={(selected) => dispatch({ type: 'COLLECTORS_SELECTED', collectors: selected })}
-    />
-  ) : state.stage === 'collectors-fallback' ? (
-    <CollectorsFallbackStep onContinue={(collectors) => dispatch({ type: 'MANUAL_COLLECTORS_ENTERED', collectors })} />
-  ) : null;
+  // STAGE FIRST, candidate second. This used to test `currentCandidate`
+  // before the stage, which made ux-spec.md §6's payoff screen unreachable:
+  // `KEY_VERIFIED` sets `candidates` AND `stage: 'collectors-found'` in the
+  // same transition, so `currentCandidate` was already non-null the instant
+  // a key verified, and the wizard jumped straight past
+  // "Connected. Found N collectors." into "Point at <first collector>".
+  // The user never saw the reciprocity moment the spec calls "the real
+  // antidote to paste anxiety", and never got to choose which collectors to
+  // watch. Confirmed by driving the real browser: pasting a key that
+  // verified with 3 collectors landed directly on the schema-confirm screen.
+  const candidate = currentCandidate(state);
+  const collectorContent =
+    state.stage === 'collectors-found' ? (
+      <CollectorsFoundStep
+        last4={state.keyLast4 ?? ''}
+        discovered={state.candidates}
+        onContinue={(selected) => dispatch({ type: 'COLLECTORS_SELECTED', collectors: selected })}
+      />
+    ) : state.stage === 'collectors-fallback' ? (
+      <CollectorsFallbackStep onContinue={(collectors) => dispatch({ type: 'MANUAL_COLLECTORS_ENTERED', collectors })} />
+    ) : candidate ? (
+      <SchemaConfirmStep
+        key={candidate.id}
+        collector={candidate}
+        position={{ index: state.confirmIndex, total: state.candidates.length }}
+        onConfirmed={(id) => dispatch({ type: 'COLLECTOR_CONFIRMED', id })}
+        onSkippedEmpty={(id) => dispatch({ type: 'COLLECTOR_SKIPPED_EMPTY', id })}
+      />
+    ) : null;
 
   return (
-    // Remounted by `key={position}` on every macro-step change — the
-    // packaged Stepper owns its `currentStep` internally (no controlled
-    // prop exists), so a fresh mount with a new `initialStep` is how this
-    // async/branching flow drives it from the outside. `disableStepIndicators`
-    // (no clicking ahead/behind) and a hidden footer (`footerClassName`)
-    // remove ITS OWN Back/Continue chrome — ux-spec.md §2/§6: "no skipping,
-    // no side navigation," and every real advance here is gated by an
-    // async result (a key verifying, a probe completing), never a free
-    // "Continue" click, so each step component owns its own submit button.
-    <ReactBitsStepper
-      key={position}
-      initialStep={position}
-      disableStepIndicators
-      footerClassName="hidden"
-      stepCircleContainerClassName="!rounded-2xl !border-[var(--color-line)] bg-[var(--color-surface)] shadow-[var(--shadow-e3)]"
-      contentClassName="text-[#EDEDED]"
-    >
-      <Step>
-        {position === 1 && (
-          <KeyPasteStep
-            onVerified={(last4, collectors) => dispatch({ type: 'KEY_VERIFIED', last4, collectors })}
-            onRejected={(message) => dispatch({ type: 'KEY_REJECTED', message })}
-            onListUnavailable={() => dispatch({ type: 'KEY_LIST_UNAVAILABLE' })}
-          />
-        )}
-      </Step>
-      <Step>{position === 2 && collectorContent}</Step>
-      <Step>
-        {position === 3 && (
-          <FirstVerdictStep
-            fleetName={state.fleetName}
-            confirmedIds={state.confirmedIds}
-            skippedIds={state.skippedIds}
-            onGoToFleet={goToFleet}
-          />
-        )}
-      </Step>
-    </ReactBitsStepper>
+    // `display: contents` — a focus anchor only, contributing no box of its
+    // own, so the Stepper's own layout is untouched.
+    <div ref={rootRef} className="contents">
+      {/* The Stepper is remounted by `key={position}` on every macro-step
+        * change — the packaged Stepper owns its `currentStep` internally (no
+        * controlled prop exists), so a fresh mount with a new `initialStep`
+        * is how this async/branching flow drives it from the outside.
+        * `disableStepIndicators` (no clicking ahead/behind) and a hidden
+        * footer (`footerClassName`) remove ITS OWN Back/Continue chrome —
+        * ux-spec.md §2/§6: "no skipping, no side navigation," and every real
+        * advance here is gated by an async result (a key verifying, a probe
+        * completing), never a free "Continue" click, so each step component
+        * owns its own submit button. */}
+      <ReactBitsStepper
+        key={position}
+        initialStep={position}
+        disableStepIndicators
+        footerClassName="hidden"
+        stepCircleContainerClassName="!rounded-2xl !border-[var(--color-line)] bg-[var(--color-surface)] shadow-[var(--shadow-e3)]"
+        contentClassName="text-[#EDEDED]"
+      >
+        <Step>
+          {position === 1 && (
+            <KeyPasteStep
+              onVerified={(last4, collectors) => dispatch({ type: 'KEY_VERIFIED', last4, collectors })}
+              onRejected={(message) => dispatch({ type: 'KEY_REJECTED', message })}
+              onListUnavailable={() => dispatch({ type: 'KEY_LIST_UNAVAILABLE' })}
+            />
+          )}
+        </Step>
+        <Step>{position === 2 && collectorContent}</Step>
+        <Step>
+          {position === 3 && (
+            <FirstVerdictStep
+              fleetName={state.fleetName}
+              confirmedIds={state.confirmedIds}
+              skippedIds={state.skippedIds}
+              onGoToFleet={goToFleet}
+            />
+          )}
+        </Step>
+      </ReactBitsStepper>
+    </div>
   );
 }

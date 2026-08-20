@@ -89,6 +89,7 @@ export function RepairsConsentPanel({
         </h2>
         <Switch
           data-testid="repairs-switch"
+          aria-label="Allow Polygraph to spend Bright Data credits on repairs"
           checked={enabled}
           disabled={!hostedHealAvailable}
           onClick={handleSwitchClick}
@@ -175,7 +176,7 @@ function BudgetRow({
     <div className="flex flex-wrap items-center gap-2">
       <span>{label}</span>
       <Select value={String(value)} onValueChange={(v) => onChange(Number(v))}>
-        <SelectTrigger size="sm" className="w-16">
+        <SelectTrigger size="sm" className="w-16" aria-label={`${label} — ${suffix}`}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

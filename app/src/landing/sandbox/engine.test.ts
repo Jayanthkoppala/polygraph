@@ -6,7 +6,20 @@
  */
 import { describe, expect, it } from 'vitest';
 import { SandboxEngine, SandboxLimitError, SandboxBlockedModeError, SANDBOX_MAX_ACTIONS, walkChain } from './engine';
+import { PRODUCTS, SANDBOX_COLLECTORS, substituteProduct } from './fixtureData';
 import { toVerdictState } from '@/lib/verdict';
+
+/** Splits a post-`applyMode` fleet into the one collector the break buttons
+ * act on and the collectors that merely re-ran. ux-spec.md §3's interaction
+ * contract is written in the singular ("Target card enters a re-verify
+ * skeleton"), and ui-system.md §5.4 rule 8 wants the failing accent to have
+ * the screen to itself — so "the other two stay VERIFIED" is a behaviour
+ * these tests assert, not an accident of the fixture. */
+function splitByTarget(engine: SandboxEngine, fleet: ReturnType<SandboxEngine['getFleet']>) {
+  const target = fleet.find((c) => c.id === engine.targetId);
+  if (!target) throw new Error('sandbox fleet does not contain its own target collector');
+  return { target, others: fleet.filter((c) => c.id !== engine.targetId) };
+}
 
 describe('SandboxEngine — seeded state (ux-spec.md §3)', () => {
   it('starts already green: 3 collectors, PASS, one completed run each on the chain', () => {
@@ -32,6 +45,7 @@ describe('SandboxEngine — R8: per-visitor state, never shared', () => {
 
     visitorA.applyMode('price_dead');
     visitorA.applyMode('wrong_entity');
+    const { target: targetA, others: othersA } = splitByTarget(visitorA, visitorA.getFleet());
 
     // Visitor B's fleet and ledger are completely untouched by A's actions.
     for (const c of visitorB.getFleet()) {
@@ -42,9 +56,12 @@ describe('SandboxEngine — R8: per-visitor state, never shared', () => {
     expect(visitorB.actionsRemaining).toBe(SANDBOX_MAX_ACTIONS);
 
     // Visitor A's own state reflects its own actions, independently.
-    for (const c of visitorA.getFleet()) {
-      expect(toVerdictState(c)).toBe('WRONG_TARGET');
-    }
+    expect(toVerdictState(targetA)).toBe('WRONG_TARGET');
+    // ...and only the targeted collector: the rest of A's own fleet re-ran
+    // and genuinely passed, which is what gives the magenta card something
+    // to be read against (ui-system.md §5.4 rule 8).
+    expect(othersA).toHaveLength(2);
+    for (const c of othersA) expect(toVerdictState(c)).toBe('VERIFIED');
     expect(visitorA.getLedger()).toHaveLength(9); // 3 seed + 3 + 3
     expect(visitorA.actionsRemaining).toBe(SANDBOX_MAX_ACTIONS - 2);
   });
@@ -76,31 +93,47 @@ describe('SandboxEngine — blocked mode is structurally excluded', () => {
 });
 
 describe('SandboxEngine — verdicts are computed from mode, not hardcoded per click', () => {
-  it('price_dead: only the price field collapses; sku/title/stock stay full, contract fails, repair available', () => {
+  it('price_dead: only the price field collapses on the TARGET; sku/title/stock stay full, contract fails, repair available', () => {
     const engine = new SandboxEngine();
-    const fleet = engine.applyMode('price_dead');
-    for (const c of fleet) {
-      expect(c.fillRates).toEqual({ sku: 1, title: 1, price: 0, stock: 1 });
-      expect(c.fillPct).toBe(75);
-      expect(c.cause).toBe('STRUCTURAL');
-      expect(toVerdictState(c)).toBe('WRONG_SHAPE');
-      const identity = c.evidence?.find((e) => e.check === 'identity');
-      expect(identity?.ok).toBe(true); // identity still passes; this is a structural failure, not a wrong target
+    const { target } = splitByTarget(engine, engine.applyMode('price_dead'));
+
+    expect(target.fillRates).toEqual({ sku: 1, title: 1, price: 0, stock: 1 });
+    expect(target.fillPct).toBe(75);
+    expect(target.cause).toBe('STRUCTURAL');
+    expect(toVerdictState(target)).toBe('WRONG_SHAPE');
+    const identity = target.evidence?.find((e) => e.check === 'identity');
+    expect(identity?.ok).toBe(true); // identity still passes; this is a structural failure, not a wrong target
+  });
+
+  it('price_dead leaves the untargeted collectors genuinely passing, evidence and all — not merely unlabelled', () => {
+    const engine = new SandboxEngine();
+    const { others } = splitByTarget(engine, engine.applyMode('price_dead'));
+
+    expect(others).toHaveLength(2);
+    for (const c of others) {
+      expect(toVerdictState(c)).toBe('VERIFIED');
+      expect(c.fillRates).toEqual({ sku: 1, title: 1, price: 1, stock: 1 });
+      expect(c.fillPct).toBe(100);
+      expect(c.cause).toBeNull();
+      // The pass is computed the same way the failure is: every check ran
+      // and reported ok, rather than the collector simply being skipped.
+      for (const e of c.evidence ?? []) expect(e.ok).toBe(true);
     }
   });
 
-  it('wrong_entity: every field is fully filled (100%) — the "looks like it is passing" card — but identity fails', () => {
+  it('wrong_entity: the target is fully filled (100%) — the "looks like it is passing" card — but identity fails', () => {
     const engine = new SandboxEngine();
-    const fleet = engine.applyMode('wrong_entity');
-    for (const c of fleet) {
-      expect(c.fillPct).toBe(100);
-      expect(c.cause).toBe('IDENTITY');
-      expect(toVerdictState(c)).toBe('WRONG_TARGET');
-      const identity = c.evidence?.find((e) => e.check === 'identity');
-      expect(identity?.ok).toBe(false);
-      const mismatches = identity?.metrics?.mismatches as Array<{ requestedKey: string; extractedKey: string }>;
-      expect(mismatches[0].requestedKey).not.toBe(mismatches[0].extractedKey);
-    }
+    const { target, others } = splitByTarget(engine, engine.applyMode('wrong_entity'));
+
+    expect(target.fillPct).toBe(100);
+    expect(target.cause).toBe('IDENTITY');
+    expect(toVerdictState(target)).toBe('WRONG_TARGET');
+    const identity = target.evidence?.find((e) => e.check === 'identity');
+    expect(identity?.ok).toBe(false);
+    const mismatches = identity?.metrics?.mismatches as Array<{ requestedKey: string; extractedKey: string }>;
+    expect(mismatches[0].requestedKey).not.toBe(mismatches[0].extractedKey);
+
+    for (const c of others) expect(toVerdictState(c)).toBe('VERIFIED');
   });
 
   it('healthy after a failure genuinely returns the fleet to VERIFIED, not just a label swap', () => {
@@ -114,16 +147,26 @@ describe('SandboxEngine — verdicts are computed from mode, not hardcoded per c
     }
   });
 
-  it('two different collectors substitute two different real (never fabricated) products under wrong_entity', () => {
+  it('the wrong_entity swap is two REAL catalog products in catalog order — never a fabricated one', () => {
     const engine = new SandboxEngine();
-    const fleet = engine.applyMode('wrong_entity');
-    const swaps = fleet.map((c) => {
-      const identity = c.evidence?.find((e) => e.check === 'identity');
-      const mismatches = (identity?.metrics?.mismatches ?? []) as Array<{ requestedKey: string; extractedKey: string }>;
-      const [m] = mismatches;
-      return `${m.requestedKey} -> ${m.extractedKey}`;
-    });
-    expect(new Set(swaps).size).toBe(3); // each collector's swap is distinct
+    const { target } = splitByTarget(engine, engine.applyMode('wrong_entity'));
+    const def = SANDBOX_COLLECTORS.find((d) => d.id === engine.targetId)!;
+
+    const identity = target.evidence?.find((e) => e.check === 'identity');
+    const mismatches = (identity?.metrics?.mismatches ?? []) as Array<{ requestedKey: string; extractedKey: string }>;
+    const [m] = mismatches;
+
+    const requested = PRODUCTS.find((prod) => prod.sku === def.watchedSku)!;
+    const received = substituteProduct(def.watchedSku);
+
+    // Both halves of the swap name a product that actually exists in the
+    // fixture catalog, and the substitution is the documented catalog-order
+    // successor — the honesty property the old three-collector "each swap is
+    // distinct" assertion was standing in for.
+    expect(m.requestedKey).toBe(`${requested.sku} — ${requested.title}`);
+    expect(m.extractedKey).toBe(`${received.sku} — ${received.title}`);
+    expect(PRODUCTS.some((prod) => prod.sku === received.sku)).toBe(true);
+    expect(received.sku).not.toBe(requested.sku);
   });
 });
 

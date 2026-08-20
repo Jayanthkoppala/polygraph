@@ -33,10 +33,22 @@ export interface KeyPasteStepProps {
   onListUnavailable: () => void;
 }
 
+/**
+ * Two different failures, never conflated. `upstream` is Bright Data
+ * genuinely refusing the credential (HTTP 400 from our own route, carrying
+ * the literal upstream reason — ux-spec.md §6: "plus the literal upstream
+ * status. Never 'something went wrong'"). `local` is anything that went
+ * wrong on OUR side of the wire — an unreachable server, a 404 on the save
+ * route, a 500. Attributing a Polygraph-side failure to Bright Data would
+ * be a fabricated claim about a third party the user is about to trust us
+ * with a credential for, so the two get different copy.
+ */
+type KeyFailure = { source: 'upstream' | 'local'; message: string };
+
 export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyPasteStepProps) {
   const [apiKey, setApiKey] = useState('');
   const [verifying, setVerifying] = useState(false);
-  const [rejectMessage, setRejectMessage] = useState<string | null>(null);
+  const [failure, setFailure] = useState<KeyFailure | null>(null);
 
   const canSubmit = apiKey.trim().length > 0 && !verifying;
 
@@ -45,7 +57,7 @@ export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyP
     if (!canSubmit) return;
     const submitted = apiKey;
     setVerifying(true);
-    setRejectMessage(null);
+    setFailure(null);
     // Cleared immediately, before the request even resolves — nothing in
     // this component's own state holds the plaintext past this line.
     setApiKey('');
@@ -55,14 +67,24 @@ export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyP
       if (outcome.kind === 'verified') {
         onVerified(outcome.last4, outcome.collectors);
       } else if (outcome.kind === 'rejected') {
-        setRejectMessage(outcome.message);
+        setFailure({ source: 'upstream', message: outcome.message });
         onRejected(outcome.message);
       } else {
         onListUnavailable();
       }
     } catch (err) {
       setVerifying(false);
-      setRejectMessage(err instanceof ApiError ? err.message : 'Could not reach Polygraph — try again.');
+      // `saveApiKey` only rethrows for statuses it does NOT classify as a
+      // key rejection (400) or a calm list fallback (503) — so everything
+      // arriving here is Polygraph's own side failing, not Bright Data's
+      // verdict on the key.
+      setFailure({
+        source: 'local',
+        message:
+          err instanceof ApiError
+            ? `Polygraph couldn't save that key (${err.message}). Your key was not sent anywhere else — try again.`
+            : 'Could not reach Polygraph — try again.',
+      });
     }
   }
 
@@ -108,9 +130,16 @@ export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyP
           </p>
         </div>
 
-        {rejectMessage && (
-          <Alert variant="destructive" data-testid="key-reject-alert">
-            <AlertDescription>Bright Data rejected that key. {rejectMessage}</AlertDescription>
+        {failure && (
+          <Alert
+            variant="destructive"
+            data-testid="key-reject-alert"
+            data-failure-source={failure.source}
+            role="alert"
+          >
+            <AlertDescription>
+              {failure.source === 'upstream' ? `Bright Data rejected that key. ${failure.message}` : failure.message}
+            </AlertDescription>
           </Alert>
         )}
 

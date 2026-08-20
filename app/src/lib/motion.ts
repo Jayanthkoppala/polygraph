@@ -22,3 +22,32 @@ export const DUR_SLOW = 0.42;
 export const EASE_FLUID = [0.32, 0.72, 0, 1] as const;
 export const EASE_SNAP = [0.16, 1, 0.3, 1] as const;
 export const EASE_EXIT = [0.4, 0, 1, 1] as const;
+
+/**
+ * Beat 4 of the WRONG_TARGET substitution (ui-system.md §2.6) — the repair
+ * slot withdrawing the repair, spelled out in §2.8 "The motion, which is the
+ * point" and called there "the single most important 300ms in the product".
+ * Transcribed from the spec's absolute timings, converted to seconds:
+ *
+ *   520 → 700ms  the button de-elevates, --shadow-e2 → --shadow-e0, and its
+ *                border and label crossfade red → magenta, --ease-fluid
+ *   560 → 740ms  the strikethrough draws left to right across "Repair"
+ *                only, scaleX 0 → 1 from the left, --ease-snap
+ *   700 → 820ms  " refused" fades in, after the strike lands
+ *
+ * `start` is a motion/react `delay` measured from the start of the WHOLE
+ * WRONG_TARGET transition, not from the end of the previous beat. The 520ms
+ * head start is the load-bearing number, not an arbitrary polish value:
+ * §2.6 — "Beat four is late on purpose. You read 'the target is wrong', and
+ * only then 'and we will not repair it'. Firing them together makes the
+ * refusal look like a system limitation. Firing the refusal second makes it
+ * look like a conclusion, which is what it is." Shortening `deElevate.start`
+ * toward beats 1-3 does not make the animation snappier, it changes what the
+ * animation claims. These live here rather than inline in `RepairSlot` so
+ * the ordering can be asserted as data (see motion.test.ts).
+ */
+export const REFUSAL_BEAT = {
+  deElevate: { start: 0.52, duration: 0.18 },
+  strike: { start: 0.56, duration: 0.18 },
+  refused: { start: 0.7, duration: 0.12 },
+} as const;

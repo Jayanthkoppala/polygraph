@@ -54,7 +54,12 @@ export function FleetScale() {
 
   return (
     <section className="bg-[#000000] py-24">
-      <h2 className="mx-auto mb-12 max-w-[680px] text-balance px-6 text-3xl font-semibold text-[#EDEDED]">
+      {/* `text-center`: §3.9's code sample omits it, but every other section
+          heading on this page (and §4.1's hero) is centered, so this was the
+          page's one heading that sat left while its own content block was
+          centered under it. Alignment consistency wins over a sample that
+          wasn't making an alignment argument. */}
+      <h2 className="mx-auto mb-12 max-w-[680px] text-balance px-6 text-center text-3xl font-semibold text-[#EDEDED]">
         One collector or forty. The same four checks run on every run.
       </h2>
 
@@ -65,7 +70,17 @@ export function FleetScale() {
         aria-hidden
         data-testid="fleet-scale-canvas"
         data-animate={shouldAnimate}
-        className="relative mx-auto h-[420px] w-full max-w-6xl overflow-hidden rounded-2xl border border-[#272727] opacity-20"
+        // `opacity-40`, not §3.9's literal `opacity-20`. §3.9's own reasoning
+        // for the value is only "the container's opacity-20 does the
+        // dimming" of a white `[1,1,1]` shader so it stays out of the verdict
+        // palette — at 20% on #000000 the brightest thread lands near #333,
+        // and the section renders as an empty bordered box in any still
+        // frame (which is also what a reduced-motion or no-WebGL visitor sees
+        // permanently, since StaticThreads' 0.08-wide strokes are dimmed by
+        // the same container). 40% keeps it neutral-white and unmistakably
+        // not-a-verdict while making the 40 lines actually visible. Flagged
+        // as a deliberate deviation, not drift.
+        className="relative mx-auto h-[420px] w-full max-w-6xl overflow-hidden rounded-2xl border border-[#272727] opacity-40"
       >
         {shouldAnimate ? (
           <Threads color={[1, 1, 1]} amplitude={0.9} distance={0.35} enableMouseInteraction={false} />
