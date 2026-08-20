@@ -126,5 +126,9 @@ export function ProofMoment() {
 }
 
 function HttpTag() {
-  return <span className="self-start font-mono text-xs tabular-nums text-[#6E7681]">HTTP 200</span>;
+  // ux-spec.md calls this line "the argument" — it's load-bearing (same
+  // status code, opposite verdict), not decoration, so it takes
+  // --text-muted (#9B9B9B, 5.93:1) rather than --text-faint (#6E7681,
+  // 3.59:1 — fails AA, "never for text that carries meaning").
+  return <span className="self-start font-mono text-xs tabular-nums text-[#9B9B9B]">HTTP 200</span>;
 }

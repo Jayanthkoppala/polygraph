@@ -100,14 +100,22 @@ export function computeHeadline(collectors: CollectorState[]): HeadlineResult {
   }
 
   const states = collectors.map(toVerdictState);
-  const lying = states.filter((s) => s === 'WRONG_SHAPE' || s === 'WRONG_TARGET').length;
+  const wrongShape = states.filter((s) => s === 'WRONG_SHAPE').length;
+  const wrongTarget = states.filter((s) => s === 'WRONG_TARGET').length;
+  const lying = wrongShape + wrongTarget;
   const suspect = states.filter((s) => s === 'UNEXPLAINED').length;
   const unverified = states.filter((s) => s === 'NOT_CHECKED').length;
 
   if (lying > 0) {
+    // §2.5: WRONG_TARGET is deliberately off the red severity ramp, not a
+    // "worse" WRONG_SHAPE — a fleet whose only failure is a wrong target
+    // must not get a red headline over magenta cards, which is exactly the
+    // severity-ramp confusion the palette exists to prevent. Only fall
+    // back to the WRONG_SHAPE (red) headline colour when a WRONG_SHAPE
+    // collector genuinely exists in the fleet.
     return {
       sentence: `${lying} collector${lying === 1 ? '' : 's'} ${lying === 1 ? 'is' : 'are'} lying to you.`,
-      worstState: 'WRONG_SHAPE',
+      worstState: wrongShape > 0 ? 'WRONG_SHAPE' : 'WRONG_TARGET',
     };
   }
   if (suspect > 0) {

@@ -36,7 +36,9 @@ export function TaglineReveal() {
         </p>
 
         <div className="flex w-full max-w-xs shrink-0 flex-col gap-2">
-          <span className="font-mono text-xs tabular-nums text-[#6E7681]">HTTP 200</span>
+          {/* Load-bearing, not decoration — same reasoning as
+              ProofMoment's HttpTag: --text-muted, not --text-faint. */}
+          <span className="font-mono text-xs tabular-nums text-[#9B9B9B]">HTTP 200</span>
           <VerdictCardShell accent="var(--color-verdict-target)" className="min-h-[160px]">
             <div className="flex h-full w-full flex-col justify-between p-3">
               <div className="flex items-start justify-between gap-2 pl-3">

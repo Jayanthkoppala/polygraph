@@ -117,7 +117,7 @@ export function EvidencePanel({ collector }: { collector: CollectorState | null 
 
       {collector.suggestedHealCommand && <HealCommand command={collector.suggestedHealCommand} />}
 
-      {state === 'WRONG_TARGET' && <RefusalPanel actionReason={collector.actionReason} />}
+      {state === 'WRONG_TARGET' && <RefusalPanel />}
     </div>
   );
 }
@@ -213,8 +213,15 @@ function HealCommand({ command }: { command: string }) {
  * order: the refusal plainly, the reason in the user's terms, the one
  * thing that can actually be done. No "force repair anyway" escape hatch —
  * there isn't one in the engine and the UI must not imply otherwise.
+ *
+ * Deliberately ignores `collector.actionReason` here — that string is
+ * `policy.ts`'s REDISCOVER reason ("entity_key mismatch on N% of
+ * comparable rows — selector likely broken"), which is the *structural*
+ * diagnosis and argues FOR repairability at the exact moment the product
+ * is refusing to repair. The fixed sentence below says what is actually
+ * true: the target was wrong, not the parser.
  */
-function RefusalPanel({ actionReason }: { actionReason: string | null }) {
+function RefusalPanel() {
   return (
     <section
       aria-label="Repair refused"
@@ -226,8 +233,9 @@ function RefusalPanel({ actionReason }: { actionReason: string | null }) {
         Repair refused.
       </p>
       <p className="text-sm text-[#B4B4B4]">
-        {actionReason ??
-          'This collector returned well-formed data for the wrong entity. Re-deriving a field selector cannot fix fetching the wrong target.'}
+        This collector returned well-formed data for the wrong entity. Repairing a field
+        selector fixes a broken parser, not a request that landed on the wrong page — so
+        Polygraph will not offer a repair it can&apos;t justify.
       </p>
     </section>
   );

@@ -121,11 +121,19 @@ export function LedgerStream({ rows }: { rows: LedgerRow[] }) {
                   <time dateTime={row.ts} className="shrink-0 pl-3 tabular-nums text-[#9B9B9B]">
                     {row.ts.slice(11, 19)}
                   </time>
-                  <span className="min-w-0 flex-1 truncate text-[#EDEDED]">{row.collector}</span>
+                  {/* The collector name is the one fact this row must carry
+                      (docs/design/critique.md next-tier #5) — a fixed
+                      min-width keeps it from truncating past readability
+                      even in the narrow 360px LEDGER column, and the
+                      redundant ACTION column (closely tracks the verdict
+                      label already shown next to it) was dropped to make
+                      room rather than starving the name further. */}
+                  <span className="min-w-[84px] flex-1 truncate text-[#EDEDED]" title={row.collector}>
+                    {row.collector}
+                  </span>
                   <span className="shrink-0" style={{ color: meta.color }}>
                     {meta.label}
                   </span>
-                  <span className="shrink-0 text-[#9B9B9B]">{row.action}</span>
                   <span className="shrink-0 tabular-nums text-[#6E7681]" title={row.eventHash}>
                     {row.eventHash.slice(0, 8)}
                   </span>

@@ -179,16 +179,23 @@ describe('EvidencePanel — the heal command, click to copy', () => {
 });
 
 describe('EvidencePanel — the refusal panel (ux-spec.md §6)', () => {
-  it('renders only for WRONG_TARGET, with the plain-language reason', () => {
+  it('renders only for WRONG_TARGET, with the plain-language reason — never the engine\'s own actionReason', () => {
     const collector = baseCollector({
       verdict: 'FAILED_IDENTITY',
       cause: 'IDENTITY',
-      actionReason: "This collector returned perfect data for the wrong product.",
+      // policy.ts's REDISCOVER `actionReason` is the STRUCTURAL diagnosis
+      // ("selector likely broken") — it argues FOR repairability at the
+      // exact moment the panel is refusing to repair, so the panel must
+      // never surface it verbatim. Set here specifically to prove that.
+      actionReason: 'entity_key mismatch on 100% of comparable rows — selector likely broken',
     });
     render(<EvidencePanel collector={collector} />);
     const panel = screen.getByTestId('refusal-panel');
     expect(panel).toHaveTextContent('Repair refused.');
-    expect(panel).toHaveTextContent('This collector returned perfect data for the wrong product.');
+    expect(panel).toHaveTextContent(
+      "This collector returned well-formed data for the wrong entity. Repairing a field selector fixes a broken parser, not a request that landed on the wrong page — so Polygraph will not offer a repair it can't justify.",
+    );
+    expect(panel).not.toHaveTextContent('selector likely broken');
   });
 
   it('does not render for a WRONG_SHAPE (repairable) collector', () => {
