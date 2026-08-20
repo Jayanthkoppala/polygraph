@@ -18,8 +18,19 @@
 import { motion, useReducedMotion } from 'motion/react';
 import { Wrench, Prohibit, Check, ArrowClockwise, SealCheck } from '@phosphor-icons/react';
 import type { VerdictState } from '@/lib/verdict';
-import { EASE_SNAP } from '@/lib/motion';
+import { EASE_FLUID, EASE_SNAP } from '@/lib/motion';
 import { useSkipEntrance } from '@/hooks/useSkipEntrance';
+
+// Literal mirrors of --shadow-e2/--shadow-e0 and --color-verdict-shape/
+// --color-verdict-target (app.css). motion/react cannot tween a raw var()
+// reference, only literal colour/shadow pairs, so beat 4's de-elevation
+// crossfade (§2.6/§2.8: "the button de-elevates ... its border and label
+// crossfade red to magenta") needs its own copies, same convention as
+// lib/motion.ts's DUR_*/EASE_* mirrors of the CSS duration tokens.
+const SHADOW_E2 = 'inset 0 1px 0 0 rgb(255 255 255 / 0.05), 0 8px 24px -8px rgb(0 0 0 / 0.80)';
+const SHADOW_E0 = 'inset 0 -1px 0 0 rgb(255 255 255 / 0.04)';
+const COLOR_SHAPE = '#F85149';
+const COLOR_TARGET = '#E879F9';
 
 const REFUSAL_REASON =
   'Repair is refused because this run returned well formed data for the wrong entity. ' +
@@ -35,11 +46,17 @@ export interface RepairSlotProps {
   collectorId: string;
   onRepair: (id: string) => void;
   onAcknowledge: (id: string) => void;
+  /** Overrides the natural mount-based `useSkipEntrance` gate — see
+   * `VerdictRailProps.animateEntrance` for why a remount-to-replay call
+   * site (landing page `ProofMoment`) needs this. Undefined preserves the
+   * default behaviour. */
+  animateEntrance?: boolean;
 }
 
-export function RepairSlot({ state, collectorId, onRepair, onAcknowledge }: RepairSlotProps) {
+export function RepairSlot({ state, collectorId, onRepair, onAcknowledge, animateEntrance }: RepairSlotProps) {
   const reduceMotion = useReducedMotion();
-  const skipEntrance = useSkipEntrance(reduceMotion);
+  const mountSkip = useSkipEntrance(reduceMotion);
+  const skipEntrance = animateEntrance === undefined ? mountSkip : Boolean(reduceMotion) || !animateEntrance;
 
   if (state === 'WRONG_SHAPE') {
     return (
@@ -61,7 +78,17 @@ export function RepairSlot({ state, collectorId, onRepair, onAcknowledge }: Repa
   if (state === 'WRONG_TARGET') {
     return (
       <>
-        <button
+        {/* §2.6 beat 4 / §2.8's "the motion, which is the point": the live
+            e2/red button de-elevates to sunken e0/magenta 520ms into the
+            WRONG_TARGET transition — late on purpose, after beats 1-3 (the
+            entity-key rotation, the rail doubling) have already read "the
+            target is wrong". Firing this together with beat 1 would make
+            the refusal look like a system limitation instead of a
+            conclusion. The static classes below are the settled/no-motion
+            state (also what a page-load-straight-into-WRONG_TARGET card
+            shows, since `initial={false}` when skipEntrance is true skips
+            the crossfade and renders here directly). */}
+        <motion.button
           type="button"
           disabled
           aria-disabled="true"
@@ -70,6 +97,13 @@ export function RepairSlot({ state, collectorId, onRepair, onAcknowledge }: Repa
           data-repair-elevation="sunken"
           className={`${SLOT_BOX} cursor-not-allowed border-[var(--color-verdict-target)] bg-[#1F1F1F]
                       text-[var(--color-verdict-target)] shadow-[var(--shadow-e0)]`}
+          initial={
+            skipEntrance
+              ? false
+              : { boxShadow: SHADOW_E2, borderColor: COLOR_SHAPE, color: COLOR_SHAPE }
+          }
+          animate={{ boxShadow: SHADOW_E0, borderColor: COLOR_TARGET, color: COLOR_TARGET }}
+          transition={skipEntrance ? { duration: 0 } : { duration: 0.18, delay: 0.52, ease: EASE_FLUID }}
         >
           <Prohibit size={12} weight="regular" aria-hidden />
           <span className="relative">
@@ -80,7 +114,7 @@ export function RepairSlot({ state, collectorId, onRepair, onAcknowledge }: Repa
               initial={skipEntrance ? false : { scaleX: 0 }}
               animate={{ scaleX: 1 }}
               transition={
-                skipEntrance ? { duration: 0 } : { duration: 0.18, delay: 0.04, ease: EASE_SNAP }
+                skipEntrance ? { duration: 0 } : { duration: 0.18, delay: 0.56, ease: EASE_SNAP }
               }
               style={{ transformOrigin: 'left' }}
               className="absolute inset-x-0 top-1/2 h-px bg-[var(--color-verdict-target)]"
@@ -89,11 +123,11 @@ export function RepairSlot({ state, collectorId, onRepair, onAcknowledge }: Repa
           <motion.span
             initial={skipEntrance ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={skipEntrance ? { duration: 0 } : { duration: 0.12, delay: 0.22 }}
+            transition={skipEntrance ? { duration: 0 } : { duration: 0.12, delay: 0.7 }}
           >
             refused
           </motion.span>
-        </button>
+        </motion.button>
         <span id={`refusal-${collectorId}`} className="sr-only">
           {REFUSAL_REASON}
         </span>

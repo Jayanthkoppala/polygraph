@@ -208,11 +208,20 @@ export interface VerdictRailProps {
    * finished snapping open — see `WrongShapeRail` above for why the
    * card-level jolt (§2.6 beat 3) is not performed inside this component. */
   onFractureSettle?: () => void;
+  /** Overrides the natural mount-based `useSkipEntrance` gate. Undefined
+   * preserves the default "only animate on a genuine post-mount state
+   * change" behaviour. Explicit `true`/`false` is for call sites that
+   * intentionally remount this subtree to replay its choreography (e.g.
+   * the landing page's `ProofMoment`, which bumps a `key` on every real
+   * viewport-entry event — a remount that must still count as "an event"
+   * even though it looks like first paint to `useSkipEntrance`). */
+  animateEntrance?: boolean;
 }
 
-export function VerdictRail({ state, onFractureSettle }: VerdictRailProps) {
+export function VerdictRail({ state, onFractureSettle, animateEntrance }: VerdictRailProps) {
   const reduceMotion = useReducedMotion();
-  const skipEntrance = useSkipEntrance(reduceMotion);
+  const mountSkip = useSkipEntrance(reduceMotion);
+  const skipEntrance = animateEntrance === undefined ? mountSkip : Boolean(reduceMotion) || !animateEntrance;
 
   switch (state) {
     case 'VERIFIED':

@@ -6,12 +6,17 @@
  * passing" — Repair refused). Static, seeded data, not the interactive
  * sandbox: this is the "get it" image, always the same, always true.
  *
- * The right card replays the WRONG_TARGET entity-key substitution once per
- * viewport entry (never loops) by remounting `VerdictCard` on a bumped
- * `key` each time an IntersectionObserver reports a fresh entry — the same
- * event-only-motion gate Task 6 built (`useSkipEntrance`) only plays that
- * animation on a genuine transition, so a remount is what makes it replay.
- * The left card never remounts and never animates.
+ * The right card replays the WRONG_TARGET entity-key substitution (and the
+ * repair slot's withdrawal, §2.6 beat 4) once per viewport entry (never
+ * loops) by remounting `VerdictCard` on a bumped `key` each time an
+ * IntersectionObserver reports a fresh entry. `useSkipEntrance` alone
+ * treats every remount as indistinguishable from first paint — a genuine
+ * bug that made this replay structurally unreachable — so this component
+ * also passes the explicit `animateEntrance` override: `false` on the very
+ * first mount (before the observer has ever fired, matching the natural
+ * "don't animate on first paint" rule) and `true` on every subsequent
+ * remount, since each of those really is a fresh viewport-entry event. The
+ * left card never remounts and never animates.
  */
 import { useEffect, useRef, useState } from 'react';
 import { VerdictCard } from '@/components/fleet/VerdictCard';
@@ -109,6 +114,7 @@ export function ProofMoment() {
             onSelect={noop}
             onRepair={noop}
             onAcknowledge={noop}
+            animateEntrance={replayKey > 0}
           />
         </div>
       </div>

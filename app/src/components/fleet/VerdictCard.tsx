@@ -32,6 +32,11 @@ export interface VerdictCardProps {
   onSelect: (id: string) => void;
   onRepair: (id: string) => void;
   onAcknowledge: (id: string) => void;
+  /** Overrides the rail/slot/entity-key-swap's natural "only animate on a
+   * genuine post-mount state change" gate. Undefined preserves that default.
+   * For call sites that intentionally remount this card to replay its
+   * choreography — see `VerdictRailProps.animateEntrance`. */
+  animateEntrance?: boolean;
 }
 
 export function VerdictCard({
@@ -41,6 +46,7 @@ export function VerdictCard({
   onSelect,
   onRepair,
   onAcknowledge,
+  animateEntrance,
 }: VerdictCardProps) {
   const state = toVerdictState(collector);
   const meta = VERDICT[state];
@@ -77,7 +83,7 @@ export function VerdictCard({
             : 'relative flex min-h-0 w-full flex-1 flex-col justify-between p-3 text-left outline-none'
         }
       >
-        <VerdictRail state={state} onFractureSettle={handleFractureSettle} />
+        <VerdictRail state={state} onFractureSettle={handleFractureSettle} animateEntrance={animateEntrance} />
 
         {isRow ? (
           <>
@@ -101,7 +107,11 @@ export function VerdictCard({
             </div>
 
             {mismatch ? (
-              <EntityKeySwap requested={mismatch.requestedKey} received={mismatch.extractedKey} />
+              <EntityKeySwap
+                requested={mismatch.requestedKey}
+                received={mismatch.extractedKey}
+                animateEntrance={animateEntrance}
+              />
             ) : (
               <dl className="flex w-full items-end gap-4 pl-3">
                 <Metric label="Fill" value={collector.fillPct} suffix="%" />
@@ -117,7 +127,13 @@ export function VerdictCard({
 
       {!isRow && (
         <div className="shrink-0 px-3 pb-3">
-          <RepairSlot state={state} collectorId={collector.id} onRepair={onRepair} onAcknowledge={onAcknowledge} />
+          <RepairSlot
+            state={state}
+            collectorId={collector.id}
+            onRepair={onRepair}
+            onAcknowledge={onAcknowledge}
+            animateEntrance={animateEntrance}
+          />
         </div>
       )}
     </VerdictCardShell>
@@ -136,9 +152,18 @@ export function VerdictCard({
  * §1.9) — a card that loads already in WRONG_TARGET shows the final,
  * settled geometry with no animation, same gate VerdictRail/RepairSlot use.
  */
-function EntityKeySwap({ requested, received }: { requested: string; received: string }) {
+function EntityKeySwap({
+  requested,
+  received,
+  animateEntrance,
+}: {
+  requested: string;
+  received: string;
+  animateEntrance?: boolean;
+}) {
   const reduceMotion = useReducedMotion();
-  const skipEntrance = useSkipEntrance(reduceMotion);
+  const mountSkip = useSkipEntrance(reduceMotion);
+  const skipEntrance = animateEntrance === undefined ? mountSkip : Boolean(reduceMotion) || !animateEntrance;
 
   return (
     <dl className="flex w-full flex-col gap-1 pl-3 font-mono text-xs" data-testid="entity-key-swap">
