@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from '../src/ledger.js';
 import { Governor } from '../src/policy.js';
-import { createServer, ackLedgerEvent, AckError } from '../src/server.js';
+import { createServer, ackLedgerEvent, AckError, MAX_LEDGER_LIMIT } from '../src/server.js';
 import type { FleetConfig } from '../src/config.js';
 import type { Evidence } from '../src/types.js';
 
@@ -265,6 +265,29 @@ describe('server (Task 8)', () => {
     const body = (await res.json()) as any;
     expect(body.events).toHaveLength(1);
     expect(body.events[0].run_id).toBe('run-2');
+  });
+
+  it('GET /api/ledger?n= clamps an oversized request to at most MAX_LEDGER_LIMIT rows (review fix)', async () => {
+    // Seed one more row than the cap so an unclamped request would prove
+    // itself by returning more than MAX_LEDGER_LIMIT.
+    for (let i = 0; i < MAX_LEDGER_LIMIT + 1; i++) {
+      ledger.append({
+        ts: `2026-08-20T09:00:00.${String(i).padStart(3, '0')}Z`,
+        tenant: 'acme-corp',
+        collector: 'acme-catalog',
+        run_id: `run-${i}`,
+        verdict: 'PASS',
+        cause: 'NONE',
+        evidence: [],
+        action: 'RELEASE',
+      });
+    }
+
+    const res = await fetch(`${baseUrl}/api/ledger?n=100000`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.events.length).toBeLessThanOrEqual(MAX_LEDGER_LIMIT);
+    expect(body.events).toHaveLength(MAX_LEDGER_LIMIT);
   });
 
   it('unknown routes 404', async () => {

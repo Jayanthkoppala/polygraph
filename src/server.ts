@@ -249,10 +249,16 @@ async function readRequestBody(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+/** Upper bound on GET /api/ledger?n= — without this, an arbitrarily large
+ * `n` returns the entire ledger table in one response (review finding:
+ * correctly parameterized, no injection risk, but no size limit either). */
+export const MAX_LEDGER_LIMIT = 500;
+
 function parseLimit(raw: string | null, fallback: number): number {
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, MAX_LEDGER_LIMIT);
 }
 
 /** Builds the (unstarted) `http.Server`. Caller owns `listen`/`close` —

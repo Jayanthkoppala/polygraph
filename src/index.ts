@@ -8,6 +8,7 @@ import { BrightDataClient } from './brightdata.js';
 import { runFleet, type RunnerContext } from './runner.js';
 import { AlertNotifier } from './alerts.js';
 import { createServer, ackLedgerEvent, AckError } from './server.js';
+import { DEFAULT_WATCH_HOST, resolveWatchHost } from './watch-host.js';
 
 const program = new Command();
 
@@ -103,7 +104,12 @@ program
   .description('Continuously watch the fleet on a schedule, serving the live dashboard')
   .option('-c, --config <path>', 'path to fleet.yaml (default ./fleet.yaml, or POLYGRAPH_CONFIG)')
   .option('-p, --port <port>', 'dashboard HTTP port (default 4141)', String(DEFAULT_WATCH_PORT))
-  .action(async (opts: { config?: string; port?: string }) => {
+  .option(
+    '--host <address>',
+    'dashboard bind address (default 127.0.0.1, loopback only — the dashboard has no authentication, so exposing it beyond this machine must be explicit)',
+    DEFAULT_WATCH_HOST
+  )
+  .action(async (opts: { config?: string; port?: string; host?: string }) => {
     try {
       const config = loadFleetConfig(resolveConfigPath(opts.config));
       const dbPath = resolveDbPath();
@@ -118,12 +124,18 @@ program
 
       const server = createServer({ config, ledger, governor });
       const port = Number.parseInt(opts.port ?? String(DEFAULT_WATCH_PORT), 10) || DEFAULT_WATCH_PORT;
+      const { host, warnNonLoopback } = resolveWatchHost(opts.host);
+      if (warnNonLoopback) {
+        process.stderr.write(
+          `polygraph watch: binding to ${host} exposes the dashboard beyond this machine — there is no authentication on /api/ack or any other endpoint\n`
+        );
+      }
 
       await new Promise<void>((resolve, reject) => {
         server.once('error', reject);
-        server.listen(port, () => resolve());
+        server.listen(port, host, () => resolve());
       });
-      process.stdout.write(`polygraph watch: dashboard on http://localhost:${port}\n`);
+      process.stdout.write(`polygraph watch: dashboard on http://${host}:${port}\n`);
 
       // One scheduled task per collector, each running a single-collector
       // "mini fleet" through the normal runFleet pipeline — same ledger

@@ -427,7 +427,7 @@
             '<div class="card-id">' + escapeHtml(c.id) + '</div>' +
           '</div>' +
           '<span class="badge" style="color:' + color + ';border-color:' + color + ';background:' + color + '1a">' +
-            verdictLabel(c.verdict) +
+            escapeHtml(verdictLabel(c.verdict)) +
           '</span>' +
         '</div>' +
         '<div class="metrics-row">' +
