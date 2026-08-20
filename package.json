@@ -1,5 +1,5 @@
 {
-  "name": "polygraph-verify",
+  "name": "polygraph-data",
   "version": "0.1.0",
   "description": "Evidence gate for scraper fleets — independently re-verifies a collector's output and only lets a repair through when it has live proof the repair is warranted",
   "keywords": [
@@ -24,7 +24,8 @@
   },
   "type": "module",
   "bin": {
-    "polygraph": "./dist/index.js"
+    "polygraph": "./dist/index.js",
+    "polygraph-data": "./dist/index.js"
   },
   "files": [
     "dist/",

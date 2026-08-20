@@ -8,15 +8,16 @@ Bright Data account, no API key, no network access required. One terminal runs
 
 ```
 mkdir demo && cd demo
-npx polygraph-verify demo
+npx polygraph-data demo
 ```
 
-The npm package is named **`polygraph-verify`** — the bare `polygraph` name belongs
-to an unrelated package on the registry. The binary it installs is still `polygraph`,
-so every `polygraph <command>` in this script is literal. The tarball ships the built
-React dashboard, so there is no UI build step on this path.
+The npm package is named **`polygraph-data`** — the bare `polygraph` name belongs to
+an unrelated package on the registry. It installs two names for the same binary,
+`polygraph` and `polygraph-data`, so every `polygraph <command>` in this script is
+literal. The tarball ships the built React dashboard, so there is no UI build step
+on this path.
 
-> **Publication status (2026-08-20): `polygraph-verify` is built and verified but not
+> **Publication status (2026-08-20): `polygraph-data` is built and verified but not
 > yet on the registry, so the `npx` line above does not resolve yet.** The 0.1.0
 > tarball has been packed and test-installed into a clean directory, where `--help`,
 > the offline `demo`, the chaos loop and `ledger verify` all pass; the only remaining
@@ -69,7 +70,7 @@ the same directory.
 
 Run every `polygraph <command>` below from that same directory, so it reads the
 `fleet.yaml`/`polygraph.sqlite` the first terminal just seeded. On the npm install
-(`npm i -g polygraph-verify`) they are literal. On the from-source path each one is
+(`npm i -g polygraph-data`) they are literal. On the from-source path each one is
 shorthand for `npx tsx path/to/polygraph/src/index.ts <command>` — same substitution
 as the setup step above; to type the short form literally there, run `npm link` once
 from the repo checkout first (puts a `polygraph` binary on `PATH` pointing at this

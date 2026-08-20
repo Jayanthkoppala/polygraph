@@ -154,10 +154,10 @@ Or skip straight to a working example — no `fleet.yaml` to write, no Bright Da
 account required:
 
 ```
-npx polygraph-verify demo
+npx polygraph-data demo
 ```
 
-> **Publication status (2026-08-20): `polygraph-verify` is built and verified but
+> **Publication status (2026-08-20): `polygraph-data` is built and verified but
 > not yet on the registry, so the `npx` line above does not resolve yet.** The
 > 0.1.0 tarball has been packed and test-installed into a clean directory, where
 > `--help`, the offline `demo`, the chaos loop and `ledger verify` all pass; the
@@ -165,12 +165,13 @@ npx polygraph-verify demo
 > Delete this block the moment that publish lands — do not leave it standing once
 > the package resolves.
 
-The npm package is named **`polygraph-verify`**, not `polygraph` — the bare name
-belongs to an unrelated package on the registry. The binary it installs is still
-called `polygraph`, so every `polygraph <command>` in this README is literal once
-the package is installed (`npm i -g polygraph-verify`). The tarball ships the
-built React dashboard, so `npx polygraph-verify demo` serves the full UI offline
-with no extra build step.
+The npm package is named **`polygraph-data`**, not `polygraph` — the bare name
+belongs to an unrelated package on the registry. It installs two names for the
+same binary, `polygraph` and `polygraph-data`, so every `polygraph <command>` in
+this README is literal once the package is installed (`npm i -g polygraph-data`),
+and `npx polygraph-data <command>` works without a global install. The tarball
+ships the built React dashboard, so `npx polygraph-data demo` serves the full UI
+offline with no extra build step.
 
 To run it from a checkout of this repo instead:
 
@@ -193,7 +194,7 @@ core narrative.
 Other commands: `polygraph run [--collector <id>]`, `polygraph watch` (cron + live
 dashboard), `polygraph log` / `polygraph ack`, `polygraph ledger verify`, `polygraph
 chaos <healthy|price_dead|wrong_entity|blocked>`. `polygraph status` is still a stub.
-Installed from npm (`npm i -g polygraph-verify`), those are the literal commands.
+Installed from npm (`npm i -g polygraph-data`), those are the literal commands.
 Working from a repo checkout instead, each one is shorthand for `npx tsx
 src/index.ts <command>` (or `npm run build && node dist/index.js <command>`); to
 type the short form literally there, run `npm link` once from the checkout first
