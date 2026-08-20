@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "echo 'root install skipped: the static build only needs app/ deps'",
+  "buildCommand": "cd app && npm ci && VITE_STATIC_DEPLOY=1 npm run build",
+  "outputDirectory": "app/dist",
+  "framework": null,
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    }
+  ]
+}
