@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "progress": "node scripts/progress.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
