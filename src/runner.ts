@@ -25,11 +25,21 @@ import { checkContract, type ContractMetrics } from './checks/contract.js';
 import { checkCoherence } from './checks/coherence.js';
 import { checkIdentity, type KeyExtractor } from './checks/identity.js';
 import { checkCanary, type RerunFn } from './checks/canary.js';
-import { causeForErrorCode, worstCause, decideWithGovernor, Governor, type Action } from './policy.js';
+import { causeForErrorCode, worstCause, decide, decideWithGovernor, Governor, type Action, type Decision } from './policy.js';
 import { Ledger } from './ledger.js';
 import { getAdapter, type AdapterContext } from './adapters.js';
 import { COLLECTOR_REGISTRY, type EntityKeyFn } from './extractors.js';
 import { AlertNotifier } from './alerts.js';
+// Task 9 controller ruling (carried from Tasks 6/8): runFleet is where a
+// REPAIR action actually gets executed — heal.ts itself deliberately never
+// re-checks the governor (see heal.ts's own module docstring), so THIS is
+// the one and only call site. This does create a circular import
+// (heal.ts -> evaluateCollector/RunnerContext from this module, this
+// module -> healCollector/isHealEnabled from heal.ts) — safe here because
+// every use on both sides is inside a function body, never at module
+// top-level, so it doesn't matter which module's static evaluation
+// finishes first.
+import { healCollector, isHealEnabled, type HealStatus } from './heal.js';
 
 export interface RunnerContext {
   adapterContext: AdapterContext;
@@ -58,6 +68,37 @@ export interface CollectorRunSummary {
   verdict: ReasonCode;
   cause: Cause;
   action: Action['type'];
+  /** Set only when this collector's REPAIR action was actually executed
+   * this pass (config.policy.heal_enabled AND env POLYGRAPH_HEAL_ENABLED=1
+   * were both on) — the terminal status `healCollector` returned
+   * ('pending_approval' included), or 'failed' if `healCollector` itself
+   * threw. A thrown heal attempt is always already ledgered as its own
+   * RECOVERY_FAILED event by heal.ts before runFleet ever sees the error
+   * (see heal.ts's "Ledger completeness" docstring section) — it is caught
+   * here purely so one collector's heal attempt failing can never take the
+   * rest of the fleet pass down with it. */
+  healOutcome?: HealStatus | 'failed';
+  /** Set whenever the pure (ungoverned) policy decision for this run WOULD
+   * have been REPAIR but heal did not actually run this pass — either the
+   * governor downgraded it (heal disabled by policy, cooldown, daily
+   * budget, or max attempts per incident already exhausted) or heal simply
+   * isn't flag-enabled. The exact `bdata scraper heal <collector_id>
+   * "<prompt>"` command a human could run to perform that same repair by
+   * hand — a copy-pasteable suggestion, not a fallback. Never set for an
+   * IDENTITY-caused decision: `decideIdentity` structurally cannot
+   * construct a REPAIR action (see policy.ts), so the pure decision this
+   * field is derived from is never REPAIR-shaped in that case either. */
+  suggestedHealCommand?: string;
+}
+
+/** The exact command line docs/demo.md's script and index.ts's CLI output
+ * both point a human at when a REPAIR-eligible incident isn't (or can't be)
+ * auto-healed this pass. `prompt` is always a heal_prompt read off a
+ * genuine REPAIR action (policy.ts's decide()/decideWithGovernor()) —
+ * JSON.stringify quoting keeps it shell-safe regardless of what characters
+ * the composed prompt happens to contain. */
+function bdataHealCommand(collectorId: string, prompt: string): string {
+  return `bdata scraper heal ${collectorId} ${JSON.stringify(prompt)}`;
 }
 
 export interface FleetRunSummary {
@@ -224,10 +265,15 @@ export async function runFleet(config: FleetConfig, ctx: RunnerContext): Promise
     let cause: Cause;
     let actionType: Action['type'];
     let evidence: Evidence[];
+    // Both stay undefined on the adapter-threw catch path below — heal
+    // wiring only applies to a real decision, never to the fallback
+    // SUSPECT/QUARANTINE shape a crashed evaluation produces.
+    let decision: Decision | undefined;
+    let evaluated: { result: RunResult; evidence: Evidence[]; cause: Cause } | undefined;
 
     try {
-      const evaluated = await evaluateCollector(collector, ctx);
-      const decision = decideWithGovernor(evaluated.cause, evaluated.evidence, {
+      evaluated = await evaluateCollector(collector, ctx);
+      decision = decideWithGovernor(evaluated.cause, evaluated.evidence, {
         collector: collector.id,
         now: nowIso(ctx),
         policy: config.policy,
@@ -283,7 +329,83 @@ export async function runFleet(config: FleetConfig, ctx: RunnerContext): Promise
       });
     }
 
-    results.push({ collector: collector.id, run_id: runId, verdict: verdictCode, cause, action: actionType });
+    // Task 9 controller ruling (carried from Tasks 6/8): a REPAIR action
+    // must actually trigger a heal cycle when heal is flag-enabled — today
+    // (heal_enabled: false, our default and current reality: the account is
+    // 403-gated on AI features) this branch is reachable but its
+    // `isHealEnabled` check always routes to the manual-suggestion arm
+    // instead, which is exactly what "print the command a human could run"
+    // means in practice right now. NOT a second governor gate:
+    // `decideWithGovernor` above already decided whether REPAIR survives —
+    // this only branches on what it already decided, never re-consults
+    // `ctx.governor` itself (see heal.ts's own docstring for why heal.ts
+    // itself deliberately does the same).
+    let healOutcome: HealStatus | 'failed' | undefined;
+    let suggestedHealCommand: string | undefined;
+
+    if (decision && evaluated) {
+      if (decision.action.type === 'REPAIR') {
+        if (isHealEnabled(config.policy)) {
+          try {
+            const client = ctx.adapterContext.client;
+            if (!client) {
+              throw new Error('heal requires ctx.adapterContext.client (a BrightDataClient)');
+            }
+            const outcome = await healCollector(collector.id, decision.action.heal_prompt, {
+              client,
+              policy: config.policy,
+              tenant: config.tenant.name,
+              collector,
+              runnerCtx: ctx,
+              webhookUrl: config.alerts.telegram_webhook,
+            });
+            healOutcome = outcome.status;
+          } catch {
+            // heal.ts already appended its own terminal RECOVERY_FAILED
+            // ledger event (best-effort, see its "Ledger completeness"
+            // docstring section) before rethrowing — swallow here so one
+            // collector's heal attempt failing can never take the rest of
+            // the fleet pass down with it, the same fault-isolation
+            // guarantee the outer try/catch above gives a plain evaluation
+            // failure.
+            healOutcome = 'failed';
+          }
+        } else {
+          suggestedHealCommand = bdataHealCommand(collector.id, decision.action.heal_prompt);
+        }
+      } else {
+        // The governor may have downgraded an otherwise REPAIR-eligible
+        // decision (heal disabled by policy, cooldown, daily budget, or max
+        // attempts per incident already exhausted). `decideWithGovernor`
+        // only ever changes `action`, never `verdict`/`evidence` — so
+        // re-deriving the UNGOVERNED decision from the exact same
+        // cause/evidence this pass already computed is deterministic and
+        // side-effect-free (policy.ts's `decide()` never touches the
+        // Governor, never records an attempt — this is a read, not a second
+        // gate). When that pure decision would have been REPAIR, surface
+        // the exact command a human could run by hand. Never fires for an
+        // IDENTITY-caused decision: `decideIdentity` structurally cannot
+        // construct a REPAIR action (see policy.ts), so `pure.action.type`
+        // is never 'REPAIR' in that case.
+        const pure = decide(evaluated.cause, evaluated.evidence, {
+          entityKeyField: collector.entity_key,
+          now: new Date(nowIso(ctx)),
+        });
+        if (pure.action.type === 'REPAIR') {
+          suggestedHealCommand = bdataHealCommand(collector.id, pure.action.heal_prompt);
+        }
+      }
+    }
+
+    results.push({
+      collector: collector.id,
+      run_id: runId,
+      verdict: verdictCode,
+      cause,
+      action: actionType,
+      ...(healOutcome !== undefined ? { healOutcome } : {}),
+      ...(suggestedHealCommand !== undefined ? { suggestedHealCommand } : {}),
+    });
   }
 
   return { results };

@@ -15,6 +15,7 @@
  * something to check against.
  */
 import type { OutputSchema } from './types.js';
+import { FIXTURE_SCHEMA } from './fixture/extractor.js';
 
 /** Derives the identity key runner.ts should expect a run's row to carry
  * in its `entity_key` field, given the input that produced it AND the row
@@ -67,6 +68,14 @@ function ashbyCompanySlug(url: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** The chaos fixture's product URLs look like
+ * `http://localhost:4200/products/SKU-001` — the sku is the last path
+ * segment. */
+function fixtureRequestedSku(url: string): string | undefined {
+  const match = url.match(/\/products\/([^/?]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : undefined;
 }
 
 function slugify(value: string): string {
@@ -131,6 +140,28 @@ export const COLLECTOR_REGISTRY: Record<string, CollectorDefinition> = {
       // is guaranteed to differ from row.company so checkIdentity
       // correctly flags the mismatch.
       return slugify(company) === slugify(requestedSlug) ? company : `MISMATCH:${requestedSlug}`;
+    },
+  },
+
+  // Task 9's chaos fixture (src/fixture/) — collector.name must be exactly
+  // "Fixture Catalog" in fleet.yaml (and in `polygraph demo`'s seeded
+  // config) for this entry to apply. FIXTURE_SCHEMA is owned by
+  // src/fixture/extractor.ts, not redefined here, so render.ts's
+  // data-field names and this schema's field names can never drift apart.
+  'Fixture Catalog': {
+    schema: FIXTURE_SCHEMA,
+    entityKey: (input, row) => {
+      const url = urlOf(input);
+      const requestedSku = url ? fixtureRequestedSku(url) : undefined;
+      if (!requestedSku) return null; // can't parse a requested sku -> skip, don't false-flag
+
+      const sku = row.sku;
+      if (typeof sku !== 'string' || sku.trim() === '') return null; // nothing to compare -> skip
+
+      // Genuine cross-check: does the page actually served the requested
+      // product? wrong_entity mode (fixture/render.ts) substitutes a
+      // DIFFERENT real product's sku here on purpose.
+      return sku === requestedSku ? sku : `MISMATCH:${requestedSku}`;
     },
   },
 };
