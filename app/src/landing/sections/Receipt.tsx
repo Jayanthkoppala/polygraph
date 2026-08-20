@@ -15,6 +15,7 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { VerdictRail } from '@/components/verdict/VerdictRail';
+import { NoiseTexture } from '@/components/ui/noise-texture';
 import { VERDICT, toVerdictState } from '@/lib/verdict';
 import type { CollectorState } from '@/lib/api';
 import type { UseSandboxEngineResult } from '../sandbox/useSandboxEngine';
@@ -55,9 +56,14 @@ export function Receipt({ sandbox }: { sandbox: UseSandboxEngineResult }) {
       <div
         aria-label="Sandbox ledger"
         data-testid="receipt-ledger"
-        className="mx-auto flex max-h-96 max-w-3xl flex-col overflow-hidden rounded-2xl border border-[#272727] bg-[var(--color-archive)]"
+        className="relative mx-auto flex max-h-96 max-w-3xl flex-col overflow-hidden rounded-2xl border border-[#272727] bg-[var(--color-archive)]"
       >
-        <header className="flex items-center gap-3 border-b border-[#272727] px-3 py-2">
+        {/* ui-system.md §2.5/§3.8: Magic UI's static `noise-texture` over
+            #131209 at ~3% — the material/tactile grain, painted once as an
+            SVG filter, never ReactBits' `Noise` (a canvas repainting on an
+            interval, which would burn GPU on a page that sits open all day). */}
+        <NoiseTexture aria-hidden className="!opacity-[0.03]" />
+        <header className="relative flex items-center gap-3 border-b border-[#272727] px-3 py-2">
           <span className="text-xs font-medium uppercase tracking-wide text-[#9B9B9B]">Your sandbox ledger</span>
           <span className="font-mono text-xs tabular-nums text-[#6E7681]">{rows.length} events</span>
           <button
@@ -73,12 +79,17 @@ export function Receipt({ sandbox }: { sandbox: UseSandboxEngineResult }) {
         </header>
 
         {message && (
-          <div role="status" data-testid="sandbox-verify-result" className="border-b border-[#272727] px-3 py-2 font-mono text-xs tabular-nums" style={{ color: statusColor }}>
+          <div
+            role="status"
+            data-testid="sandbox-verify-result"
+            className="relative border-b border-[#272727] px-3 py-2 font-mono text-xs tabular-nums"
+            style={{ color: statusColor }}
+          >
             {message}
           </div>
         )}
 
-        <div role="log" aria-live="polite" aria-label="Sandbox ledger events" className="flex-1 overflow-y-auto">
+        <div role="log" aria-live="polite" aria-label="Sandbox ledger events" className="relative flex-1 overflow-y-auto">
           <ol className="divide-y divide-[#272727]">
             <AnimatePresence initial={false}>
               {rows.map((row) => {

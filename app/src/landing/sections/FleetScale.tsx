@@ -1,14 +1,22 @@
 /**
  * FleetScale — "One collector or forty" (ui-system.md §3.9/§4.3, order 6,
- * below the fold). The one WebGL moment in the product, gated by all four
- * rules the designer specified:
+ * below the fold). The one WebGL moment in the product: ReactBits `Threads`
+ * (installed via `npx shadcn@latest add @react-bits/Threads-TS-TW`, per
+ * `app/components.json`'s `@react-bits` registry — the registry's actual
+ * item names carry a `-TS-TW`/`-JS-CSS`/etc. variant suffix, confirmed
+ * against `https://reactbits.dev/r/registry.json` directly), gated by all
+ * four rules the designer specified:
  *   (a) never renders while offscreen (IntersectionObserver)
  *   (b) prefers-reduced-motion OR a failed WebGL context probe -> StaticThreads
  *   (c) no text over the canvas — the heading sits above it, canvas is aria-hidden
  *   (d) a contained ~420px bordered element, not a background/surface fill
+ *
+ * `StaticThreads` (the flat SVG fallback) is this task's own component, not
+ * a registry item — ui-system.md §3.9 specifies its exact 40-line markup
+ * itself, it isn't something ReactBits ships.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Threads } from '../webgl/Threads';
+import Threads from '@/components/Threads';
 import { StaticThreads } from '../webgl/StaticThreads';
 
 /** Probes for a real WebGL context without ever mounting the real canvas —
@@ -59,7 +67,11 @@ export function FleetScale() {
         data-animate={shouldAnimate}
         className="relative mx-auto h-[420px] w-full max-w-6xl overflow-hidden rounded-2xl border border-[#272727] opacity-20"
       >
-        {shouldAnimate ? <Threads color={[1, 1, 1]} /> : <StaticThreads />}
+        {shouldAnimate ? (
+          <Threads color={[1, 1, 1]} amplitude={0.9} distance={0.35} enableMouseInteraction={false} />
+        ) : (
+          <StaticThreads />
+        )}
       </div>
     </section>
   );

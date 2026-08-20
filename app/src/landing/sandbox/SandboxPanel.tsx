@@ -12,6 +12,7 @@
  */
 import { useEffect, useState } from 'react';
 import { VerdictCard } from '@/components/fleet/VerdictCard';
+import { NoiseTexture } from '@/components/ui/noise-texture';
 import { translateEvidence } from '@/lib/evidence';
 import { relativeAge } from '@/lib/time';
 import type { UseSandboxEngineResult } from './useSandboxEngine';
@@ -55,9 +56,13 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
   return (
     <div
       data-testid="sandbox-panel"
-      className="mx-auto w-full max-w-4xl rounded-2xl border border-[#272727] bg-[#1F1F1F] p-4"
+      className="relative mx-auto w-full max-w-4xl overflow-hidden rounded-2xl border border-[#272727] bg-[#1F1F1F] p-4"
     >
-      <header className="mb-3 flex items-center gap-3">
+      {/* ui-system.md §2.5/§3.8: Magic UI's static `noise-texture` over
+          #1F1F1F at ~3%, same material grain the rest of the product's
+          surfaces use, never ReactBits' `Noise` (interval-repainting canvas). */}
+      <NoiseTexture aria-hidden className="!opacity-[0.03]" />
+      <header className="relative mb-3 flex items-center gap-3">
         <span className="text-xs font-medium uppercase tracking-wide text-[#9B9B9B]">Your sandbox fleet</span>
         <span className="font-mono text-xs tabular-nums text-[#6E7681]">last run {relativeAge(lastTs)}</span>
         <span className="ml-auto flex items-center gap-1.5 font-mono text-xs text-[var(--color-verdict-pass)]">
@@ -73,7 +78,7 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
         role="list"
         aria-label="Sandbox fleet"
         aria-busy={busy}
-        className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+        className="relative grid grid-cols-1 gap-2 sm:grid-cols-3"
       >
         {fleet.map((c) =>
           busy ? (
@@ -92,12 +97,12 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
       </div>
 
       {proofLine && !busy && (
-        <p data-testid="sandbox-proof-line" className="mt-3 font-mono text-xs text-[#9B9B9B]">
+        <p data-testid="sandbox-proof-line" className="relative mt-3 font-mono text-xs text-[#9B9B9B]">
           {proofLine}
         </p>
       )}
 
-      <div className="mt-4">
+      <div className="relative mt-4">
         {limitReached ? (
           <p className="font-mono text-xs text-[var(--color-verdict-suspect)]" role="status">
             Sandbox limit reached —{' '}
