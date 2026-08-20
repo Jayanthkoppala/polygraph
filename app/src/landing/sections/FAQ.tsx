@@ -1,46 +1,35 @@
 /**
- * FAQ — ui-system.md §4.3, order 8: eight questions, `#000000` ground,
- * rewritten for the HOSTED product's real objections: is my key safe, what
- * does it cost, what if I have no Bright Data account, can I self-host.
- * Every answer is a fact about the code or the tenant design
- * (tenant-architecture.md §§1–5, ux-spec.md §7) — no invented metrics, no
- * claim this build can't back up.
+ * FAQ — S6 per positioning.md §3 and copy.md §2/S6: FIVE questions only,
+ * copy.md verbatim (sandbox vs real product · what we call on your Bright
+ * Data account · do you spend my credits · lose/revoke my key · self-host).
+ * The previous eight-question set is deleted per the positioning ruling —
+ * the hero now carries what those answered.
+ *
+ * shadcn-accordion-style disclosure, boring on purpose (positioning.md §4).
  */
 import { useState } from 'react';
 import { CaretDown } from '@phosphor-icons/react';
 
 const FAQS: { q: string; a: string }[] = [
   {
-    q: 'Is my Bright Data API key safe here?',
-    a: 'It is checked against Bright Data once, encrypted with AES-256-GCM before it touches disk, and stored under a key derived separately for your account. The decryption key lives in the server environment, never the database — someone who steals the database file cannot read your credential. No endpoint returns it, ever: you see the last four characters and a fingerprint, nothing more. Deleting your account deletes the ciphertext with it.',
+    q: 'Is the demo on this page the real product?',
+    a: 'It is the real verification engine and a real SHA-256 chain, running entirely in your browser tab against fixture data. Nothing is persisted and there is no server behind it, so it never asks for a key. The hosted product is the same engine with signup, your own collectors, and your own ledger. If a page ever asks you for a Bright Data key, you are on a real instance; this page never will.',
   },
   {
-    q: 'What does this cost me?',
-    a: 'Polygraph is free while it is in hosted beta. Verification runs and any repair you approve go through your own Bright Data account, so that spend is yours, visible in your own Bright Data billing, and capped by the schedule you set. Auto-repair is off by default for exactly this reason.',
+    q: 'What does Polygraph call on my Bright Data account?',
+    a: 'Two things, and nothing else: it lists your collectors once when you connect, and it triggers runs and reads their results on the schedule you set. A collector is Bright Data’s word for one configured scraper. It never modifies a collector and never reads beyond the collectors you pick.',
   },
   {
-    q: 'I don’t have a Bright Data account. Can I still use this?',
-    a: 'The hosted product watches Bright Data collectors, so it needs one. Without it you still get the whole idea: the sandbox above runs the real verification engine in your browser, and the open-source CLI runs the same pipeline offline on your machine — no account, no key, no network.',
+    q: 'Can Polygraph spend my credits?',
+    a: 'Repairs are off for every hosted fleet, structurally: the hosted product does not trigger repairs on your behalf. Scheduled runs use your account the same way running the collector yourself would. When a break is repairable, Polygraph shows you the exact command and you decide whether to run it.',
   },
   {
-    q: 'Will it change or re-run my scrapers without asking?',
-    a: 'No. The hosted server has repair execution switched off at the environment level — a structural gate, not a setting a bug could flip. When a repair is the right answer, you get the diagnosis and the exact command to run against your own account. Nothing spends your credits or mutates your collector until you act.',
+    q: 'What if I lose or revoke my key?',
+    a: 'Revoke it in one click in settings: the stored copy is deleted, runs pause, and your ledger stays intact. There is no way to view a stored key, by design; there is no endpoint that returns it. To resume, paste a key again.',
   },
   {
-    q: 'What checks actually run on every pass?',
-    a: 'Four: contract (is everything the schema promises actually there), coherence (did one field collapse while the others held), identity (is this the exact item we asked for, or a lookalike), and canaries (do inputs with known-good answers still come back right). Together they catch what a status code cannot: a 200 with the wrong data inside.',
-  },
-  {
-    q: 'Why does a "wrong target" refuse repair instead of offering one?',
-    a: 'Because the scraper is not broken — it fetched the wrong thing, perfectly. Re-deriving a field selector would make it fetch the wrong thing more reliably. The policy layer structurally excludes repair for identity failures and routes to quarantine or rediscovery instead. The refusal is the safety property you are buying.',
-  },
-  {
-    q: 'What proves my ledger hasn’t been tampered with?',
-    a: 'Every decision is SHA-256 hash chained to the one before it, and your account’s chain starts from its own genesis value — so rows cannot be transplanted in from another account, and verification walks your chain alone. "Verify chain" recomputes every hash from genesis; a single altered byte anywhere breaks the walk. Your export carries the whole chain and verifies standalone.',
-  },
-  {
-    q: 'Can I self-host it instead?',
-    a: 'Yes. Polygraph is MIT-licensed and the hosted product runs the same open-source server — `polygraph serve` on your own machine, with your own encryption master key, keeps every byte including your Bright Data key on hardware you control.',
+    q: 'Can I self-host?',
+    a: 'Yes. The engine is MIT licensed, and the full multi tenant server runs from a checkout with one command. It also runs entirely offline on a laptop with no account at all. The repo README covers both paths.',
   },
 ];
 
@@ -50,7 +39,7 @@ export function FAQ() {
   return (
     <section className="bg-[#000000] px-6 py-24">
       <h2 className="mx-auto mb-8 max-w-[680px] text-balance text-center text-3xl font-semibold text-[#EDEDED]">
-        The questions you should be asking
+        Questions
       </h2>
       <div className="mx-auto max-w-3xl divide-y divide-[#272727] rounded-2xl border border-[#272727]">
         {FAQS.map((item, i) => {

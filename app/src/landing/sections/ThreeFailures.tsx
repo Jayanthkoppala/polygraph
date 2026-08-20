@@ -1,55 +1,91 @@
 /**
- * ThreeFailures — ux-spec.md §1a below-the-fold item 1: "The three failures
- * we catch, each one line, each linked to a button above." Links jump back
- * to the hero's sandbox break buttons (`#sandbox`), the same anchor Hero's
- * CTA uses.
+ * ThreeFailures — S2 "The three lies we catch" per positioning.md §3 and
+ * copy.md §2/S2 (canonical copy, pasted verbatim — including its open
+ * compounds like "anti bot"; the spelling law lives in copy.md's preamble).
  *
- * Wording pass: no "selector", no "entity" — each failure described in
- * words someone running scrapers in production already recognises. The
- * heading names the shared property (nothing errors, everything stays
- * green) because that is the problem the whole page exists to solve.
+ * Three ROWS, not a card grid (positioning.md: "Three rows (not a card
+ * grid), each: plain-English name → the proof line the product would show →
+ * which break button above demonstrates it"). shadcn-style flat bordered
+ * rows — structure only, the proof lines carry the section. This section
+ * absorbs what ProofMoment + the old ThreeFailures card grid covered.
+ *
+ * The third lie deliberately says it is NOT in the sandbox: the sandbox
+ * cannot fake a real anti bot block without teaching something false
+ * (the same honesty ruling that removed the `blocked` chaos button).
  */
-const FAILURES = [
+import { BlurFade } from '../magicui/blur-fade';
+
+const LIES: {
+  name: string;
+  pointer: { label: string; href?: string };
+  body: React.ReactNode;
+}[] = [
   {
-    title: 'A field quietly stops filling.',
-    detail:
-      'The page changes shape, the scraper stops finding the price, and everything else still looks fine. Still HTTP 200, still valid JSON — your database fills with empty prices.',
+    name: 'A field dies quietly',
+    pointer: { label: 'press “Kill the price field” above', href: '#sandbox' },
+    body: (
+      <>
+        The page loads, the run reports success, and one field comes back empty on every row. The
+        proof is a comparison:{' '}
+        <span className="font-mono text-[#EDEDED]">price filled on 0% of rows. Every other field: 100%.</span>{' '}
+        One collapsed field against healthy neighbours means a broken extractor, and a broken
+        extractor can be repaired.
+      </>
+    ),
   },
   {
-    title: 'The page serves the wrong thing.',
-    detail:
-      'Right shape, right fields, every value real — just for a different product than the one you asked about. No monitor on earth flags this one.',
+    name: 'The wrong thing entirely',
+    pointer: { label: 'press “Serve the wrong product” above', href: '#sandbox' },
+    body: (
+      <>
+        The data is complete, well formed, and about the wrong product. Every check that only looks
+        at shape would pass it. The proof:{' '}
+        <span className="font-mono text-[#EDEDED]">Asked for SKU-4471. Received SKU-9012.</span> No
+        parser fix can undo fetching the wrong page, so this one is never offered a repair.
+      </>
+    ),
   },
   {
-    title: 'A run reports success with nothing behind it.',
-    detail:
-      'The job finishes, the status is green, and the page it actually fetched was empty or unreachable. The gap only shows up when someone queries the data.',
+    name: 'A block dressed as success',
+    pointer: { label: 'not in the sandbox, and honestly so' },
+    body: (
+      <>
+        The site pushed back: the response says 200, but it is an anti bot page, not your data.
+        Polygraph reads the block for what it is and holds everything. The sandbox cannot fake a
+        real block without teaching you something false, so it does not try.
+      </>
+    ),
   },
 ];
 
 export function ThreeFailures() {
   return (
     <section className="bg-[#181818] px-6 py-24">
-      <h2 className="mx-auto mb-4 max-w-[680px] text-balance text-center text-3xl font-semibold text-[#EDEDED]">
-        Scrapers don&rsquo;t fail loudly. They fail politely.
+      <h2 className="mx-auto mb-10 max-w-[680px] text-balance text-center text-3xl font-semibold text-[#EDEDED]">
+        The three lies we catch
       </h2>
-      <p className="mx-auto mb-10 max-w-[680px] text-pretty text-center text-base text-[#B4B4B4]">
-        The dashboard stays green while the data goes wrong. Three ways it happens — all three are
-        wired into the sandbox above, so you can trigger each one yourself.
-      </p>
-      <div className="mx-auto grid max-w-4xl grid-cols-1 gap-6 sm:grid-cols-3">
-        {FAILURES.map((f) => (
-          <div key={f.title} className="flex flex-col gap-2">
-            <h3 className="text-base font-semibold text-[#EDEDED]">{f.title}</h3>
-            <p className="text-pretty text-sm text-[#9B9B9B]">{f.detail}</p>
-          </div>
-        ))}
-      </div>
-      <div className="mx-auto mt-6 max-w-4xl text-center">
-        <a href="#sandbox" className="font-mono text-sm text-[#9B9B9B] underline underline-offset-2">
-          Go break one yourself →
-        </a>
-      </div>
+      <BlurFade>
+        <div className="mx-auto flex max-w-4xl flex-col divide-y divide-[#272727] overflow-hidden rounded-2xl border border-[#272727] bg-[#1F1F1F]">
+          {LIES.map((lie) => (
+            <div key={lie.name} className="grid grid-cols-1 gap-2 p-4 md:grid-cols-[240px_1fr] md:gap-8">
+              <div className="flex flex-col gap-1">
+                <h3 className="text-base font-semibold text-[#EDEDED]">{lie.name}</h3>
+                {lie.pointer.href ? (
+                  <a
+                    href={lie.pointer.href}
+                    className="font-mono text-xs text-[#9B9B9B] underline underline-offset-2 hover:text-[#EDEDED]"
+                  >
+                    {lie.pointer.label}
+                  </a>
+                ) : (
+                  <span className="font-mono text-xs text-[#9B9B9B]">{lie.pointer.label}</span>
+                )}
+              </div>
+              <p className="text-pretty text-sm text-[#B4B4B4]">{lie.body}</p>
+            </div>
+          ))}
+        </div>
+      </BlurFade>
     </section>
   );
 }

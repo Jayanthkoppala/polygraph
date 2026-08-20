@@ -1,31 +1,39 @@
 /**
- * Footer — ux-spec.md §1a below-the-fold item 4: "No testimonials, no logo
- * wall, no team section." Ship requirements from ui-system.md §4.3/B10:
- * privacy + terms links.
+ * Footer — S6 footer per copy.md §2/S6: the one-line premise plus links
+ * `Sandbox · GitHub · Privacy · Sign in`. No testimonials, no logo wall,
+ * no team section, no test counts.
  *
- * The legal links are `--text-muted`, not `--text-faint`: they are named
- * destinations a reader has to be able to find and click, which §1.3 rules
- * out for the faint token ("Never for text that carries meaning" — it also
- * fails AA at 3.59:1). B10 makes them mandatory; setting a mandatory link
- * below the contrast floor is the same as not shipping it.
+ * `Terms` is kept alongside copy.md's four links: ui-system.md §4.3/B10
+ * makes privacy AND terms mandatory ship requirements, and copy.md's list
+ * doesn't read as an instruction to un-ship a legal page. Flagged to the
+ * lead as a deliberate reconciliation, not drift.
+ *
+ * GitHub URL is package.json's `repository` field, not a guess.
  */
 export function Footer() {
   return (
     <footer className="border-t border-[#272727] bg-[#000000] px-6 py-10">
       <div className="mx-auto flex max-w-4xl flex-col items-center gap-3 text-center">
         <span className="font-mono text-sm text-[#9B9B9B]">Polygraph</span>
-        {/* Verified: LICENSE at the repo root is MIT, and `polygraph serve`
-            is a real CLI command (src/index.ts:516) — the self-host answer
-            in the FAQ, restated once as the quiet closing trust signal. */}
-        <p className="text-xs text-[#9B9B9B]">
-          MIT-licensed. The hosted product runs the same open-source server you can run yourself.
+        <p className="text-pretty text-xs text-[#9B9B9B]">
+          Built on one premise: &ldquo;the job succeeded&rdquo; and &ldquo;the data is
+          correct&rdquo; are different claims.
         </p>
-        <nav aria-label="Legal" className="flex gap-4 text-xs text-[#9B9B9B]">
+        <nav aria-label="Footer" className="flex flex-wrap justify-center gap-4 text-xs text-[#9B9B9B]">
+          <a href="#sandbox" className="underline underline-offset-2 hover:text-[#EDEDED]">
+            Sandbox
+          </a>
+          <a href="https://github.com/jayanth137/polygraph" className="underline underline-offset-2 hover:text-[#EDEDED]">
+            GitHub
+          </a>
           <a href="/legal/privacy" className="underline underline-offset-2 hover:text-[#EDEDED]">
             Privacy
           </a>
           <a href="/legal/terms" className="underline underline-offset-2 hover:text-[#EDEDED]">
             Terms
+          </a>
+          <a href="/login" className="underline underline-offset-2 hover:text-[#EDEDED]">
+            Sign in
           </a>
         </nav>
       </div>
