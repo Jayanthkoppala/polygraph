@@ -1,15 +1,24 @@
 import { describe, it, expect, vi } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import { openWriter } from '../src/tenancy/db.js';
 import { migrate } from '../src/tenancy/migrate.js';
 import { createTenant } from '../src/tenancy/tenants.js';
+import { ScopedSecrets } from '../src/tenancy/secrets.js';
+import type { FleetRunSummary } from '../src/runner.js';
 import {
   Dispatcher,
   rolloverDailyCountersIfNeeded,
   tenantOverDailyCap,
   runVerifyIfDue,
   onDispatchFailure,
+  markKeyVerifiedIfNeeded,
+  createDefaultRunOne,
   type DueRow,
 } from '../src/tenancy/scheduler.js';
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}
 
 function setupTwoTenants() {
   const db = openWriter(':memory:');
@@ -227,5 +236,171 @@ describe('runVerifyIfDue', () => {
 
     const second = runVerifyIfDue(db, a.tenantId, genesis.genesis_hash, new Date().toISOString(), 60_000);
     expect(second).toBe(false);
+  });
+});
+
+function fakeSummary(verdicts: FleetRunSummary['results'][number]['verdict'][]): FleetRunSummary {
+  return {
+    results: verdicts.map((verdict, i) => ({
+      collector: `c${i}`,
+      run_id: `run-${i}`,
+      verdict,
+      cause: verdict === 'PASS' ? 'NONE' : 'DATA',
+      action: verdict === 'PASS' ? 'RELEASE' : 'QUARANTINE',
+    })),
+  };
+}
+
+describe('markKeyVerifiedIfNeeded — the first real run is what actually proves an unverified key', () => {
+  function setupUnverifiedTenant() {
+    const { db, a } = setupTwoTenants();
+    const masterKey = randomBytes(32);
+    const secrets = new ScopedSecrets(db, a.tenantId, masterKey);
+    secrets.save('bd_live_abcdefghijklmnopqrstuvwxyz012345', { verified: false });
+    expect(secrets.status()?.key_verification).toBe('unverified');
+    return { db, secrets };
+  }
+
+  it('flips unverified -> verified when the run summary contains a real PASS verdict', () => {
+    const { secrets } = setupUnverifiedTenant();
+
+    markKeyVerifiedIfNeeded(secrets, fakeSummary(['PASS']));
+
+    expect(secrets.status()?.key_verification).toBe('verified');
+  });
+
+  it('leaves the key unverified when the run failed on auth — same QUARANTINE/DATA shape an adapter-level 401 produces', () => {
+    const { secrets } = setupUnverifiedTenant();
+
+    // SUSPECT_UNEXPLAINED_ANOMALY/DATA/QUARANTINE is exactly the shape
+    // runner.ts's adapter-threw catch branch produces for ANY adapter
+    // failure, auth included — this is the case the function must never
+    // treat as proof the key works.
+    markKeyVerifiedIfNeeded(secrets, fakeSummary(['SUSPECT_UNEXPLAINED_ANOMALY']));
+
+    expect(secrets.status()?.key_verification).toBe('unverified');
+  });
+
+  it('leaves the key unverified when no collector in the summary passed, even with other verdicts present', () => {
+    const { secrets } = setupUnverifiedTenant();
+
+    markKeyVerifiedIfNeeded(secrets, fakeSummary(['FAILED_STRUCTURAL', 'FAILED_IDENTITY']));
+
+    expect(secrets.status()?.key_verification).toBe('unverified');
+  });
+
+  it('does not repeat the write once already verified — the flip is idempotent and cheap', () => {
+    const { secrets } = setupUnverifiedTenant();
+    const markVerifiedSpy = vi.spyOn(secrets, 'markVerified');
+
+    markKeyVerifiedIfNeeded(secrets, fakeSummary(['PASS']));
+    expect(markVerifiedSpy).toHaveBeenCalledTimes(1);
+    expect(secrets.status()?.key_verification).toBe('verified');
+
+    // A second (and third) successful run must never re-issue the UPDATE —
+    // status() gates the write before markVerified() is ever called again.
+    markKeyVerifiedIfNeeded(secrets, fakeSummary(['PASS']));
+    markKeyVerifiedIfNeeded(secrets, fakeSummary(['PASS']));
+    expect(markVerifiedSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('a throwing bookkeeping write never propagates — the run it followed must never look like it failed', () => {
+    const { secrets } = setupUnverifiedTenant();
+    vi.spyOn(secrets, 'markVerified').mockImplementation(() => {
+      throw new Error('SQLITE_BUSY: database is locked');
+    });
+
+    expect(() => markKeyVerifiedIfNeeded(secrets, fakeSummary(['PASS']))).not.toThrow();
+    // The write itself failed (mocked to throw), so the state is whatever
+    // it was before — still unverified — but the CALLER never sees an
+    // exception, which is the actual contract being tested here.
+    expect(secrets.status()?.key_verification).toBe('unverified');
+  });
+
+  it('is a no-op when the summary has zero results (should not happen for a single-collector mini fleet, but must not throw)', () => {
+    const { secrets } = setupUnverifiedTenant();
+    expect(() => markKeyVerifiedIfNeeded(secrets, fakeSummary([]))).not.toThrow();
+    expect(secrets.status()?.key_verification).toBe('unverified');
+  });
+});
+
+describe('createDefaultRunOne — markKeyVerifiedIfNeeded actually wired into the real run path', () => {
+  const VALID_KEY = 'bd_live_abcdefghijklmnopqrstuvwxyz012345';
+
+  function setupUnverifiedTenantWithConfirmedCollector() {
+    const { db, a } = setupTwoTenants();
+    const masterKey = randomBytes(32);
+    const secrets = new ScopedSecrets(db, a.tenantId, masterKey);
+    secrets.save(VALID_KEY, { verified: false });
+
+    // A fully confirmed collector — real output_schema_json + entity_key
+    // (+ rule), the exact shape onboarding's persistConfirmedSetup writes —
+    // so a real evaluateCollector() run against it can actually reach PASS,
+    // not just "skipped: no schema registered".
+    db.prepare(
+      `INSERT INTO tenant_collectors
+         (tenant_id, collector_id, name, adapter, canary_inputs_json, entity_key, entity_key_rule_json,
+          output_schema_json, setup_state, enabled, next_run_at, created_at)
+       VALUES (?, 'c_1', 'Acme Catalog', 'brightdata', '["SKU-1"]', 'sku', ?, ?, 'confirmed', 1, ?, ?)`
+    ).run(
+      a.tenantId,
+      JSON.stringify({ kind: 'input_equals_field' }),
+      JSON.stringify({ fields: { sku: { type: 'text', required: true } } }),
+      new Date(Date.now() - 1000).toISOString(),
+      new Date().toISOString()
+    );
+
+    const dueRow: DueRow = { tenant_id: a.tenantId, collector_id: 'c_1', next_run_at: new Date().toISOString() };
+    return { db, secrets, masterKey, dueRow };
+  }
+
+  it("an unverified tenant's first genuinely successful run ends up verified", async () => {
+    const { db, secrets, masterKey, dueRow } = setupUnverifiedTenantWithConfirmedCollector();
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { collection_id: 'j_1' })) // trigger
+      .mockResolvedValueOnce(jsonResponse(200, [{ sku: 'SKU-1', input: 'SKU-1' }])) // dataset
+      .mockResolvedValueOnce(jsonResponse(200, { status: 'done', lines: 1, fails: 0, success: 1, pages: 1 })) // jobLog
+      .mockResolvedValueOnce(jsonResponse(200, [])); // hp_errors
+
+    const runOne = createDefaultRunOne({ db, masterKey, fetchImpl: fetchImpl as unknown as typeof fetch });
+    await runOne(dueRow);
+
+    expect(secrets.status()?.key_verification).toBe('verified');
+  });
+
+  it('a run that fails on auth (a 401 from the adapter itself) leaves the key unverified', async () => {
+    const { db, secrets, masterKey, dueRow } = setupUnverifiedTenantWithConfirmedCollector();
+    // The trigger call itself 401s — BrightDataClient throws immediately
+    // (401 is never retried), so evaluateCollector never produces real
+    // evidence; runFleet's own fault isolation still returns a summary
+    // (SUSPECT_UNEXPLAINED_ANOMALY/DATA/QUARANTINE), never a PASS.
+    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonResponse(401, { error: 'unauthorized' }));
+
+    const runOne = createDefaultRunOne({ db, masterKey, fetchImpl: fetchImpl as unknown as typeof fetch });
+    await runOne(dueRow);
+
+    expect(secrets.status()?.key_verification).toBe('unverified');
+  });
+
+  it('does not repeat the flip on a second successful run against an already-verified key', async () => {
+    const { db, secrets, masterKey, dueRow } = setupUnverifiedTenantWithConfirmedCollector();
+    const markVerifiedSpy = vi.spyOn(ScopedSecrets.prototype, 'markVerified');
+    const passingFetch = () =>
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(200, { collection_id: 'j_1' }))
+        .mockResolvedValueOnce(jsonResponse(200, [{ sku: 'SKU-1', input: 'SKU-1' }]))
+        .mockResolvedValueOnce(jsonResponse(200, { status: 'done', lines: 1, fails: 0, success: 1, pages: 1 }))
+        .mockResolvedValueOnce(jsonResponse(200, []));
+
+    await createDefaultRunOne({ db, masterKey, fetchImpl: passingFetch() as unknown as typeof fetch })(dueRow);
+    expect(secrets.status()?.key_verification).toBe('verified');
+    expect(markVerifiedSpy).toHaveBeenCalledTimes(1);
+
+    await createDefaultRunOne({ db, masterKey, fetchImpl: passingFetch() as unknown as typeof fetch })(dueRow);
+    expect(markVerifiedSpy).toHaveBeenCalledTimes(1);
+
+    markVerifiedSpy.mockRestore();
   });
 });

@@ -16,7 +16,7 @@
  */
 import type Database from 'better-sqlite3';
 import { Ledger, type VerifyResult } from '../ledger.js';
-import { runFleet } from '../runner.js';
+import { runFleet, type FleetRunSummary } from '../runner.js';
 import { buildTenantContext } from '../config.js';
 import { BrightDataClient, type PollOptions } from '../brightdata.js';
 import type { AlertNotifier } from '../alerts.js';
@@ -251,6 +251,59 @@ export interface DefaultRunOneDeps {
 }
 
 /**
+ * Flips a tenant's key from `unverified` to `verified` the first time a
+ * real run against it genuinely proves the key works — the gap
+ * `key-verification.ts`'s own docstring left open: a 403 (or any
+ * non-401 failure) at SAVE time persists the key as `unverified` rather
+ * than discarding it (that endpoint being gated says nothing about the
+ * credential's own validity), and `ScopedSecrets.markVerified()` exists for
+ * exactly this moment, but had no caller — the onboarding module correctly
+ * declined to wire it since the run/scheduler call sites live outside it
+ * (see test/tenancy.key-verification.test.ts's own end-to-end
+ * demonstration of the intended mechanism).
+ *
+ * Only a clean `PASS` verdict flips it. This is deliberately narrower than
+ * "the adapter didn't throw": `runFleet` never rethrows a per-collector
+ * failure (fault isolation, runner.ts's own docstring) — an adapter-level
+ * auth failure and a genuine missing-schema/registration gap BOTH collapse
+ * to the exact same `SUSPECT_UNEXPLAINED_ANOMALY`/`DATA`/`QUARANTINE` shape
+ * in `CollectorRunSummary` (policy.ts's `skipped` branch vs. runner.ts's
+ * adapter-threw catch branch are indistinguishable from this summary alone)
+ * — so that shape can never be trusted as proof the key works. A `PASS`
+ * verdict, by contrast, requires contract + coherence + identity + canary
+ * to have actually evaluated against real returned rows; it cannot be
+ * reached by any error/skip fallback path, so it is the one unambiguous
+ * "this key genuinely works" signal available at this boundary. (A
+ * REPAIR/STRUCTURAL or REDISCOVER/IDENTITY verdict also proves the key
+ * works in principle — the adapter call itself succeeded — but is
+ * deliberately excluded here too: distinguishing those from the
+ * indistinguishable QUARANTINE/DATA cases above from this summary shape
+ * would need a change to `runFleet`'s return type, out of this task's
+ * scope. `PASS`-only is conservative, not incomplete: it may take one
+ * extra run to flip a key whose first job happens to hit a real structural
+ * issue, never a false "verified".)
+ *
+ * Idempotent and cheap by construction: a `status()` read gates the write,
+ * so an already-`verified` tenant's every subsequent successful run costs
+ * one SELECT, never another UPDATE. Never throws into the caller — a
+ * bookkeeping write failing (SQLITE_BUSY, a closed DB) must never fail a
+ * run that has already succeeded and already been recorded via
+ * `onDispatchSuccess`, matching `heal.ts`'s `appendBestEffort` posture for
+ * the same class of "don't let bookkeeping take down a real result" bug.
+ */
+export function markKeyVerifiedIfNeeded(secrets: ScopedSecrets, summary: FleetRunSummary): void {
+  const genuinelyProvedTheKeyWorks = summary.results.some((r) => r.verdict === 'PASS');
+  if (!genuinelyProvedTheKeyWorks) return;
+
+  try {
+    if (secrets.status()?.key_verification === 'verified') return;
+    secrets.markVerified();
+  } catch {
+    // Best-effort — see this function's own doc comment.
+  }
+}
+
+/**
  * The production `runOne`: reveals the tenant's own Bright Data key, builds
  * a one-collector "mini fleet" (exactly the shape `watch` already uses
  * today, index.ts:196) via `buildTenantContext`, and runs it through the
@@ -294,8 +347,9 @@ export function createDefaultRunOne(deps: DefaultRunOneDeps): (row: DueRow) => P
         pollOptions: deps.pollOptions,
         notifier: deps.notifier,
       });
-      await withTimeout(runFleet(config, ctx), deps.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS);
+      const summary = await withTimeout(runFleet(config, ctx), deps.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS);
       onDispatchSuccess(deps.db, row, nowIso, collectorRow.interval_minutes);
+      markKeyVerifiedIfNeeded(secrets, summary);
     } catch {
       onDispatchFailure(deps.db, row, nowIso, collectorRow.interval_minutes);
     }

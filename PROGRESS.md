@@ -12,9 +12,9 @@ Refresh the live numbers with `npm run progress` (rewrites the Live metrics bloc
 <!-- METRICS:START -->
 | Metric | Value |
 |---|---|
-| Commits | 51 |
-| Backend tests | 579 passing, 1 skipped |
-| App tests | 264 passing |
+| Commits | 52 |
+| Backend tests | 588 passing, 1 skipped |
+| App tests | 268 passing |
 | Typecheck | clean |
 | Backend suite | `npx vitest run` |
 | App suite | `npm --prefix app run test` |
@@ -94,6 +94,7 @@ router wiring between landing/onboarding/fleet, and `app/`'s test suite settling
 | Docker image actually builds right now | ✅ verified with a real `docker build` against the current working tree, then a real `docker run` with a mounted volume and `POLYGRAPH_MASTER_KEY` set: `/healthz` → 200, `/` serves the real built app (not the placeholder), `POST /api/signup` → real token, `/t/:token` → real session cookie, `POST /api/ledger/verify` (this task's own new route) → `{"ok":true,"checked":0}`. This was flaky earlier in this same task (see Known limits) while `app/**` was mid-fix; re-verify before trusting this row if it's been a while |
 | Deployed | ⬜ — deliberately not done by any task; a human's call (`fly deploy`) |
 | Single command that runs both test suites | ✅ `npm run test:all` (Task 10b) — verified it actually fails when either suite fails, not just when both do |
+| A 403/network-unverified key flips to `verified` on its first genuinely successful run | ✅ Task 10b — `ScopedSecrets.markVerified()` existed with no caller since the 403-key fix (`key-verification.ts`); wired into `src/tenancy/scheduler.ts`'s `createDefaultRunOne`, gated on a real `PASS` verdict only (never on a run that failed auth — both collapse to the same `SUSPECT_UNEXPLAINED_ANOMALY`/`DATA`/`QUARANTINE` shape at the summary level, so `PASS` is the one unambiguous proof available), idempotent (a cached `status()` read skips the write once already verified), and never throws into the scheduler |
 
 ---
 
