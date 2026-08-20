@@ -618,3 +618,119 @@ describe('healCollector — governor attempt accounting (Fix round 1, Finding B)
     db.close();
   });
 });
+
+describe('healCollector — a ledger write itself failing must not mask the real outcome (Fix round 2)', () => {
+  const prevEnv = process.env.POLYGRAPH_HEAL_ENABLED;
+
+  beforeEach(() => {
+    process.env.POLYGRAPH_HEAL_ENABLED = '1';
+  });
+
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.POLYGRAPH_HEAL_ENABLED;
+    else process.env.POLYGRAPH_HEAL_ENABLED = prevEnv;
+  });
+
+  it("a ledger failure on the CATCH block's own terminal write surfaces the ORIGINAL error, not the sqlite error, and does not hang", async () => {
+    const realLedger = new Ledger(':memory:');
+    const originalAppend = realLedger.append.bind(realLedger);
+    let appendCount = 0;
+    const appendSpy = vi.spyOn(realLedger, 'append').mockImplementation((event) => {
+      appendCount++;
+      if (appendCount === 1) return originalAppend(event); // let RECOVERY_PENDING through
+      throw new Error('SQLITE_BUSY: database is locked'); // the catch block's own terminal write fails
+    });
+
+    const ctx = newRunnerContext({ ledger: realLedger });
+    // A persistent 500 with maxRetries:0 -> heal.ts's own single retry also
+    // 500s -> throws a real BrightDataError, entering the catch block.
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(500, { error: 'internal' }));
+    const client = new BrightDataClient({
+      apiKey: 'k',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: instantSleep,
+      maxRetries: 0,
+    });
+    const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
+
+    let caught: unknown;
+    try {
+      await healCollector('acme-catalog', prompt, {
+        client,
+        policy: HEAL_POLICY,
+        tenant: 'acme-corp',
+        collector,
+        runnerCtx: ctx,
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    // The ORIGINAL error propagates, unmasked by the secondary sqlite failure.
+    expect(caught).toBeInstanceOf(BrightDataError);
+    expect((caught as BrightDataError).status).toBe(500);
+    // The secondary ledger failure is attached as context, not swallowed silently.
+    const ledgerAppendError = (caught as Error & { ledgerAppendError?: unknown }).ledgerAppendError;
+    expect(ledgerAppendError).toBeInstanceOf(Error);
+    expect((ledgerAppendError as Error).message).toMatch(/SQLITE_BUSY/);
+
+    // No hang / no unhandled rejection: appendSpy was called exactly twice
+    // (RECOVERY_PENDING succeeded, the terminal write failed) and the test
+    // itself completed via a normal try/catch, not a timeout.
+    expect(appendSpy).toHaveBeenCalledTimes(2);
+
+    appendSpy.mockRestore();
+    realLedger.close();
+  });
+
+  it('a ledger failure on the SUCCESS path surfaces via HealOutcome.ledgerWriteError, not as a thrown sqlite error masking a real heal outcome', async () => {
+    const realLedger = new Ledger(':memory:');
+    const originalAppend = realLedger.append.bind(realLedger);
+    let appendCount = 0;
+    const appendSpy = vi.spyOn(realLedger, 'append').mockImplementation((event) => {
+      appendCount++;
+      // 1 = RECOVERY_PENDING, 2 = normal grading row: let both through.
+      if (appendCount <= 2) return originalAppend(event);
+      // 3 = RECOVERY_VERIFIED/RECOVERY_FAILED: this is the one that fails.
+      throw new Error('SQLITE_BUSY: database is locked');
+    });
+
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_ledger_fail', status: 'started' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'ai_job_ledger_fail', status: 'done' }))
+      .mockResolvedValueOnce(new Response('SKU-1 $9.99', { status: 200, headers: { 'content-type': 'text/html' } }));
+    const client = new BrightDataClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: instantSleep });
+    const ctx = newRunnerContext({
+      ledger: realLedger,
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1', price: 9.99 }) },
+      },
+      schemas: {
+        'acme-catalog': { fields: { sku: { type: 'string', required: true }, price: { type: 'number', required: true, default_value: 0 } } },
+      },
+    });
+    const prompt = mintHealPrompt(ctx.governor, HEAL_POLICY, '2026-08-20T00:00:00.000Z');
+
+    // Must not throw — the ledger failure is a bookkeeping problem, not a
+    // heal-outcome problem.
+    const outcome = await healCollector('acme-catalog', prompt, {
+      client,
+      policy: HEAL_POLICY,
+      tenant: 'acme-corp',
+      collector,
+      runnerCtx: ctx,
+    });
+
+    // The REAL heal outcome still comes through correctly.
+    expect(outcome.status).toBe('verified');
+    expect(outcome.regrade).toMatchObject({ verdict: 'PASS', action: 'RELEASE' });
+    // ...with the secondary ledger failure surfaced, not silently dropped.
+    expect(outcome.ledgerWriteError).toBeInstanceOf(Error);
+    expect((outcome.ledgerWriteError as Error).message).toMatch(/SQLITE_BUSY/);
+
+    appendSpy.mockRestore();
+    realLedger.close();
+  });
+});
