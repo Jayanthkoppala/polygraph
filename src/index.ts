@@ -1,7 +1,19 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
+import { Ledger, type LedgerEventRow } from './ledger.js';
 
 const program = new Command();
+
+/** Default DB path is ./polygraph.sqlite, overridable via env POLYGRAPH_DB. */
+function resolveDbPath(): string {
+  const fromEnv = process.env.POLYGRAPH_DB;
+  return fromEnv && fromEnv.trim() !== '' ? fromEnv : './polygraph.sqlite';
+}
+
+function formatLogLine(row: LedgerEventRow): string {
+  const cause = row.cause ? ` cause=${row.cause}` : '';
+  return `[${row.ts}] #${row.id} ${row.collector} verdict=${row.verdict} action=${row.action}${cause} run=${row.run_id}`;
+}
 
 program
   .name('polygraph')
@@ -33,7 +45,24 @@ program
 program
   .command('log')
   .description('Show recent incidents from the ledger')
-  .action(stub('log'));
+  .option('--collector <id>', 'filter to a single collector id')
+  .option('-n, --limit <count>', 'number of events to show', '20')
+  .action((opts: { collector?: string; limit: string }) => {
+    const parsedLimit = parseInt(opts.limit, 10);
+    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 20;
+
+    const ledger = new Ledger(resolveDbPath());
+    const rows = ledger.recent({ collector: opts.collector, limit });
+    ledger.close();
+
+    if (rows.length === 0) {
+      process.stdout.write('no ledger events found\n');
+      return;
+    }
+    for (const row of rows) {
+      process.stdout.write(`${formatLogLine(row)}\n`);
+    }
+  });
 
 program
   .command('ack')
@@ -50,6 +79,20 @@ const ledger = program.command('ledger').description('Verification ledger operat
 ledger
   .command('verify')
   .description('Verify the integrity of the ledger')
-  .action(stub('ledger verify'));
+  .action(() => {
+    const store = new Ledger(resolveDbPath());
+    const result = store.verify();
+    store.close();
+
+    if (result.ok) {
+      process.stdout.write(`ledger verify: OK — ${result.checked} event(s) verified, chain intact\n`);
+      process.exitCode = 0;
+    } else {
+      process.stderr.write(
+        `ledger verify: FAILED — tamper detected at event id ${result.firstBadId} (checked ${result.checked} event(s))\n`
+      );
+      process.exitCode = 1;
+    }
+  });
 
 program.parse(process.argv);
