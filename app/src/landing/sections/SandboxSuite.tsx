@@ -34,7 +34,7 @@ export function SandboxSuite({ sandbox }: { sandbox: UseSandboxEngineResult }) {
           <span className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-verdict-pass)]">
             Live browser sandbox
           </span>
-          <h2 id="sandbox-title" className="mt-3 text-balance text-3xl font-bold leading-tight text-[#EDEDED] md:text-5xl">
+          <h2 id="sandbox-title" className="mt-3 text-balance text-3xl font-semibold leading-tight text-[#EDEDED]">
             Break the run. Watch every check answer.
           </h2>
           <p className="mt-4 max-w-2xl text-pretty text-base text-[#9B9B9B] md:text-lg">

@@ -133,17 +133,14 @@ export function Hero() {
               <a
                 href="#run-it-yourself"
                 className="inline-flex min-h-11 items-center text-sm font-medium text-[#9B9B9B] outline-none transition-[color,transform]
-                           duration-[var(--dur-fast)] hover:text-[#EDEDED] active:scale-[0.96]
+                           duration-[var(--dur-fast)] ease-[var(--ease-fluid)] hover:text-[#EDEDED] active:scale-[0.96]
                            focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]"
               >
                 Run it yourself, offline →
               </a>
             </div>
 
-            {/* copy.md S1 honesty microline. "on the right" is only true at
-                md+ where the grid is two columns; below that the panel
-                stacks underneath, and saying "right" there would be the
-                page's first small lie. */}
+            {/* The live engine is now directly below in its own viewport. */}
             <p className="text-sm text-[#9B9B9B]">
               The sandbox below is real — the engine runs in your tab. Break it.
             </p>
