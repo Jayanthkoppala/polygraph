@@ -9,6 +9,11 @@ import { MemoryRouter } from 'react-router-dom';
 import { AppRoutes } from './App';
 import type { FleetState } from '@/lib/api';
 
+// The landing's shader is covered by its component/type checks. Route tests
+// exercise navigation in jsdom, which has neither a WebGL canvas nor a
+// ResizeObserver, so use a harmless background stand-in here.
+vi.mock('@/components/Dither', () => ({ default: () => <div data-testid="dither" /> }));
+
 // The landing page mounts `FleetScale`, whose own gates need
 // `IntersectionObserver` and `window.matchMedia` — jsdom has neither. This
 // suite is testing routing, not FleetScale's WebGL gating (that's
@@ -87,7 +92,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('heading', { name: /your scraper says 200 OK/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /your scraper says it recovered/i })).toBeInTheDocument();
   });
 
   it('an unknown path redirects to the landing page, never a raw 404 shell', () => {
@@ -96,7 +101,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('heading', { name: /your scraper says 200 OK/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /your scraper says it recovered/i })).toBeInTheDocument();
   });
 
   it('/legal/privacy renders a real privacy notice instead of redirecting to the landing page', () => {
@@ -127,7 +132,7 @@ describe('AppRoutes', () => {
       </MemoryRouter>,
     );
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: /your scraper says 200 OK/i })).toBeInTheDocument(),
+      expect(screen.getByRole('heading', { name: /your scraper says it recovered/i })).toBeInTheDocument(),
     );
   });
 

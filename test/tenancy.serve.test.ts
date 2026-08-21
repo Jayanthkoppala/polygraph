@@ -7,6 +7,7 @@ import { startServer, type RunningServer } from '../src/tenancy/serve.js';
 import { openWriter } from '../src/tenancy/db.js';
 import { setTenantPublic } from '../src/tenancy/admin.js';
 import { scopeFor } from '../src/tenancy/scope.js';
+import { DemoMissionService, type DemoBrightDataClient, type DemoGithubClient, type DemoMissionConfig } from '../src/demo/mission.js';
 
 /**
  * End-to-end HTTP tests for the hosted server, per Task 4's requirements:
@@ -48,6 +49,70 @@ async function sessionCookieFor(base: string, token: string): Promise<string> {
   // "pg_session=<value>; HttpOnly; ..." -> the request-header form is just "pg_session=<value>"
   return setCookie!.split(';')[0];
 }
+
+const DEMO_ENV_KEYS = ['POLYGRAPH_DEMO_LIVE', 'POLYGRAPH_HEAL_ENABLED', 'POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE', 'POLYGRAPH_DEMO_GITHUB_TOKEN', 'POLYGRAPH_DEMO_FIXTURE_REPO', 'POLYGRAPH_DEMO_FIXTURE_WORKFLOW', 'POLYGRAPH_DEMO_FIXTURE_URL', 'POLYGRAPH_DEMO_COLLECTOR_ID', 'POLYGRAPH_DEMO_EXPECTED_SKU', 'POLYGRAPH_DEMO_EXPECTED_PRICE', 'BRIGHTDATA_API_KEY'] as const;
+const DEMO_CONFIG: DemoMissionConfig = { githubToken: 'test-token', fixtureRepo: 'owner/fixture', fixtureWorkflow: 'flip.yml', fixtureUrl: 'https://fixture.test/', collectorId: 'c_demo', brightDataApiKey: 'bdata-test', expectedSku: 'SKU-ASTER-001', expectedPrice: '£51.77' };
+
+function createFakeDemoService(): DemoMissionService {
+  const github: DemoGithubClient = { workflowUrl: 'https://github.test/workflow', async dispatch() {}, async waitForMarker() {} };
+  const brightData: DemoBrightDataClient = {
+    async trigger() { return 'job-1'; },
+    async pollDataset() { return { rows: [{ sku: 'SKU-ASTER-001', price: { value: 51.77, currency: 'GBP', symbol: '£' } }], ambiguous: false }; },
+    async refactorTemplate() { return {}; },
+    async pollRefactorTemplateProgress() { return { status: 'completed', id: 'heal-1' }; },
+    async resumeAutomationJob() {},
+  };
+  return new DemoMissionService({ config: DEMO_CONFIG, github, brightData, id: () => 'hosted-mission-1', nextGeneration: () => '1' });
+}
+
+describe('tenancy/serve — public demo integration', () => {
+  let dir: string;
+  let running: RunningServer | undefined;
+
+  afterEach(async () => {
+    await running?.stop();
+    running = undefined;
+    delete process.env.POLYGRAPH_MASTER_KEY;
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('serves public demo progress alongside signup and token-to-session routes, while a missing demo config remains a 503', async () => {
+    const savedEnv = Object.fromEntries(DEMO_ENV_KEYS.map((key) => [key, process.env[key]]));
+    for (const key of DEMO_ENV_KEYS) delete process.env[key];
+    dir = tempDir();
+    process.env.POLYGRAPH_MASTER_KEY = randomBytes(32).toString('base64');
+
+    try {
+      running = await startServer({ dbPath: join(dir, 'polygraph.sqlite'), port: 0, host: '127.0.0.1', publicOrigin: ORIGIN, webDir: join(dir, 'nope') });
+      const disabledBase = `http://127.0.0.1:${running.port}`;
+      const disabled = await fetch(`${disabledBase}/api/demo/missions`, { method: 'POST', headers: jsonHeaders(), body: '{}' });
+      expect(disabled.status).toBe(503);
+      expect(disabled.headers.get('strict-transport-security')).toBe('max-age=31536000');
+      await running.stop();
+
+      running = await startServer({ dbPath: join(dir, 'polygraph.sqlite'), port: 0, host: '127.0.0.1', publicOrigin: ORIGIN, webDir: join(dir, 'nope'), demoService: createFakeDemoService() });
+      const base = `http://127.0.0.1:${running.port}`;
+      const created = await fetch(`${base}/api/demo/missions`, { method: 'POST', headers: jsonHeaders(), body: '{}' });
+      expect(created.status).toBe(201);
+      const { id } = (await created.json()) as { id: string };
+      expect(id).toBe('hosted-mission-1');
+      const progress = await fetch(`${base}/api/demo/missions/${id}`);
+      expect(progress.status).toBe(200);
+      expect((await progress.json()) as { id: string }).toMatchObject({ id });
+
+      const issued = await signup(base, 'Hosted Demo Fleet');
+      const session = await fetch(`${base}/t/${issued.token}`, { redirect: 'manual' });
+      expect(session.status).toBe(302);
+      expect(session.headers.get('set-cookie')).toContain('pg_session=');
+    } finally {
+      for (const key of DEMO_ENV_KEYS) {
+        const value = savedEnv[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+});
 
 describe('tenancy/serve — auth required', () => {
   let dir: string;

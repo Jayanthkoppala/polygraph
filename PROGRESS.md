@@ -3,7 +3,7 @@
 Single source of truth for what is built, what is being built, and what is not.
 Refresh the live numbers with `npm run progress` (rewrites the Live metrics block below).
 
-**Last updated:** 2026-08-21 19:51 · **Branch:** `build/v1` · **Deadline:** 2026-08-23
+**Last updated:** 2026-08-22 04:51 · **Branch:** `build/v1` · **Deadline:** 2026-08-23
 
 ---
 
@@ -13,19 +13,43 @@ Refresh the live numbers with `npm run progress` (rewrites the Live metrics bloc
 | Metric | Value |
 |---|---|
 | Commits | 93 |
-| Backend tests | 629 passing, 1 skipped |
-| App tests | 430 passing |
+| Backend tests | 639 passing, 1 skipped |
+| App tests | 439 passing |
 | Typecheck | clean |
 | Backend suite | `npx vitest run` |
 | App suite | `npm --prefix app run test` |
 | Both, one command | `npm run test:all` |
 <!-- METRICS:END -->
 
-> Two separate npm/vitest projects: the root and `app/`. Re-verified 2026-08-21:
-> 629 backend passing (1 paid live smoke intentionally skipped) plus 430 app passing =
-> **1,059 passing**. Both typechecks, both production builds, the built MCP stdio handshake,
+> Two separate npm/vitest projects: the root and `app/`. Re-verified 2026-08-22:
+> 639 backend passing (1 paid live smoke intentionally skipped) plus 439 app passing =
+> **1,078 passing**. Both typechecks, both production builds, the built MCP stdio handshake,
 > package dry-run, and the runtime dependency audit passed. `npm run progress` refreshes the
 > test counts after future changes.
+
+---
+
+## Hackathon MVP — Version Shift · IN PROGRESS
+
+| Wave | Deliverable | State |
+|---|---|---|
+| 0 | Live contract and repository audit | ✅ |
+| 1 | Separate public V1/V2 fixture repository + GitHub/Vercel switch | 🔄 GitHub authorization pending; Vercel V1 is live |
+| 2 | Mission backend + real progress events + automatic V1 reset | ✅ local + full suite |
+| 3 | Premium desktop experience + visible mission progress tracker | ✅ local + production build |
+| 4 | Thin token → collector → connected flow | ✅ existing secure onboarding handoff |
+| 5 | V1→V2→heal→fresh-proof rehearsal and deployment | 🔄 collector created; external authorization pending |
+
+The visible product tracker is event-driven: GitHub dispatch, deployment,
+live-version confirmation, Bright Data baseline/broken/proof runs,
+Self-Healing, receipt, and V1 reset. It must never display a fabricated
+percentage.
+
+Live fixture: `https://polygraph-version-shift-store.vercel.app` · Bright Data
+collector: `c_mt3kif5w1ds27lttug`. The first real V1 run proved SKU
+`SKU-ASTER-001` with GBP price value `51.77`. Completion still requires the
+real GitHub V2/V1 workflow and A/B/heal/C rehearsal; no green claim is made
+until those external steps pass.
 
 ---
 

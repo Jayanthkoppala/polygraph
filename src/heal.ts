@@ -98,6 +98,77 @@ export class PolygraphHealDisabled extends Error {
   }
 }
 
+const OWNED_FIXTURE_PERMIT: unique symbol = Symbol('polygraph-owned-fixture-heal-permit');
+
+/**
+ * Narrow capability for the public hackathon fixture. It can only be minted
+ * when all live-demo kill switches are open and the requested collector and
+ * URL exactly match the server-side allowlist. Customer collectors can never
+ * obtain this capability.
+ */
+export interface OwnedFixtureHealPermit {
+  readonly collectorId: string;
+  readonly fixtureUrl: string;
+  readonly [OWNED_FIXTURE_PERMIT]: true;
+}
+
+export function mintOwnedFixtureHealPermit(
+  collectorId: string,
+  fixtureUrl: string,
+  policy: Policy,
+  env: NodeJS.ProcessEnv = process.env
+): OwnedFixtureHealPermit {
+  const enabled =
+    policy.heal_enabled === true &&
+    env.POLYGRAPH_HEAL_ENABLED === '1' &&
+    env.POLYGRAPH_DEMO_LIVE === '1' &&
+    env.POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE === '1';
+  if (!enabled) throw new PolygraphHealDisabled('owned fixture live-demo gates are not all enabled');
+  if (env.POLYGRAPH_DEMO_COLLECTOR_ID !== collectorId) throw new PolygraphHealDisabled('collector is not the owned fixture allowlist target');
+  if (env.POLYGRAPH_DEMO_FIXTURE_URL !== fixtureUrl) throw new PolygraphHealDisabled('URL is not the owned fixture allowlist target');
+  return { collectorId, fixtureUrl, [OWNED_FIXTURE_PERMIT]: true };
+}
+
+export interface HealOwnedFixtureOptions {
+  client: Pick<BrightDataClient, 'refactorTemplate' | 'pollRefactorTemplateProgress' | 'resumeAutomationJob'>;
+  policy: Policy;
+  permit: OwnedFixtureHealPermit;
+  poll?: PollOptions;
+}
+
+/**
+ * Executes the one exceptional unattended repair supported by Polygraph:
+ * the repository-owned, disposable hackathon fixture. The same general heal
+ * kill switch remains mandatory, plus a second demo-only allowlist gate.
+ * It must stop at Bright Data's approval boundary before this function can
+ * auto-save, and it never performs or verifies the post-heal scrape itself.
+ */
+export async function healOwnedFixture(
+  prompt: string,
+  options: HealOwnedFixtureOptions
+): Promise<RefactorProgress> {
+  assertHealEnabled(options.policy);
+  const { collectorId, fixtureUrl } = options.permit;
+  if (options.permit[OWNED_FIXTURE_PERMIT] !== true) throw new PolygraphHealDisabled('owned fixture permit is invalid');
+
+  await options.client.refactorTemplate(collectorId, prompt, [{ url: fixtureUrl }]);
+  const pollOpts: PollOptions = {
+    intervalMs: options.poll?.intervalMs ?? DEFAULT_POLL.intervalMs,
+    deadlineMs: options.poll?.deadlineMs ?? DEFAULT_POLL.deadlineMs,
+  };
+  let progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts);
+  if (!isAwaitingApproval(progress)) {
+    throw new BrightDataError(`owned fixture heal did not stop at the required approval gate (status "${progress.status}")`);
+  }
+  await options.client.resumeAutomationJob(collectorId, { message: true, autoSave: true });
+  progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts);
+  const status = String(progress.status ?? '').toLowerCase();
+  if (!['done', 'complete', 'completed', 'success', 'succeeded'].includes(status)) {
+    throw new BrightDataError(`owned fixture heal did not finish successfully (status "${progress.status}")`);
+  }
+  return progress;
+}
+
 /** Both gates must be open: the fleet policy's own heal_enabled flag AND
  * the env var kill switch (exactly "1" — anything else is off, including
  * "true"/"yes"). Either one closed disables every heal path. */

@@ -81,23 +81,16 @@ describe('landing section rhythm (ui-system.md §1.6: "Section padding, landing 
 });
 
 describe('landing viewport composition', () => {
-  it('keeps the proposition in viewport one and gives the live sandbox its own next-viewport section', () => {
+  it('keeps the cinematic proof mission in the first desktop viewport', () => {
     const page = readFileSync(path.join(LANDING_DIR, 'LandingPage.tsx'), 'utf8');
-    const hero = readFileSync(path.join(SECTIONS_DIR, 'Hero.tsx'), 'utf8');
-    const suite = readFileSync(path.join(SECTIONS_DIR, 'SandboxSuite.tsx'), 'utf8');
+    const mission = readFileSync(path.join(LANDING_DIR, 'MissionExperience.tsx'), 'utf8');
 
-    expect(page.indexOf('<Hero')).toBeGreaterThan(-1);
-    expect(page.indexOf('<SandboxSuite')).toBeGreaterThan(page.indexOf('<Hero'));
-    expect(hero).not.toMatch(/<SandboxPanel|<PipelineFlowchart/);
-    // The approved target is one judge-legible dashboard, not the older
-    // fleet-card + generic pipeline composition. Keep the real engine proof
-    // visible through its action rail, safe output, and consequence board.
-    expect(suite).not.toMatch(/<SandboxPanel|<PipelineFlowchart/);
-    expect(suite).toMatch(/<DotGrid/);
-    expect(suite).toMatch(/Judge action rail/);
-    expect(suite).toMatch(/Target proof dashboard/);
-    expect(suite).toMatch(/<SafeOutputPanel/);
-    expect(suite).toMatch(/min-h-\[100svh\]/);
+    expect(page).toMatch(/<MissionExperience/);
+    expect(mission).toMatch(/Run the live proof/);
+    expect(mission).toMatch(/Shift to V2/);
+    expect(mission).toMatch(/min-h-\[calc\(100svh-45px\)\]/);
+    expect(mission).toMatch(/<Dither/);
+    expect(mission).toMatch(/Real server events only/);
   });
 });
 

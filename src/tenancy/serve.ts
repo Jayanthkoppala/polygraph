@@ -19,6 +19,8 @@ import { Ledger } from '../ledger.js';
 import { loadMasterKey, loadPreviousMasterKey, assertMasterKeyCanary, MasterKeyMismatchError } from './crypto.js';
 import { handleTenantRequest, type TenantServerDeps } from './http-routes.js';
 import { startScheduler, type Dispatcher } from './scheduler.js';
+import { createDemoMissionService, readDemoMissionConfig } from '../demo/server.js';
+import type { DemoMissionService } from '../demo/mission.js';
 
 export interface StartServerOptions {
   dbPath?: string;
@@ -30,6 +32,8 @@ export interface StartServerOptions {
   fetchImpl?: typeof fetch;
   baseUrl?: string;
   now?: () => string;
+  /** Injectable public demo service for in-process tests. */
+  demoService?: DemoMissionService;
 }
 
 export interface RunningServer {
@@ -97,6 +101,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Runnin
   assertMasterKeyCanary(writer, masterKey);
 
   const reader = openReader(dbPath);
+  const demoConfig = readDemoMissionConfig();
+  const demoService = opts.demoService ?? (demoConfig ? createDemoMissionService(demoConfig) : undefined);
 
   const deps: TenantServerDeps = {
     writer,
@@ -108,6 +114,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Runnin
     now: opts.now,
     fetchImpl: opts.fetchImpl,
     baseUrl: opts.baseUrl,
+    demoService,
   };
 
   const server = createHttpServer((req, res) => {

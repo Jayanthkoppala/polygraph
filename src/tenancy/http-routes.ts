@@ -57,6 +57,8 @@ import { buildConfirmedSchema, persistConfirmedSetup, type ConfirmedFieldInput }
 import type { EntityKeyRule } from './entity-key.js';
 import { checkAndIncrementRateLimit, hourlyWindowKey, dailyWindowKey } from './rate-limit.js';
 import { recordVerifyResult } from './scheduler.js';
+import { tryHandleDemoMissionRequest } from '../demo/server.js';
+import type { DemoMissionService } from '../demo/mission.js';
 
 const SIGNUP_LIMIT_PER_HOUR = 3;
 const PROBE_LIMIT_PER_DAY = 10;
@@ -81,6 +83,8 @@ export interface TenantServerDeps {
    * necessarily a fresh client per call, not a shared `deps.client`. */
   fetchImpl?: typeof fetch;
   baseUrl?: string;
+  /** Public demo service; omitted when its live configuration is incomplete. */
+  demoService?: DemoMissionService;
 }
 
 interface TenantRow {
@@ -224,6 +228,8 @@ export async function handleTenantRequest(req: IncomingMessage, res: ServerRespo
       sendJson(res, 200, { ok: true });
       return;
     }
+
+    if (await tryHandleDemoMissionRequest(req, res, deps.demoService)) return;
 
     // ---- Signup + token exchange (public) ---------------------------------
 
