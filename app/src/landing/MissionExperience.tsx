@@ -87,7 +87,7 @@ export function MissionExperience() {
   async function run() {
     pollSequence.current += 1;
     setRequest('start'); setApiError(null);
-    try { setMission(await createMission({})); }
+    try { setMission(await createMission()); }
     catch (error) { setApiError(error instanceof Error ? `Replay fallback — mission API unavailable: ${error.message}` : 'Replay fallback — mission API unavailable.'); }
     finally { setRequest('idle'); }
   }
@@ -109,7 +109,7 @@ export function MissionExperience() {
   }
 
   return <section className="relative isolate min-h-[calc(100svh-45px)] overflow-x-hidden bg-black px-4 py-5 text-[#ededed] antialiased sm:px-6 lg:px-8" aria-labelledby="mission-title">
-    <div className="pointer-events-none absolute inset-0 opacity-80" aria-hidden="true"><Dither className="h-full w-full" waveColor={[0.0039215686, 0, 1]} waveSpeed={0.05} waveFrequency={3} waveAmplitude={0.3} colorNum={4} pixelSize={2} enableMouseInteraction mouseRadius={0.3} disableAnimation={Boolean(reducedMotion)} /></div>
+    <div className="pointer-events-none absolute inset-0 opacity-80" aria-hidden="true"><Dither className="h-full w-full" waveColor={[0.0039215686, 0, 1]} waveSpeed={0.05} waveFrequency={3} waveAmplitude={0.3} colorNum={4} pixelSize={2} enableMouseInteraction={!reducedMotion} mouseRadius={0.3} disableAnimation={Boolean(reducedMotion)} /></div>
     <div className="pointer-events-none absolute inset-0 bg-black/60" aria-hidden="true" />
     <div className="relative mx-auto flex min-h-[calc(100svh-85px)] w-full max-w-7xl flex-col justify-between gap-7">
       <motion.div initial={reducedMotion ? false : { opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: reducedMotion ? 0 : 0.38 }} className="grid gap-6 pt-2 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-end">

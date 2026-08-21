@@ -50,8 +50,8 @@ async function sessionCookieFor(base: string, token: string): Promise<string> {
   return setCookie!.split(';')[0];
 }
 
-const DEMO_ENV_KEYS = ['POLYGRAPH_DEMO_LIVE', 'POLYGRAPH_HEAL_ENABLED', 'POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE', 'POLYGRAPH_DEMO_GITHUB_TOKEN', 'POLYGRAPH_DEMO_FIXTURE_REPO', 'POLYGRAPH_DEMO_FIXTURE_WORKFLOW', 'POLYGRAPH_DEMO_FIXTURE_URL', 'POLYGRAPH_DEMO_COLLECTOR_ID', 'POLYGRAPH_DEMO_EXPECTED_SKU', 'POLYGRAPH_DEMO_EXPECTED_PRICE', 'BRIGHTDATA_API_KEY'] as const;
-const DEMO_CONFIG: DemoMissionConfig = { githubToken: 'test-token', fixtureRepo: 'owner/fixture', fixtureWorkflow: 'flip.yml', fixtureUrl: 'https://fixture.test/', collectorId: 'c_demo', brightDataApiKey: 'bdata-test', expectedSku: 'SKU-ASTER-001', expectedPrice: '£51.77' };
+const DEMO_ENV_KEYS = ['POLYGRAPH_DEMO_LIVE', 'POLYGRAPH_HEAL_ENABLED', 'POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE', 'POLYGRAPH_DEMO_GITHUB_TOKEN', 'POLYGRAPH_DEMO_FIXTURE_REPO', 'POLYGRAPH_DEMO_FIXTURE_WORKFLOW', 'POLYGRAPH_DEMO_FIXTURE_URL', 'POLYGRAPH_DEMO_COLLECTOR_ID', 'POLYGRAPH_DEMO_EXPECTED_SKU', 'POLYGRAPH_DEMO_EXPECTED_PRICE', 'POLYGRAPH_DEMO_EXPECTED_CURRENCY', 'POLYGRAPH_DEMO_EXPECTED_SYMBOL', 'BRIGHTDATA_API_KEY'] as const;
+const DEMO_CONFIG: DemoMissionConfig = { githubToken: 'test-token', fixtureRepo: 'owner/fixture', fixtureWorkflow: 'flip.yml', fixtureUrl: 'https://fixture.test/', collectorId: 'c_demo', brightDataApiKey: 'bdata-test', expectedSku: 'SKU-ASTER-001', expectedPrice: '51.77', expectedCurrency: 'GBP', expectedSymbol: '£' };
 
 function createFakeDemoService(): DemoMissionService {
   const github: DemoGithubClient = { workflowUrl: 'https://github.test/workflow', async dispatch() {}, async waitForMarker() {} };

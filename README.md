@@ -36,7 +36,10 @@ Polygraph takes a deliberately cautious position: healing a wrong-target failure
 worse than leaving it broken, because a repaired scraper that fetches the wrong page still
 returns 200 OK — and now nobody is looking.
 
-**Polygraph does not heal scrapers. It decides when healing is safe.**
+**Polygraph does not auto-heal customer collectors. It decides when healing is safe.**
+The only unattended repair path in this repository is the disposable,
+repository-owned hackathon fixture described below; it has a separate exact
+collector/URL allowlist and a process-lifetime paid-run cap.
 
 ---
 
@@ -84,6 +87,30 @@ You'll watch a healthy fleet pass, then a price field die and get quarantined wi
 suggested repair, then a scraper fetch the wrong product and get its repair **refused** —
 and finally `ledger verify` confirming the chain is intact.
 
+### The Fifteenth Morning — live V1 → V2 mission
+
+The judge-facing story is a real external loop, not a timer animation:
+
+1. GitHub Actions publishes V1 from the separate
+   [`polygraph-version-shift-store`](https://github.com/Jayanthkoppala/polygraph-version-shift-store)
+   repository and waits for Vercel's `version.json` marker.
+2. Bright Data collector `c_mt3kif5w1ds27lttug` proves the exact owned product
+   (`SKU-ASTER-001`, GBP price value `51.77`).
+3. A user click dispatches V2 at the same URL. V2 deliberately removes the
+   collector's `.product-price` anchor while keeping the same SKU.
+4. Polygraph requires B to prove “same product, price collapsed to schema
+   default `0`” before it can
+   mint the owned-fixture repair permit. Bright Data Self-Healing then stops at
+   its approval boundary, receives the fixture-only auto-save, and C must prove
+   the exact SKU and price again before a receipt appears.
+5. Reset dispatches V1 through the same workflow without spending another
+   scrape.
+
+Every visible progress item is a server event from that loop. A mission spends
+at most three scrapes and one heal; the server process accepts at most two live
+missions. Customer collectors still go through signed-in onboarding and never
+inherit the fixture permit.
+
 ---
 
 ## Run the server yourself
@@ -97,9 +124,11 @@ npm run build
 POLYGRAPH_MASTER_KEY=<32-byte hex> npm run serve
 ```
 
-The public Vercel deployment is a static landing page and browser sandbox only. It does not
-run this server, accept signups, or store tenant data. Fly configuration is present for a
-self-hosted deployment, but no public Fly instance is currently live.
+The legacy public Vercel deployment is static. The live V1→V2 mission is built
+for the same-origin Fly server so the polished React story, mission API, signup,
+and signed-in collector onboarding use one runtime. See [`PROGRESS.md`](PROGRESS.md)
+for the current deployment/rehearsal gate rather than assuming a green local
+build is a live service.
 
 **On key custody**, because you should ask before pasting an API key anywhere: keys are
 encrypted per tenant with AES-256-GCM, and the key that decrypts them lives in the server
@@ -144,7 +173,7 @@ that overstates its own progress is self-defeating:
 | Offline demo | **Done** | `npm run demo`, no account, no network |
 | Multi-tenancy — isolation, key custody, onboarding | **Built, not live** | Code and tests are in; no public instance is running, so it is unproven at any real scale |
 | Dashboard — fleet view, evidence, ledger stream | **Built, polishing** | Works; density and keyboard nav are unfinished |
-| Front end / landing page | **Built** | Static landing page, browser sandbox, safe-output story, and legal routes |
+| Front end / landing page | **Built** | Premium desktop V1→V2 mission, real event tracker, customer onboarding handoff, and legal routes |
 | Published to npm | **Not yet** | Package is configured as `polygraph-data`, but has not been published |
 | Public hosted service anyone can sign up for | **Not yet** | The server is self-hosted today; the public Vercel site is static |
 | Peer corroboration between collectors | **Not wired** | Built, but needs 3+ same-purpose collectors to say anything |
@@ -153,11 +182,11 @@ that overstates its own progress is self-defeating:
 And the specifics behind those rows:
 
 - **The verdict engine, ledger, safe-output retention, tenancy, key custody, and MCP surface are real and tested.**
-  1,059 tests, typechecks and production builds clean.
-- **The landing page sandbox is real** — actual verdicts and an actual SHA-256 chain
-  computed in your browser, against fixtures rather than a live fleet.
-- **Auto-repair is off in the hosted path**, structurally, not as a default. Repairs spend
-  your credits, so they stay a local, deliberate act.
+  1,081 tests, typechecks and production builds clean.
+- **The new landing mission never fabricates success.** It renders only server
+  events and visibly falls back when the mission API is unavailable.
+- **Customer auto-repair is off in the hosted path**, structurally, not as a
+  default. Only the exact owned fixture can mint the separate demo permit.
 - **Peer corroboration is built but not wired up.** It needs three or more collectors with
   the same purpose to say anything useful, so it's advisory-only today.
 - **There is no drift detection.** No trend signal exists yet, and a chart drawn from

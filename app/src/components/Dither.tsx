@@ -306,6 +306,7 @@ export default function Dither({
         className="dither-canvas"
         camera={{ position: [0, 0, 6] }}
         dpr={1}
+        frameloop={disableAnimation ? 'demand' : 'always'}
         gl={{ antialias: true, preserveDrawingBuffer: true }}
       >
         <DitheredWaves

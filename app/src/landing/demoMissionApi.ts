@@ -1,5 +1,3 @@
-import { saveApiKey } from '@/onboarding/api';
-
 export interface MissionEvidenceRef {
   fixtureRepo: string | null;
   v1Url: string | null;
@@ -47,16 +45,6 @@ export interface MissionState {
   events: MissionEvent[];
   evidence: MissionEvidenceRef;
   lastError?: string | null;
-}
-
-export interface MissionCreateInput {
-  token?: string;
-  collectorId?: string;
-}
-
-export interface CollectorPreview {
-  id: string;
-  name: string;
 }
 
 interface MissionCreateResponse {
@@ -165,11 +153,11 @@ async function parseJson<T>(response: Response, path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function createMission(payload: MissionCreateInput): Promise<MissionState> {
+export async function createMission(): Promise<MissionState> {
   const response = await fetch('/api/demo/missions', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({}),
   });
   const created = await parseJson<MissionCreateResponse>(response, '/api/demo/missions');
   return getMission(created.id);
@@ -199,11 +187,4 @@ export async function resetMission(id: string): Promise<MissionState> {
   });
   const raw = await parseJson<Partial<MissionState>>(response, `/api/demo/missions/${id}/reset`);
   return normalizeState(raw as MissionState);
-}
-
-export async function fetchCollectors(token: string): Promise<CollectorPreview[]> {
-  const outcome = await saveApiKey(token);
-  if (outcome.kind === 'rejected') throw new Error(`Bright Data rejected that token. ${outcome.message}`);
-  if (outcome.kind === 'list-unavailable') return [];
-  return outcome.collectors.map((collector) => ({ id: collector.id, name: collector.name }));
 }

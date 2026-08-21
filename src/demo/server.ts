@@ -10,7 +10,7 @@ export interface DemoServerDeps { config?: DemoMissionConfig; service?: DemoMiss
 export function readDemoMissionConfig(env: NodeJS.ProcessEnv = process.env): DemoMissionConfig | undefined {
   if (env.POLYGRAPH_DEMO_LIVE !== '1') return undefined;
   if (env.POLYGRAPH_HEAL_ENABLED !== '1' || env.POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE !== '1') return undefined;
-  const values = { githubToken: env.POLYGRAPH_DEMO_GITHUB_TOKEN, fixtureRepo: env.POLYGRAPH_DEMO_FIXTURE_REPO, fixtureWorkflow: env.POLYGRAPH_DEMO_FIXTURE_WORKFLOW, fixtureUrl: env.POLYGRAPH_DEMO_FIXTURE_URL, collectorId: env.POLYGRAPH_DEMO_COLLECTOR_ID, brightDataApiKey: env.BRIGHTDATA_API_KEY, expectedSku: env.POLYGRAPH_DEMO_EXPECTED_SKU, expectedPrice: env.POLYGRAPH_DEMO_EXPECTED_PRICE };
+  const values = { githubToken: env.POLYGRAPH_DEMO_GITHUB_TOKEN, fixtureRepo: env.POLYGRAPH_DEMO_FIXTURE_REPO, fixtureWorkflow: env.POLYGRAPH_DEMO_FIXTURE_WORKFLOW, fixtureUrl: env.POLYGRAPH_DEMO_FIXTURE_URL, collectorId: env.POLYGRAPH_DEMO_COLLECTOR_ID, brightDataApiKey: env.BRIGHTDATA_API_KEY, expectedSku: env.POLYGRAPH_DEMO_EXPECTED_SKU, expectedPrice: env.POLYGRAPH_DEMO_EXPECTED_PRICE, expectedCurrency: env.POLYGRAPH_DEMO_EXPECTED_CURRENCY, expectedSymbol: env.POLYGRAPH_DEMO_EXPECTED_SYMBOL };
   if (Object.values(values).some((value) => !value || value.trim() === '')) return undefined;
   const requestedMax = Number(env.POLYGRAPH_DEMO_MAX_MISSIONS ?? '2');
   return { ...values as Omit<DemoMissionConfig, 'maxMissions'>, maxMissions: Number.isInteger(requestedMax) && requestedMax > 0 ? Math.min(requestedMax, 3) : 2 };

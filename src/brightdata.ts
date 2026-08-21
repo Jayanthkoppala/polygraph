@@ -398,12 +398,12 @@ export class BrightDataClient {
   /**
    * ⚠️ PAID, LIVE-MUTATING ENDPOINT. Starts an AI Self-Healing job against
    * the real collector on Bright Data's infrastructure — it costs money and
-   * changes the collector's template. Its ONLY gate in this codebase is
-   * `heal.ts`'s `healCollector` (via `assertHealEnabled` — both
-   * `policy.heal_enabled` AND env `POLYGRAPH_HEAL_ENABLED=1` required).
+   * changes the collector's template. Customer work is gated by
+   * `heal.ts`'s `healCollector`; the only exception is the branded,
+   * exact-allowlist `healOwnedFixture` demo capability.
    * Do NOT call this (or `resumeAutomationJob` / `pollRefactorTemplateProgress`
-   * below) directly from anywhere else — route every heal through
-   * `healCollector` so the flag gate is never bypassed.
+   * below) directly from routes/controllers — route every heal through one
+   * of those two guarded functions so the flag gate is never bypassed.
    *
    * POST /dca/collectors/{id}/refactor_template — starts a Self-Healing job:
    * a plain-language prompt describing what's broken and what to fix
@@ -435,8 +435,8 @@ export class BrightDataClient {
   /**
    * ⚠️ Polls a PAID, LIVE Self-Healing job. Only meant to be called as part
    * of a heal already started via `refactorTemplate` — see that method's
-   * warning: route every heal through `heal.ts`'s `healCollector`, never
-   * call this directly.
+   * warning: route customer work through `healCollector` and the exact
+   * owned fixture through `healOwnedFixture`; never call this directly.
    *
    * Polls refactor_template/progress every `intervalMs` until the job
    * reaches a terminal success state, halts at the diff-approval gate (see
@@ -472,8 +472,8 @@ export class BrightDataClient {
   /**
    * ⚠️ PAID, LIVE-MUTATING ENDPOINT. Approving here commits the proposed
    * diff to the real collector. Same rule as `refactorTemplate` above:
-   * this method's only sanctioned caller is `heal.ts`'s `healCollector` —
-   * never call it directly.
+   * its only sanctioned callers are `heal.ts`'s `healCollector` and branded
+   * `healOwnedFixture` exception — never call it directly elsewhere.
    *
    * POST /dca/collectors/{id}/resume_automation_job — approves
    * ({message: true}) or rejects ({message: false}) a Self-Healing job

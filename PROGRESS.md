@@ -13,7 +13,7 @@ Refresh the live numbers with `npm run progress` (rewrites the Live metrics bloc
 | Metric | Value |
 |---|---|
 | Commits | 93 |
-| Backend tests | 639 passing, 1 skipped |
+| Backend tests | 642 passing, 1 skipped |
 | App tests | 439 passing |
 | Typecheck | clean |
 | Backend suite | `npx vitest run` |
@@ -22,8 +22,8 @@ Refresh the live numbers with `npm run progress` (rewrites the Live metrics bloc
 <!-- METRICS:END -->
 
 > Two separate npm/vitest projects: the root and `app/`. Re-verified 2026-08-22:
-> 639 backend passing (1 paid live smoke intentionally skipped) plus 439 app passing =
-> **1,078 passing**. Both typechecks, both production builds, the built MCP stdio handshake,
+> 642 backend passing (1 paid live smoke intentionally skipped) plus 439 app passing =
+> **1,081 passing**. Both typechecks, both production builds, the built MCP stdio handshake,
 > package dry-run, and the runtime dependency audit passed. `npm run progress` refreshes the
 > test counts after future changes.
 
@@ -47,7 +47,8 @@ percentage.
 
 Live fixture: `https://polygraph-version-shift-store.vercel.app` · Bright Data
 collector: `c_mt3kif5w1ds27lttug`. The first real V1 run proved SKU
-`SKU-ASTER-001` with GBP price value `51.77`. Completion still requires the
+`SKU-ASTER-001` with GBP price value `51.77`; a real batch probe of immutable
+V2 returned the same SKU with schema-default price value `0`. Completion still requires the
 real GitHub V2/V1 workflow and A/B/heal/C rehearsal; no green claim is made
 until those external steps pass.
 

@@ -10,7 +10,9 @@ const config: DemoMissionConfig = {
   collectorId: 'c_owned',
   brightDataApiKey: 'bdata-test',
   expectedSku: 'SKU-ASTER-001',
-  expectedPrice: '£51.77',
+  expectedPrice: '51.77',
+  expectedCurrency: 'GBP',
+  expectedSymbol: '£',
   pollIntervalMs: 1,
   pollDeadlineMs: -1,
 };

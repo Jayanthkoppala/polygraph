@@ -14,6 +14,8 @@ export interface DemoMissionConfig {
   brightDataApiKey: string;
   expectedSku: string;
   expectedPrice: string;
+  expectedCurrency: string;
+  expectedSymbol: string;
   maxMissions?: number;
   githubRef?: string;
   pollIntervalMs?: number;
@@ -26,16 +28,21 @@ export interface DemoBrightDataClient { trigger(collectorId: string, inputs: unk
 export interface DemoMissionDeps { config: DemoMissionConfig; github: DemoGithubClient; brightData: DemoBrightDataClient; now?: () => string; id?: () => string; nextGeneration?: () => string }
 interface Runtime { scrapes: number; heals: number; settled: Promise<void> }
 const fulfilled = Promise.resolve();
-function hasPrice(row: Record<string, unknown>): boolean { const value = row.price; return value !== undefined && value !== null && (typeof value !== 'string' || value.trim() !== ''); }
 function assertRows(result: DatasetPollResult, label: string): Record<string, unknown>[] { if (result.ambiguous || result.rows.length === 0) throw new Error(`${label} returned no decisive rows`); return result.rows; }
 function scalar(value: unknown): string { return value === undefined || value === null ? '' : String(value).trim(); }
 function numericPrice(value: unknown): number | undefined { if (value && typeof value === 'object' && !Array.isArray(value) && 'value' in value) return numericPrice((value as { value: unknown }).value); const normalized = scalar(value).replace(/,/g, '').replace(/[^0-9.-]/g, ''); if (!normalized) return undefined; const parsed = Number(normalized); return Number.isFinite(parsed) ? parsed : undefined; }
+function assertMoneyShape(value: unknown, label: string, config: DemoMissionConfig): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} did not return the required structured money value`);
+  const money = value as Record<string, unknown>;
+  if (scalar(money.currency) !== config.expectedCurrency || scalar(money.symbol) !== config.expectedSymbol) throw new Error(`${label} returned the wrong currency; expected ${config.expectedCurrency} ${config.expectedSymbol}`);
+}
 function assertFixtureRow(result: DatasetPollResult, label: string, config: DemoMissionConfig, expectedPrice: boolean): Record<string, unknown> {
   const rows = assertRows(result, label);
   if (rows.length !== 1) throw new Error(`${label} returned ${rows.length} rows; the owned one-product fixture must return exactly one`);
   const row = rows[0];
   if (scalar(row.sku) !== config.expectedSku) throw new Error(`${label} returned the wrong product identity; expected ${config.expectedSku}`);
-  if (!expectedPrice) { if (hasPrice(row)) throw new Error(`${label} still contains a price; refusing to heal a fixture that is not broken`); return row; }
+  assertMoneyShape(row.price, label, config);
+  if (!expectedPrice) { if (numericPrice(row.price) !== 0) throw new Error(`${label} did not prove the exact schema-default price 0; refusing to heal`); return row; }
   if (numericPrice(row.price) !== numericPrice(config.expectedPrice)) throw new Error(`${label} did not prove the expected fixture price ${config.expectedPrice}`);
   return row;
 }
@@ -76,9 +83,9 @@ export class DemoMissionService {
   private async runShift(mission: DemoMission): Promise<void> {
     await this.deploy('v2', mission); mission.evidence.v2_url = this.sourceUrl('v2'); mission.scene = 'broken_v2'; mission.activeStep = 3;
     const broken = await this.scrape(mission, 'B drift check'); assertFixtureRow(broken.result, 'B drift check', this.deps.config, false); mission.evidence.broken_run_id = broken.jobId;
-    this.event(mission, 'difference', `Bright Data B still identified ${this.deps.config.expectedSku}, but its price field disappeared.`); mission.scene = 'diagnosis'; mission.activeStep = 4;
-    this.event(mission, 'incident_memory', 'Recorded incident: V2 live marker appeared before Bright Data B lost the price field.');
-    const prompt = 'The live V2 fixture returns rows without a price. Refactor the collector template to extract the product price and preserve the existing product identity fields.';
+    this.event(mission, 'difference', `Bright Data B still identified ${this.deps.config.expectedSku}, but price collapsed from ${this.deps.config.expectedPrice} to the schema default 0.`); mission.scene = 'diagnosis'; mission.activeStep = 4;
+    this.event(mission, 'incident_memory', 'Matched incident family selector_anchor_moved: deployment changed, identity stayed exact, and one known field collapsed to its default.');
+    const prompt = 'The live V2 fixture still returns the correct SKU, but price.value collapsed to 0 after the markup changed from .product-price to .money-widget__value. Refactor the collector to extract the visible product price from the new markup while preserving the existing SKU identity field.';
     this.event(mission, 'healing_prompt', `Healing prompt prepared: ${prompt}`); mission.scene = 'self_healing'; mission.activeStep = 5; await this.heal(mission, prompt); mission.activeStep = 6;
     const recovered = await this.scrape(mission, 'C recovery verification'); assertFixtureRow(recovered.result, 'C recovery verification', this.deps.config, true); mission.evidence.proof_run_id = recovered.jobId;
     this.event(mission, 'receipt', `Bright Data C re-proved SKU ${this.deps.config.expectedSku} at ${this.deps.config.expectedPrice} after the repair.`); mission.scene = 'receipt'; mission.status = 'healed';
