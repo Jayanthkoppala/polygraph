@@ -1,19 +1,122 @@
-import { Check, Code, Cube, ShieldCheck, X } from '@phosphor-icons/react';
+import { Check, MagnifyingGlass, Prohibit, ShieldCheck } from '@phosphor-icons/react';
 import { DotGrid } from '@/components/DotGrid';
 import { DotPattern } from '@/components/ui/dot-pattern';
 import type { UseSandboxEngineResult } from '../sandbox/useSandboxEngine';
-import { SandboxPanel } from '../sandbox/SandboxPanel';
-import { PipelineFlowchart } from './PipelineFlowchart';
+import { SafeOutputPanel } from '../sandbox/SafeOutputPanel';
+import { SANDBOX_COLLECTORS, SANDBOX_ROWS, probedProduct, receivedProduct } from '../sandbox/fixtureData';
+import type { SandboxMode } from '../sandbox/engine';
 
-/**
- * The live sandbox gets a viewport of its own. The node-map treatment is
- * deliberately composition, not a second demo implementation: the fleet,
- * decisions, safe output, and ledger all read from the one engine instance
- * created by LandingPage.
- */
+const BREAK_CLASS =
+  'inline-flex min-h-[40px] w-full items-center justify-center gap-2 rounded-lg border border-[#272727] bg-[#272727] px-3 py-2 text-sm font-semibold text-[#EDEDED] outline-none transition-[background-color,transform,color,border-color] duration-[var(--dur-fast)] ease-[var(--ease-fluid)] active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-[#272727] hover:bg-[#313131] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]';
+
+const SECONDARY_ACTIONS: { mode: SandboxMode; label: string }[] = [
+  { mode: 'price_dead', label: 'Kill the price field' },
+  { mode: 'wrong_entity', label: 'Serve the wrong product' },
+  { mode: 'healthy', label: 'Put it back' },
+];
+
+const SECONDARY_BUTTON_CLASS =
+  'min-h-10 rounded-lg border border-[#272727] bg-[#1F1F1F] px-3 py-2 text-xs font-semibold text-[#B4B4B4] ' +
+  'outline-none transition-[background-color,color,transform] duration-[var(--dur-fast)] ease-[var(--ease-fluid)] ' +
+  'hover:bg-[#272727] hover:text-[#EDEDED] active:scale-[0.96] focus-visible:outline focus-visible:outline-2 ' +
+  'focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED] disabled:cursor-wait disabled:opacity-50';
+
+type SuiteState = 'healthy' | 'wrong-shape' | 'wrong-target';
+
+function classifyMode(mode: UseSandboxEngineResult['mode']): SuiteState {
+  if (mode === 'wrong_entity') return 'wrong-target';
+  if (mode === 'price_dead') return 'wrong-shape';
+  return 'healthy';
+}
+
+function stateColor(state: SuiteState) {
+  if (state === 'wrong-target') return 'var(--color-verdict-target)';
+  if (state === 'wrong-shape') return 'var(--color-verdict-shape)';
+  return 'var(--color-verdict-pass)';
+}
+
+function shapeFact(state: SuiteState) {
+  return state === 'wrong-shape' ? 'FAIL' : 'PASS';
+}
+
+function identityFact(state: SuiteState) {
+  return state === 'wrong-target' ? 'FAIL' : 'PASS';
+}
+
+function decisionFact(state: SuiteState) {
+  if (state === 'wrong-shape') return 'Repair available';
+  if (state === 'wrong-target') return 'Quarantine run';
+  return 'Release';
+}
+
+function contractBaseline(state: SuiteState) {
+  return state === 'wrong-shape' ? 'FAIL' : 'PASS';
+}
+
+function keepVerifiedFeedLabel(state: SuiteState) {
+  return state === 'healthy' ? 'Advance safe output' : 'Keep verified feed';
+}
+
+function formatProduct(product: { sku: string; title: string } | null) {
+  return product ? `${product.sku} — ${product.title}` : 'identity not available';
+}
+
+function parseRunConsequence(state: SuiteState) {
+  if (state === 'wrong-target') return 'wrong entity → quarantine → snapshot preserved';
+  if (state === 'wrong-shape') return 'shape drift → repair requested → snapshot preserved';
+  return 'healthy run → release → snapshot advanced';
+}
+
+function ProofFact({
+  label,
+  value,
+  color,
+  testId,
+}: {
+  label: string;
+  value: string;
+  color: string;
+  testId: string;
+}) {
+  return (
+    <p
+      className="rounded-lg border border-[#272727] border-l-2 bg-[#1F1F1F] px-3 py-2"
+      style={{ borderLeftColor: color }}
+    >
+      <span className="font-mono text-[#9B9B9B]">{label}</span>
+      <span data-testid={testId} className="mt-1 block font-mono text-[#EDEDED]">{value}</span>
+    </p>
+  );
+}
+
 export function SandboxSuite({ sandbox }: { sandbox: UseSandboxEngineResult }) {
   const busy = sandbox.phase !== 'idle';
-  const state = sandbox.mode === 'wrong_entity' ? 'wrong-target' : sandbox.mode === 'price_dead' ? 'wrong-shape' : 'verified';
+  const state = classifyMode(sandbox.mode);
+  const target = sandbox.fleet.find((collector) => collector.id === sandbox.targetId);
+  const targetDef = SANDBOX_COLLECTORS.find((def) => def.id === sandbox.targetId);
+  const requestedProduct = targetDef ? probedProduct(targetDef) : null;
+  const receivedProductValue = targetDef ? (state === 'wrong-target' ? receivedProduct(targetDef) : probedProduct(targetDef)) : null;
+  // The engine mutates its private chain before the hook publishes the
+  // resolved React snapshot. During the verification floor, keep the last
+  // published count so old verdict copy and a new ledger count never mix.
+  const chain = busy ? { ok: true, checked: sandbox.ledgerCount } : sandbox.verifyChain();
+
+  const headline =
+    state === 'wrong-target'
+      ? 'Green status. Wrong product.'
+      : state === 'wrong-shape'
+        ? 'Green status. Shape drift, repair allowed'
+        : 'Green status. Healthy signal';
+
+  function runProof() {
+    if (busy || sandbox.limitReached) return;
+    sandbox.trigger('wrong_entity');
+  }
+
+  function triggerFixture(mode: SandboxMode) {
+    if (busy || sandbox.limitReached) return;
+    sandbox.trigger(mode);
+  }
 
   return (
     <section
@@ -35,10 +138,10 @@ export function SandboxSuite({ sandbox }: { sandbox: UseSandboxEngineResult }) {
             Live browser sandbox
           </span>
           <h2 id="sandbox-title" className="mt-3 text-balance text-3xl font-semibold leading-tight text-[#EDEDED]">
-            Break the run. Watch every check answer.
+            Break the run. Watch the proof.
           </h2>
           <p className="mt-4 max-w-2xl text-pretty text-base text-[#9B9B9B] md:text-lg">
-            This is the real local verification engine, laid out as a suite. Change the fixture and follow the run from HTTP 200 to a safe decision.
+            This surface is one judge-ready dashboard: one proof row, one safe-output row, one chain row.
           </p>
         </div>
 
@@ -54,132 +157,157 @@ export function SandboxSuite({ sandbox }: { sandbox: UseSandboxEngineResult }) {
             className="absolute inset-0 opacity-70"
           />
 
-          <div className="relative flex min-h-16 items-center border-b border-[#272727] px-4 sm:px-6">
-            <div className="flex min-h-11 items-center gap-3 rounded-2xl border border-[#272727] bg-[#181818] px-3">
+          <div className="relative flex min-h-14 flex-col items-stretch gap-3 border-b border-[#272727] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <div className="flex min-h-11 max-w-full items-center gap-3 rounded-2xl border border-[#272727] bg-[#181818] px-3">
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#EDEDED] text-[#000000]">
-                <ShieldCheck size={16} weight="fill" aria-hidden />
+                <ShieldCheck size={16} weight="regular" aria-hidden />
               </span>
-              <span className="font-mono text-xs text-[#EDEDED]">Polygraph</span>
-              <span aria-hidden className="text-[#6E7681]">/</span>
-              <span className="font-mono text-xs text-[#EDEDED] sm:hidden">sandbox</span>
-              <span className="hidden font-mono text-xs text-[#9B9B9B] sm:inline">fixture-store</span>
-              <span aria-hidden className="hidden text-[#6E7681] sm:inline">/</span>
-              <span className="hidden font-mono text-xs text-[#EDEDED] sm:inline">sandbox suite</span>
+              <span className="font-mono text-xs text-[#EDEDED]">Polygraph sandbox proof board</span>
             </div>
-            <span className="ml-auto flex items-center gap-2 font-mono text-xs text-[#9B9B9B]">
-              <span
-                aria-hidden
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ backgroundColor: busy ? 'var(--color-verdict-suspect)' : stateColor(state) }}
-              />
-              {busy ? 'checking' : stateLabel(state)}
+            <span
+              aria-live="polite"
+              className="break-words font-mono text-xs text-[#9B9B9B] sm:text-right"
+              style={{ color: busy ? 'var(--color-verdict-suspect)' : stateColor(state) }}
+            >
+              {busy ? 'checking' : headline}
             </span>
           </div>
 
-          <div className="relative grid grid-cols-1 gap-8 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:p-8">
-            <div className="relative min-w-0">
-              <div className="relative z-10 mx-auto w-full max-w-sm rounded-2xl border border-[#313131] bg-[#181818] p-4">
-                <div className="flex items-start gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#313131] bg-[#181818] text-[#EDEDED]">
-                    <Cube size={18} weight="duotone" aria-hidden />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-[#EDEDED]">Fixture run</p>
-                    <p className="mt-1 truncate font-mono text-xs text-[#9B9B9B]">GET /products/sku-1042 · HTTP 200</p>
-                  </div>
-                  {state === 'verified' ? (
-                    <Check size={16} weight="bold" className="ml-auto shrink-0" style={{ color: stateColor(state) }} aria-hidden />
-                  ) : (
-                    <X size={16} weight="bold" className="ml-auto shrink-0" style={{ color: stateColor(state) }} aria-hidden />
-                  )}
-                </div>
-                <div className="mt-3 border-t border-[#272727] pt-3 font-mono text-xs text-[#9B9B9B]">
-                  claimed success → verify independently
-                </div>
-              </div>
-
-              <div aria-hidden className="mx-auto h-10 w-px bg-[#313131]" />
-              <span aria-hidden className="absolute left-1/2 top-40 z-10 h-2.5 w-2.5 -translate-x-1/2 rounded-full border border-[#6E7681] bg-[#000000]" />
-
-              <div className="relative z-10">
-                <SandboxPanel sandbox={sandbox} />
-              </div>
-
-              <div className="relative mt-8 border-t border-[#272727] pt-8">
-                <div className="mb-5 flex items-center gap-3">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#313131] bg-[#181818] text-[#EDEDED]">
-                    <Code size={18} weight="duotone" aria-hidden />
-                  </span>
-                  <div>
-                    <p className="text-sm font-semibold text-[#EDEDED]">Decision path</p>
-                    <p className="text-xs text-[#9B9B9B]">The same run, opened up.</p>
-                  </div>
-                </div>
-                <PipelineFlowchart sandbox={sandbox} />
-              </div>
-
-              <p className="mt-6 text-balance text-center text-lg font-semibold text-[#EDEDED]">
-                Polygraph does not heal scrapers. It decides when healing is safe.
+          <div className="relative grid grid-cols-1 gap-4 p-4 sm:p-6 lg:grid-cols-[minmax(0,0.62fr)_minmax(0,1.38fr)] lg:p-8">
+            <section aria-label="Judge action rail" className="overflow-hidden rounded-2xl border border-[#272727] bg-[#181818] p-4 lg:flex lg:flex-col lg:justify-center">
+              <h3 className="text-balance text-2xl font-semibold text-[#EDEDED]">{headline}</h3>
+              <p className="mt-2 text-pretty text-sm text-[#EDEDED]">
+                {state === 'wrong-target'
+                  ? 'Current run is blocked while verified feed keeps serving.'
+                  : state === 'wrong-shape'
+                    ? 'Current run is held while a repair is prepared; verified feed keeps serving.'
+                    : 'Current run is healthy and can advance the safe output.'}
               </p>
-            </div>
+              <div className="mt-4 rounded-xl border border-[#272727] bg-[#1F1F1F] p-3 text-xs text-[#9B9B9B]">
+                <p className="font-mono text-xs uppercase tracking-wide text-[#EDEDED]">Proof counterfactual</p>
+                <p className="mt-2">
+                  HTTP 200 · <span className="font-mono">required fields present</span> · Contract baseline: {contractBaseline(state)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={runProof}
+                disabled={busy || sandbox.limitReached}
+                data-testid="run-proof-button"
+                aria-label="Run the proof"
+                className={`${BREAK_CLASS} mt-4`}
+              >
+                <MagnifyingGlass size={16} weight="regular" aria-hidden />
+                {busy ? 'Running proof…' : 'Run the proof'}
+                {state === 'wrong-target' ? <Check size={16} weight="regular" aria-hidden /> : null}
+              </button>
+              <p className="mt-2 text-xs text-[#9B9B9B]">
+                <span className="font-mono tracking-wide text-[#9B9B9B]">Actions remaining</span>{' '}
+                <span className="font-mono tabular-nums text-[#EDEDED]">{sandbox.actionsRemaining}</span>
+              </p>
 
-            <SuiteConversation sandbox={sandbox} />
+              <details className="mt-4 border-t border-[#272727] pt-3">
+                <summary className="flex min-h-10 cursor-pointer items-center text-xs font-semibold text-[#9B9B9B] outline-none hover:text-[#EDEDED] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]">
+                  Try the other sandbox fixtures
+                </summary>
+                <div className="mt-2 grid grid-cols-1 gap-2">
+                  {SECONDARY_ACTIONS.map((action) => (
+                    <button
+                      key={action.mode}
+                      type="button"
+                      onClick={() => triggerFixture(action.mode)}
+                      disabled={busy || sandbox.limitReached}
+                      data-testid={`sandbox-break-${action.mode}`}
+                      className={SECONDARY_BUTTON_CLASS}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              </details>
+            </section>
+
+            <section aria-label="Target proof dashboard" className="overflow-hidden rounded-2xl border border-[#272727] bg-[#181818] p-4">
+              <div className="grid gap-3">
+                <div className="rounded-xl border border-[#272727] bg-[#1F1F1F] p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#9B9B9B]">Current run compare</p>
+                  <div className="mt-2 grid grid-cols-1 gap-3 text-xs text-[#9B9B9B] sm:grid-cols-2">
+                    <div>
+                      <p className="font-mono text-[#EDEDED]">Current store-pricing run</p>
+                      <p className="mt-1" data-testid="proof-requested-identity">
+                        requested:{' '}
+                        <span className="font-mono text-[#EDEDED]">{formatProduct(requestedProduct)}</span>
+                      </p>
+                      <p data-testid="proof-received-identity">
+                        received:{' '}
+                        <span className="font-mono text-[#EDEDED]">{formatProduct(receivedProductValue)}</span>
+                      </p>
+                      <p className="mt-1" data-testid="proof-fill">
+                        FILL <span className="font-mono text-[#EDEDED]">100%</span> /{' '}
+                        <span className="font-mono tabular-nums text-[#EDEDED]">{SANDBOX_ROWS} rows</span>
+                      </p>
+                      {state === 'wrong-target' && (
+                        <p data-testid="proof-repair-slot" className="mt-2 inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-[#272727] px-3 font-mono text-[#EDEDED]">
+                          <Prohibit size={16} weight="regular" className="text-[var(--color-verdict-target)]" aria-hidden />
+                          <span className="line-through decoration-[var(--color-verdict-target)]">Repair</span>
+                          <span>{' '}refused</span>
+                        </p>
+                      )}
+                    </div>
+                    <SafeOutputPanel
+                      snapshot={sandbox.safeOutput}
+                      mode={sandbox.mode}
+                      target={target}
+                      className="mt-0 bg-[#1F1F1F]"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2 xl:grid-cols-5" aria-label="Run proof facts">
+                  <ProofFact label="HTTP status" value="HTTP 200" color="#8B949E" testId="proof-fact-http" />
+                  <ProofFact
+                    label="Shape"
+                    value={shapeFact(state)}
+                    color={state === 'wrong-shape' ? 'var(--color-verdict-shape)' : 'var(--color-verdict-pass)'}
+                    testId="proof-fact-shape"
+                  />
+                  <ProofFact
+                    label="Identity"
+                    value={identityFact(state)}
+                    color={state === 'wrong-target' ? 'var(--color-verdict-target)' : 'var(--color-verdict-pass)'}
+                    testId="proof-fact-identity"
+                  />
+                  <ProofFact label="Decision" value={decisionFact(state)} color={stateColor(state)} testId="proof-fact-decision" />
+                  <ProofFact
+                    label="Consumer"
+                    value={keepVerifiedFeedLabel(state)}
+                    color="var(--color-verdict-pass)"
+                    testId="proof-fact-consumer"
+                  />
+                </div>
+
+                <dl className="grid grid-cols-1 gap-2 rounded-xl border border-[#272727] border-l-2 border-l-[var(--color-verdict-target)] bg-[var(--color-archive)] px-3 py-2 text-xs text-[#9B9B9B] sm:grid-cols-[auto_1fr]">
+                  <dt className="font-semibold text-[#EDEDED]">Recorded production effect</dt>
+                  <dd>
+                    <span data-testid="proof-production-receipt" className="font-mono text-[#EDEDED]">
+                      heal reported done · production schema unchanged · recovery blocked
+                    </span>
+                    <span className="mt-1 block text-[#9B9B9B]">Live evidence from 2026-08-20 — separate from this browser fixture.</span>
+                  </dd>
+                  <dt className="font-semibold text-[#EDEDED]">Ledger</dt>
+                  <dd data-testid="proof-ledger-consequence" className="font-mono text-[#EDEDED]">
+                    {parseRunConsequence(state)}
+                  </dd>
+                  <dt className="font-semibold text-[#EDEDED]">Chain</dt>
+                  <dd data-testid="proof-chain-state" className="font-mono tabular-nums text-[#EDEDED]">
+                    {chain.ok ? `Chain intact · ${chain.checked} events` : `Chain failed · ${chain.reason ?? 'unknown'}`}
+                  </dd>
+                </dl>
+              </div>
+            </section>
           </div>
         </div>
       </div>
     </section>
-  );
-}
-
-type SuiteState = 'verified' | 'wrong-shape' | 'wrong-target';
-
-function stateColor(state: SuiteState) {
-  if (state === 'wrong-target') return 'var(--color-verdict-target)';
-  if (state === 'wrong-shape') return 'var(--color-verdict-shape)';
-  return 'var(--color-verdict-pass)';
-}
-
-function stateLabel(state: SuiteState) {
-  if (state === 'wrong-target') return 'wrong target';
-  if (state === 'wrong-shape') return 'wrong shape';
-  return 'verified';
-}
-
-function SuiteConversation({ sandbox }: { sandbox: UseSandboxEngineResult }) {
-  const busy = sandbox.phase !== 'idle';
-  const response = busy
-    ? 'I am re-fetching the target and walking the four checks now.'
-    : sandbox.mode === 'wrong_entity'
-      ? 'The shape passed, but identity failed. I quarantined the run and refused repair.'
-      : sandbox.mode === 'price_dead'
-        ? 'The price field collapsed. I held the new run, kept the last safe snapshot, and prepared a repair.'
-        : 'All three collectors verified. The safe snapshot and ledger are ready below.';
-
-  return (
-    <aside aria-label="Sandbox guide" className="relative flex flex-col gap-4 lg:pt-12">
-      <div className="self-end rounded-2xl rounded-br-md border border-[#313131] bg-[#1F1F1F] px-4 py-3 text-sm leading-relaxed text-[#EDEDED]">
-        Break the price field, or serve the wrong product.
-      </div>
-      <div
-        aria-live="polite"
-        className="rounded-2xl rounded-tl-md border bg-[#181818] px-4 py-3 text-sm leading-relaxed text-[#B4B4B4] transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-fluid)]"
-        style={{ borderColor: busy ? '#313131' : stateColor(sandbox.mode === 'wrong_entity' ? 'wrong-target' : sandbox.mode === 'price_dead' ? 'wrong-shape' : 'verified') }}
-      >
-        <span className="mb-2 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-wide text-[#EDEDED]">
-          <ShieldCheck size={14} weight="fill" aria-hidden />
-          Polygraph
-        </span>
-        {response}
-      </div>
-
-      <div className="mt-2 rounded-2xl border border-[#272727] bg-[#181818] p-4">
-        <p className="font-mono text-xs font-semibold uppercase tracking-wide text-[#9B9B9B]">What changes</p>
-        <ul className="mt-3 flex flex-col gap-3 text-xs leading-relaxed text-[#9B9B9B]">
-          <li className="flex gap-2"><span aria-hidden className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-verdict-pass)]" />Green runs can advance safe output.</li>
-          <li className="flex gap-2"><span aria-hidden className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-verdict-shape)]" />Broken shape can receive a repair.</li>
-          <li className="flex gap-2"><span aria-hidden className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-verdict-target)]" />Wrong identity is quarantined, never auto-repaired.</li>
-        </ul>
-      </div>
-    </aside>
   );
 }

@@ -89,8 +89,14 @@ describe('landing viewport composition', () => {
     expect(page.indexOf('<Hero')).toBeGreaterThan(-1);
     expect(page.indexOf('<SandboxSuite')).toBeGreaterThan(page.indexOf('<Hero'));
     expect(hero).not.toMatch(/<SandboxPanel|<PipelineFlowchart/);
-    expect(suite).toMatch(/<SandboxPanel/);
-    expect(suite).toMatch(/<PipelineFlowchart/);
+    // The approved target is one judge-legible dashboard, not the older
+    // fleet-card + generic pipeline composition. Keep the real engine proof
+    // visible through its action rail, safe output, and consequence board.
+    expect(suite).not.toMatch(/<SandboxPanel|<PipelineFlowchart/);
+    expect(suite).toMatch(/<DotGrid/);
+    expect(suite).toMatch(/Judge action rail/);
+    expect(suite).toMatch(/Target proof dashboard/);
+    expect(suite).toMatch(/<SafeOutputPanel/);
     expect(suite).toMatch(/min-h-\[100svh\]/);
   });
 });

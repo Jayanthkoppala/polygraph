@@ -1,4 +1,5 @@
 import { relativeAge } from '@/lib/time';
+import { cn } from '@/lib/utils';
 import type { CollectorState } from '@/lib/api';
 import type { SandboxMode, SandboxSafeOutputSnapshot } from './engine';
 
@@ -6,10 +7,12 @@ export function SafeOutputPanel({
   snapshot,
   mode,
   target,
+  className,
 }: {
   snapshot: SandboxSafeOutputSnapshot;
   mode: SandboxMode;
   target: CollectorState | undefined;
+  className?: string;
 }) {
   const isWrongTarget = mode === 'wrong_entity';
   const isHealthy = mode === 'healthy';
@@ -20,7 +23,7 @@ export function SafeOutputPanel({
     <section
       data-testid="safe-output-panel"
       aria-label="Safe output browser demonstration"
-      className="relative mt-3 rounded-xl border border-[#272727] bg-[#181818] p-3"
+      className={cn('relative rounded-xl border border-[#272727] bg-[#181818] p-3', className ?? 'mt-3')}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <div>
@@ -44,7 +47,7 @@ export function SafeOutputPanel({
         </p>
       )}
 
-      <div className="mt-2 grid grid-cols-1 gap-1 font-mono text-xs text-[#9B9B9B] sm:grid-cols-3">
+      <div className="mt-2 grid grid-cols-1 gap-1 font-mono text-xs tabular-nums text-[#9B9B9B] sm:grid-cols-3">
         <span>{snapshot.rowCount} rows</span>
         <span>released {relativeAge(snapshot.releasedAt)}</span>
         <span title={snapshot.outputHash}>hash {snapshot.outputHash.slice(0, 12)}…</span>
