@@ -1,19 +1,14 @@
 /**
  * LandingPage — assembles the public `/` surface (ux-spec.md §1a, ui-system
- * §4). "THE LANDING PAGE IS THE DEMO": the hero's sandbox runs on first
- * paint, no signup wall, no "click to try" detour (ux-spec.md §0.1).
+ * §4). "THE LANDING PAGE IS THE DEMO": the sandbox runs on first paint in
+ * its own second-viewport suite, with no signup wall or detached mock.
  *
- * One `useSandboxEngine()` call, shared by both `Hero`'s `SandboxPanel` and
- * `Receipt`'s ledger strip — the receipt below the fold is the exact same
- * visitor's own chain, not a second disconnected sandbox instance.
- *
- * Not wired into `App.tsx`/routing — that's Task 10's (see this task's
- * brief: "Do NOT touch app/src/App.tsx (routing is Task 10's)"). This
- * component is a self-contained, router-agnostic page ready to be mounted
- * at `/`.
+ * One `useSandboxEngine()` call is shared by `SandboxSuite` and `Receipt`,
+ * so the receipt below the fold is the exact same visitor's chain.
  */
 import { useSandboxEngine } from './sandbox/useSandboxEngine';
 import { Hero } from './sections/Hero';
+import { SandboxSuite } from './sections/SandboxSuite';
 import { ProofMoment } from './sections/ProofMoment';
 import { ThreeFailures } from './sections/ThreeFailures';
 import { TaglineReveal } from './sections/TaglineReveal';
@@ -46,12 +41,12 @@ export function LandingPage() {
           stub notes where its two artifacts were re-homed). They stay
           MOUNTED here — rendering null — so the composition diff stays
           reversible and the physical removal is the controller's call. The
-          surviving order (Hero → ProofMoment → ThreeFailures/S2 →
+          surviving order (Hero → SandboxSuite → ProofMoment → ThreeFailures/S2 →
           Receipt/S4 → FAQ/S6 → FinalCTA) is unchanged: the final order —
-          including whether ProofMoment keeps its place beside a
-          live-sandbox hero — is explicitly deferred to the controller. */}
+          now gives the live suite a dedicated second viewport. */}
       <main id="main">
-        <Hero sandbox={sandbox} />
+        <Hero />
+        <SandboxSuite sandbox={sandbox} />
         <ProofMoment />
         <ThreeFailures />
         <TaglineReveal />

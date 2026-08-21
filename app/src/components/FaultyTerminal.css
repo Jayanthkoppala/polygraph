@@ -1,0 +1,12 @@
+.faulty-terminal-container {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.faulty-terminal-container canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}

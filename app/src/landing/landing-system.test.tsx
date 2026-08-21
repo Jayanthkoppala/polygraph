@@ -26,7 +26,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { FinalCTA } from './sections/FinalCTA';
 import { Hero } from './sections/Hero';
-import { useSandboxEngine } from './sandbox/useSandboxEngine';
 
 const LANDING_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SECTIONS_DIR = path.join(LANDING_DIR, 'sections');
@@ -80,6 +79,21 @@ describe('landing section rhythm (ui-system.md §1.6: "Section padding, landing 
     // 813px, 13px below the fold; pt-4 recovers it. The bottom edge, which
     // IS a section boundary, stays on the 96px rhythm.
     expect(hero).toMatch(/pb-24 pt-4/);
+  });
+});
+
+describe('landing viewport composition', () => {
+  it('keeps the proposition in viewport one and gives the live sandbox its own next-viewport section', () => {
+    const page = readFileSync(path.join(LANDING_DIR, 'LandingPage.tsx'), 'utf8');
+    const hero = readFileSync(path.join(SECTIONS_DIR, 'Hero.tsx'), 'utf8');
+    const suite = readFileSync(path.join(SECTIONS_DIR, 'SandboxSuite.tsx'), 'utf8');
+
+    expect(page.indexOf('<Hero')).toBeGreaterThan(-1);
+    expect(page.indexOf('<SandboxSuite')).toBeGreaterThan(page.indexOf('<Hero'));
+    expect(hero).not.toMatch(/<SandboxPanel|<PipelineFlowchart/);
+    expect(suite).toMatch(/<SandboxPanel/);
+    expect(suite).toMatch(/<PipelineFlowchart/);
+    expect(suite).toMatch(/min-h-\[100svh\]/);
   });
 });
 
@@ -158,11 +172,6 @@ describe('Hero — the copy control acknowledges the click (§1.9: a click IS an
     vi.unstubAllGlobals();
   });
 
-  function HeroHarness() {
-    const sandbox = useSandboxEngine();
-    return <Hero sandbox={sandbox} />;
-  }
-
   it('writes the real command to the clipboard and says so, then reverts', async () => {
     // The control moved with the self-host band: hero → FinalCTA.tsx's S5
     // `RunItYourself` (positioning.md S1: "the self-host footnote + copy
@@ -198,7 +207,7 @@ describe('Hero — the copy control acknowledges the click (§1.9: a click IS an
     // built there specifically as this link's target. If either half is
     // renamed alone, the hero's only self-host affordance silently 404s
     // into a no-op scroll.
-    render(<HeroHarness />);
+    render(<Hero />);
     const link = screen.getByRole('link', { name: /run it yourself, offline/i });
     expect(link).toHaveAttribute('href', '#run-it-yourself');
     cleanup();
@@ -206,22 +215,13 @@ describe('Hero — the copy control acknowledges the click (§1.9: a click IS an
     expect(document.getElementById('run-it-yourself')).not.toBeNull();
   });
 
-  it('holds the headline at the size and column the measured break was verified against', () => {
+  it('keeps the headline readable while viewport one remains a single focused column', () => {
     const hero = readFileSync(path.join(SECTIONS_DIR, 'Hero.tsx'), 'utf8');
-    // Re-measured 2026-08-20 for the two-column S1 hero (positioning.md §3,
-    // controller-final) in a real browser at 1512x800 with the shipped
-    // Geist 700: "Your scraper says 200 OK." needs 464px at text-4xl and
-    // 515px at text-5xl's neighbor 40px; the left grid column
-    // (max-w-7xl, 2fr/3fr, gap-8) is ~499px. So text-4xl is the largest
-    // type-scale step where headline line one holds unbroken; one step up
-    // breaks it. Change any half of this triple (heading size, grid cap,
-    // column split) and RE-MEASURE in a browser — do not re-guess.
     expect(hero).toMatch(/md:text-4xl/);
     expect(hero).toMatch(/max-w-7xl/);
-    // minmax(0,…) is load-bearing, not styling: bare fr tracks carry a
-    // min-content minimum, the exact mechanism behind the 2349px grid
-    // blowout this file's width discipline exists to prevent.
-    expect(hero).toMatch(/md:grid-cols-\[minmax\(0,2fr\)_minmax\(0,3fr\)\]/);
+    expect(hero).toMatch(/max-w-3xl/);
+    expect(hero).toMatch(/min-h-\[calc\(100svh-45px\)\]/);
+    expect(hero).not.toMatch(/md:grid-cols-/);
     expect(hero).not.toMatch(/md:text-5xl|md:text-6xl/);
   });
 });

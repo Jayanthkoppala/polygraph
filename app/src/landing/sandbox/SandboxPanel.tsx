@@ -39,9 +39,9 @@ const BUTTONS: { mode: SandboxMode; label: string; breakingLabel: string }[] = [
 ];
 
 const BREAK_BUTTON_CLASS =
-  'rounded-lg border border-[#272727] bg-[#272727] px-3 py-2 text-sm font-semibold text-[#EDEDED] ' +
-  'outline-none transition-colors duration-[var(--dur-fast)] ease-[var(--ease-fluid)] ' +
-  'hover:bg-[#313131] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ' +
+  'min-h-10 rounded-lg border border-[#272727] bg-[#272727] px-3 py-2 text-sm font-semibold text-[#EDEDED] ' +
+  'outline-none transition-[background-color,transform] duration-[var(--dur-fast)] ease-[var(--ease-fluid)] ' +
+  'hover:bg-[#313131] active:scale-[0.96] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ' +
   'focus-visible:outline-[#EDEDED] disabled:cursor-wait disabled:opacity-60';
 
 export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
@@ -120,7 +120,7 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
   return (
     <div
       data-testid="sandbox-panel"
-      className="relative mx-auto w-full max-w-4xl overflow-hidden rounded-2xl border border-[#272727] bg-[#1F1F1F] p-4"
+      className="relative w-full overflow-hidden rounded-3xl border border-[#272727] bg-[#0B0C0C] p-4 sm:p-5"
     >
       {/* ui-system.md §2.5/§3.8: Magic UI's static `noise-texture` over
           #1F1F1F at ~3%, same material grain the rest of the product's
@@ -172,38 +172,58 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
         hosted server pipeline your account would use.
       </p>
 
-      <div
-        role="list"
-        aria-label="Sandbox fleet"
-        aria-busy={busy}
-        // Same convention as FleetScale's `data-animate`: the gating decision
-        // itself is exposed so a test can assert THE DECISION rather than
-        // reverse-engineering motion's inline styles.
-        data-just-resolved={justResolvedId ?? ''}
-        className="relative grid grid-cols-1 gap-2 sm:grid-cols-3"
-      >
-        {/* ux-spec.md §3: "Target card enters a re-verify skeleton for a
-            minimum of 1.6s". Singular, and deliberately so — the other two
-            collectors keep their resolved (green) cards on screen the whole
-            time, which is what makes the flip read as one collector being
-            caught rather than as the page reloading, and what gives the red
-            or magenta something to be read against (§5.4 rule 8, "one accent
-            per screen"). */}
-        {fleet.map((c) =>
-          busy && c.id === targetId ? (
-            <CardSkeleton key={c.id} label={phase === 'breaking' ? 'Broken. Re-verifying…' : 'Re-verifying…'} />
-          ) : (
-            <VerdictCard
-              key={c.id}
-              collector={c}
-              density="card"
-              animateEntrance={c.id === justResolvedId ? true : undefined}
-              onSelect={() => {}}
-              onRepair={() => handleClick('healthy')}
-              onAcknowledge={() => {}}
-            />
-          ),
-        )}
+      <div className="relative pt-9 sm:pt-12">
+        {/* The suite map's parent-to-collector branches. SVG keeps the paths
+            curved at every desktop width; mobile stacks the same nodes and
+            drops purely decorative lines instead of squeezing the cards. */}
+        <svg
+          aria-hidden
+          viewBox="0 0 1000 72"
+          preserveAspectRatio="none"
+          className="pointer-events-none absolute inset-x-0 top-0 hidden h-14 w-full sm:block"
+        >
+          <path d="M500 1 C500 34 166 22 166 71" fill="none" stroke="#313131" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+          <path d="M500 1 C500 34 500 34 500 71" fill="none" stroke="#313131" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+          <path d="M500 1 C500 34 834 22 834 71" fill="none" stroke="#313131" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+          <circle cx="500" cy="2" r="5" fill="#0B0C0C" stroke="#8B949E" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+          <circle cx="166" cy="70" r="5" fill="#0B0C0C" stroke="#8B949E" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+          <circle cx="500" cy="70" r="5" fill="#0B0C0C" stroke="#8B949E" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+          <circle cx="834" cy="70" r="5" fill="#0B0C0C" stroke="#8B949E" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+        </svg>
+
+        <div
+          role="list"
+          aria-label="Sandbox fleet"
+          aria-busy={busy}
+          // Same convention as FleetScale's `data-animate`: the gating decision
+          // itself is exposed so a test can assert THE DECISION rather than
+          // reverse-engineering motion's inline styles.
+          data-just-resolved={justResolvedId ?? ''}
+          className="relative grid grid-cols-1 gap-3 sm:grid-cols-3"
+        >
+          {/* ux-spec.md §3: "Target card enters a re-verify skeleton for a
+              minimum of 1.6s". Singular, and deliberately so — the other two
+              collectors keep their resolved (green) cards on screen the whole
+              time, which is what makes the flip read as one collector being
+              caught rather than as the page reloading, and what gives the red
+              or magenta something to be read against (§5.4 rule 8, "one accent
+              per screen"). */}
+          {fleet.map((c) =>
+            busy && c.id === targetId ? (
+              <CardSkeleton key={c.id} label={phase === 'breaking' ? 'Broken. Re-verifying…' : 'Re-verifying…'} />
+            ) : (
+              <VerdictCard
+                key={c.id}
+                collector={c}
+                density="card"
+                animateEntrance={c.id === justResolvedId ? true : undefined}
+                onSelect={() => {}}
+                onRepair={() => handleClick('healthy')}
+                onAcknowledge={() => {}}
+              />
+            ),
+          )}
+        </div>
       </div>
 
       {proofLine && !busy && (
