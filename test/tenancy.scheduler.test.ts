@@ -369,6 +369,66 @@ describe('createDefaultRunOne — markKeyVerifiedIfNeeded actually wired into th
     expect(secrets.status()?.key_verification).toBe('verified');
   });
 
+  it('persists a hosted RELEASE as the tenant-scoped safe output snapshot', async () => {
+    const { db, masterKey, dueRow } = setupUnverifiedTenantWithConfirmedCollector();
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { collection_id: 'j_1' }))
+      .mockResolvedValueOnce(jsonResponse(200, [{ sku: 'SKU-1', input: 'SKU-1' }]))
+      .mockResolvedValueOnce(jsonResponse(200, { status: 'done', lines: 1, fails: 0, success: 1, pages: 1 }))
+      .mockResolvedValueOnce(jsonResponse(200, []));
+
+    await createDefaultRunOne({ db, masterKey, fetchImpl: fetchImpl as unknown as typeof fetch })(dueRow);
+
+    const snapshot = db
+      .prepare('SELECT tenant_id, collector_id, run_id, row_count, output_hash FROM safe_output_snapshots WHERE tenant_id = ? AND collector_id = ?')
+      .get(dueRow.tenant_id, dueRow.collector_id) as
+      | { tenant_id: string; collector_id: string; run_id: string; row_count: number; output_hash: string }
+      | undefined;
+    expect(snapshot).toMatchObject({ tenant_id: dueRow.tenant_id, collector_id: 'c_1', row_count: 1, output_hash: expect.any(String) });
+  });
+
+  it('keeps hosted healing off even when both the process env and tenant row request it', async () => {
+    const { db, masterKey, dueRow } = setupUnverifiedTenantWithConfirmedCollector();
+    db.prepare('UPDATE tenants SET heal_enabled = 1 WHERE id = ?').run(dueRow.tenant_id);
+    db.prepare('UPDATE tenant_collectors SET output_schema_json = ? WHERE tenant_id = ? AND collector_id = ?').run(
+      JSON.stringify({
+        fields: {
+          sku: { type: 'text', required: true },
+          price: { type: 'number', required: true },
+        },
+      }),
+      dueRow.tenant_id,
+      dueRow.collector_id
+    );
+
+    const responseCycle = () => [
+      jsonResponse(200, { collection_id: `j_${Math.random()}` }),
+      jsonResponse(200, [{ sku: 'SKU-1', input: 'SKU-1' }]),
+      jsonResponse(200, { status: 'done', lines: 1, fails: 0, success: 1, pages: 1 }),
+      jsonResponse(200, []),
+    ];
+    const fetchImpl = vi.fn();
+    for (const response of [...responseCycle(), ...responseCycle()]) {
+      fetchImpl.mockResolvedValueOnce(response);
+    }
+
+    const previous = process.env.POLYGRAPH_HEAL_ENABLED;
+    process.env.POLYGRAPH_HEAL_ENABLED = '1';
+    try {
+      await createDefaultRunOne({ db, masterKey, fetchImpl: fetchImpl as unknown as typeof fetch })(dueRow);
+    } finally {
+      if (previous === undefined) delete process.env.POLYGRAPH_HEAL_ENABLED;
+      else process.env.POLYGRAPH_HEAL_ENABLED = previous;
+    }
+
+    const latest = db
+      .prepare('SELECT action, cause FROM events WHERE tenant_id = ? ORDER BY id DESC LIMIT 1')
+      .get(dueRow.tenant_id) as { action: string; cause: string };
+    expect(latest).toEqual({ action: 'QUARANTINE', cause: 'STRUCTURAL' });
+    expect(fetchImpl).toHaveBeenCalledTimes(8);
+  });
+
   it('a run that fails on auth (a 401 from the adapter itself) leaves the key unverified', async () => {
     const { db, secrets, masterKey, dueRow } = setupUnverifiedTenantWithConfirmedCollector();
     // The trigger call itself 401s — BrightDataClient throws immediately

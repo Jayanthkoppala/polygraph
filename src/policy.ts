@@ -474,9 +474,8 @@ function dayKey(isoTs: string): string {
 }
 
 export interface GovernorOptions {
-  /** Defaults to 'local'. The CLI never passes this, so `new Governor(path)`
-   * behaves exactly as it always has and every pre-tenancy call site and
-   * test keeps working unchanged. */
+  /** Defaults to 'local', so `new Governor(path)` behaves exactly as it
+   * always has and every pre-tenancy call site and test keeps working. */
   tenantId?: string;
 }
 

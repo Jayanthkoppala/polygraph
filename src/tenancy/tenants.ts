@@ -4,9 +4,8 @@ import { tenantGenesis } from './genesis.js';
 
 /**
  * Tenant lifecycle: signup (capability-token issuance) and delete-my-tenant,
- * per tenant-architecture.md §1/§2. No hand-written SQL outside src/tenancy/
- * — this module, scope.ts, and secrets.ts are the allowlist (see
- * test/tenancy.no-raw-sql.test.ts).
+ * per tenant-architecture.md §1/§2. SQL is restricted to explicit
+ * persistence owners (see test/tenancy.no-raw-sql.test.ts).
  */
 
 const TOKEN_PREFIX = 'pg_';

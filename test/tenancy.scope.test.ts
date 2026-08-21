@@ -202,6 +202,7 @@ describe('TenantScope — two-tenant isolation over every public read', () => {
     scope.governor.snapshotForDay('2026-08-19');
     scope.collectors.list();
     expect(scope.tenantId).toBe(a.id);
+    expect(scope.safeOutput.latest('missing')).toBeUndefined();
   });
 });
 

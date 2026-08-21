@@ -51,3 +51,12 @@ export function openReader(path: string): Database.Database {
   applyCommonPragmas(db);
   return db;
 }
+
+export function tableExists(db: Database.Database, table: string): boolean {
+  return db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table) !== undefined;
+}
+
+export function columnExists(db: Database.Database, table: string, column: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return rows.some((row) => row.name === column);
+}

@@ -107,9 +107,8 @@ export interface AlertNotifierOptions {
    * failure. Default `console.error`. Never receives the webhook URL or
    * payload body — only a short description of what went wrong. */
   onError?: (message: string) => void;
-  /** Defaults to 'local'. The CLI never passes this, so
-   * `new AlertNotifier(path)` behaves exactly as it always has and every
-   * pre-tenancy call site and test keeps working unchanged. */
+  /** Defaults to 'local', so `new AlertNotifier(path)` behaves exactly as it
+   * always has and every pre-tenancy call site and test keeps working. */
   tenantId?: string;
 }
 

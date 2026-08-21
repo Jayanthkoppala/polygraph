@@ -15,7 +15,7 @@
  * hook: two components using this hook never share an engine.
  */
 import { useCallback, useMemo, useState } from 'react';
-import { SandboxEngine, SandboxLimitError, type SandboxMode } from './engine';
+import { SandboxEngine, SandboxLimitError, type SandboxMode, type SandboxSafeOutputSnapshot } from './engine';
 import type { CollectorState } from '@/lib/api';
 
 export type SandboxPhase = 'idle' | 'breaking' | 'reverifying';
@@ -40,6 +40,7 @@ export interface UseSandboxEngineResult {
   actionsRemaining: number;
   limitReached: boolean;
   ledgerCount: number;
+  safeOutput: SandboxSafeOutputSnapshot;
   /** Triggers the full break/re-verify sequence for `mode`. No-ops while a
    * sequence is already in flight. */
   trigger: (mode: SandboxMode) => void;
@@ -56,6 +57,7 @@ export function useSandboxEngine(): UseSandboxEngineResult {
   const [phase, setPhase] = useState<SandboxPhase>('idle');
   const [actionsRemaining, setActionsRemaining] = useState(engine.actionsRemaining);
   const [ledgerCount, setLedgerCount] = useState(engine.getLedger().length);
+  const [safeOutput, setSafeOutput] = useState(() => engine.getSafeOutputSnapshot());
 
   const trigger = useCallback(
     (nextMode: SandboxMode) => {
@@ -84,6 +86,7 @@ export function useSandboxEngine(): UseSandboxEngineResult {
         setMode(nextMode);
         setActionsRemaining(engine.actionsRemaining);
         setLedgerCount(engine.getLedger().length);
+        setSafeOutput(engine.getSafeOutputSnapshot());
         setPhase('idle');
       })();
     },
@@ -102,10 +105,11 @@ export function useSandboxEngine(): UseSandboxEngineResult {
       actionsRemaining,
       limitReached: actionsRemaining <= 0,
       ledgerCount,
+      safeOutput,
       trigger,
       verifyChain,
       ledgerRowsForDisplay,
     }),
-    [engine, fleet, mode, phase, actionsRemaining, ledgerCount, trigger, verifyChain, ledgerRowsForDisplay],
+    [engine, fleet, mode, phase, actionsRemaining, ledgerCount, safeOutput, trigger, verifyChain, ledgerRowsForDisplay],
   );
 }

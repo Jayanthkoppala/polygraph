@@ -77,6 +77,51 @@ describe('runFleet', () => {
     expect(events[0].tenant).toBe('acme-corp');
   });
 
+  it('records a RELEASE and its verified rows through the optional atomic decision recorder', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(textResponse(200, 'SKU-1 $9.99'));
+    const recordRelease = vi.fn(({ event }) => ({ event: { ...event, id: 42 } }));
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1', price: 9.99 }) },
+      },
+      schemas: { 'acme-catalog': healthySchema },
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
+      decisions: { recordRelease } as never,
+    });
+
+    const summary = await runFleet(fleetConfig([healthyCollector]), ctx);
+
+    expect(summary.results[0]).toMatchObject({ verdict: 'PASS', action: 'RELEASE' });
+    expect(recordRelease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({ action: 'RELEASE', collector: 'acme-catalog' }),
+        rows: [{ input: 'SKU-1', sku: 'SKU-1', price: 9.99 }],
+      })
+    );
+    expect(ctx.ledger.all()).toEqual([]);
+  });
+
+  it('fails closed when the atomic release recorder rejects the verified rows', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(textResponse(200, 'SKU-1 $9.99'));
+    const ctx = newRunnerContext({
+      adapterContext: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractors: { 'acme-catalog': () => ({ sku: 'SKU-1', price: 9.99 }) },
+      },
+      schemas: { 'acme-catalog': healthySchema },
+      entityExtractors: { 'acme-catalog': (input) => String(input) },
+      decisions: { recordRelease: vi.fn(() => { throw new Error('safe output exceeds cap'); }) } as never,
+    });
+
+    const summary = await runFleet(fleetConfig([healthyCollector]), ctx);
+
+    expect(summary.results[0]).toMatchObject({ verdict: 'SUSPECT_UNEXPLAINED_ANOMALY', cause: 'DATA', action: 'QUARANTINE' });
+    const [failureReceipt] = ctx.ledger.all();
+    expect(failureReceipt).toMatchObject({ action: 'QUARANTINE' });
+    expect(failureReceipt.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ check: 'safe-output', ok: false })]));
+  });
+
   it('quarantines a run whose error codes classify as DATA (e.g. an unrecognized error_code)', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(textResponse(500, 'boom'));
     const ctx = newRunnerContext({

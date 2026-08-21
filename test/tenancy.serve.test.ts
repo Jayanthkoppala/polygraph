@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { startServer, type RunningServer } from '../src/tenancy/serve.js';
 import { openWriter } from '../src/tenancy/db.js';
 import { setTenantPublic } from '../src/tenancy/admin.js';
+import { scopeFor } from '../src/tenancy/scope.js';
 
 /**
  * End-to-end HTTP tests for the hosted server, per Task 4's requirements:
@@ -106,6 +107,11 @@ describe('tenancy/serve — auth required', () => {
     expect(res.status).toBe(401);
   });
 
+  it('GET /api/collectors/:id/safe-output without a session cookie returns 401', async () => {
+    const res = await fetch(`${base}/api/collectors/c1/safe-output`);
+    expect(res.status).toBe(401);
+  });
+
   it('a mutating route with a valid session but the wrong Origin is rejected (403 CSRF)', async () => {
     const { token } = await signup(base, 'CSRF Tenant');
     const cookie = await sessionCookieFor(base, token);
@@ -194,13 +200,118 @@ describe('tenancy/serve — tenant isolation over HTTP', () => {
     const res = await fetch(`${base}/api/collectors/b-collector`, { headers: { cookie: cookieA } });
     expect(res.status).toBe(404);
   });
+
+  it('serves a tenant\'s last known-good rows with its latest non-ACK decision, and hides another tenant\'s collector as 404', async () => {
+    const a = await signup(base, 'Tenant A');
+    const b = await signup(base, 'Tenant B');
+    const cookieA = await sessionCookieFor(base, a.token);
+    const cookieB = await sessionCookieFor(base, b.token);
+
+    await fetch(`${base}/api/collectors`, {
+      method: 'POST',
+      headers: jsonHeaders({ cookie: cookieB }),
+      body: JSON.stringify({ collector_id: 'b-safe', name: 'B Safe', canary_inputs: ['SKU-1'] }),
+    });
+    const tenant = running.writer.prepare('SELECT genesis_hash FROM tenants WHERE id = ?').get(b.tenantId) as { genesis_hash: string };
+    const scope = scopeFor(running.writer, b.tenantId, tenant.genesis_hash);
+    scope.decisions.recordRelease({
+      event: {
+        ts: '2026-08-21T00:00:00.000Z',
+        tenant: 'ignored-by-scoped-recorder',
+        collector: 'b-safe',
+        run_id: 'run-good',
+        verdict: 'PASS',
+        cause: 'NONE',
+        evidence: [],
+        action: 'RELEASE',
+      },
+      rows: [{ sku: 'SKU-1', price: 9.99 }],
+    });
+    scope.ledger.append({
+      ts: '2026-08-21T00:01:00.000Z',
+      tenant: 'Tenant B',
+      collector: 'b-safe',
+      run_id: 'run-bad',
+      verdict: 'FAILED_IDENTITY',
+      cause: 'IDENTITY',
+      evidence: [],
+      action: 'QUARANTINE',
+    });
+    scope.ledger.append({
+      ts: '2026-08-21T00:02:00.000Z',
+      tenant: 'Tenant B',
+      collector: 'b-safe',
+      run_id: 'run-bad',
+      verdict: 'FAILED_IDENTITY',
+      cause: 'IDENTITY',
+      evidence: [],
+      action: 'ACKED',
+    });
+
+    const ownerRes = await fetch(`${base}/api/collectors/b-safe/safe-output`, { headers: { cookie: cookieB } });
+    expect(ownerRes.status).toBe(200);
+    expect(await ownerRes.json()).toMatchObject({
+      version: 'safe-output/v1',
+      collector_id: 'b-safe',
+      snapshot: { run_id: 'run-good', rows: [{ sku: 'SKU-1', price: 9.99 }] },
+      latest_decision: { run_id: 'run-bad', action: 'QUARANTINE' },
+    });
+
+    const otherTenant = await fetch(`${base}/api/collectors/b-safe/safe-output`, { headers: { cookie: cookieA } });
+    const missing = await fetch(`${base}/api/collectors/no-such-collector/safe-output`, { headers: { cookie: cookieA } });
+    expect(otherTenant.status).toBe(404);
+    expect(missing.status).toBe(404);
+  });
+
+  it('fails closed with 500 when a stored safe-output payload no longer matches its release receipt', async () => {
+    const tenant = await signup(base, 'Integrity Tenant');
+    const cookie = await sessionCookieFor(base, tenant.token);
+    await fetch(`${base}/api/collectors`, {
+      method: 'POST',
+      headers: jsonHeaders({ cookie }),
+      body: JSON.stringify({ collector_id: 'integrity-safe', name: 'Integrity Safe', canary_inputs: ['SKU-1'] }),
+    });
+
+    const tenantRow = running.writer.prepare('SELECT genesis_hash FROM tenants WHERE id = ?').get(tenant.tenantId) as {
+      genesis_hash: string;
+    };
+    const scope = scopeFor(running.writer, tenant.tenantId, tenantRow.genesis_hash);
+    scope.decisions.recordRelease({
+      event: {
+        ts: '2026-08-21T00:00:00.000Z',
+        tenant: 'Integrity Tenant',
+        collector: 'integrity-safe',
+        run_id: 'run-good',
+        verdict: 'PASS',
+        cause: 'NONE',
+        evidence: [],
+        action: 'RELEASE',
+      },
+      rows: [{ sku: 'SKU-1', price: 9.99 }],
+    });
+
+    // Valid JSON, but not the payload covered by the stored hash and RELEASE
+    // event. This exercises the route boundary, not just ScopedSafeOutput.
+    running.writer
+      .prepare('UPDATE safe_output_snapshots SET rows_json = ? WHERE tenant_id = ? AND collector_id = ?')
+      .run('[{"price":10,"sku":"SKU-1"}]', tenant.tenantId, 'integrity-safe');
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const res = await fetch(`${base}/api/collectors/integrity-safe/safe-output`, { headers: { cookie } });
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: 'internal server error' });
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 describe('tenancy/serve — R6: hosted heal is structurally off', () => {
-  it('startServer never reads, sets, or forwards POLYGRAPH_HEAL_ENABLED', async () => {
+  it('startServer leaves the process heal flag alone; scheduler policy is the hard off-switch', async () => {
     const dir = tempDir();
     process.env.POLYGRAPH_MASTER_KEY = randomBytes(32).toString('base64');
-    delete process.env.POLYGRAPH_HEAL_ENABLED;
+    process.env.POLYGRAPH_HEAL_ENABLED = '1';
 
     const running = await startServer({
       dbPath: join(dir, 'polygraph.sqlite'),
@@ -210,18 +321,47 @@ describe('tenancy/serve — R6: hosted heal is structurally off', () => {
       webDir: join(dir, 'nonexistent-app-dist'),
     });
 
-    expect(process.env.POLYGRAPH_HEAL_ENABLED).toBeUndefined();
+    expect(process.env.POLYGRAPH_HEAL_ENABLED).toBe('1');
 
     const base = `http://127.0.0.1:${running.port}`;
     const { token } = await signup(base, 'Heal Check Tenant');
     const cookie = await sessionCookieFor(base, token);
     await fetch(`${base}/api/state`, { headers: { cookie } });
 
-    expect(process.env.POLYGRAPH_HEAL_ENABLED).toBeUndefined();
+    expect(process.env.POLYGRAPH_HEAL_ENABLED).toBe('1');
 
     await running.stop();
     delete process.env.POLYGRAPH_MASTER_KEY;
+    delete process.env.POLYGRAPH_HEAL_ENABLED;
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reports the effective hosted policy as repairs off even when a stale tenant row says enabled', async () => {
+    const dir = tempDir();
+    process.env.POLYGRAPH_MASTER_KEY = randomBytes(32).toString('base64');
+    const running = await startServer({
+      dbPath: join(dir, 'polygraph.sqlite'),
+      port: 0,
+      host: '127.0.0.1',
+      publicOrigin: ORIGIN,
+      webDir: join(dir, 'nonexistent-app-dist'),
+    });
+
+    try {
+      const base = `http://127.0.0.1:${running.port}`;
+      const tenant = await signup(base, 'Hosted Policy Tenant');
+      const cookie = await sessionCookieFor(base, tenant.token);
+      running.writer.prepare('UPDATE tenants SET heal_enabled = 1 WHERE id = ?').run(tenant.tenantId);
+
+      const res = await fetch(`${base}/api/state`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      const state = await res.json() as { governor: { heal_enabled: boolean } };
+      expect(state.governor.heal_enabled).toBe(false);
+    } finally {
+      await running.stop();
+      delete process.env.POLYGRAPH_MASTER_KEY;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -68,6 +68,16 @@ describe('SandboxPanel — first paint, no signup wall', () => {
     expect(screen.getAllByText('Verified')).toHaveLength(3);
   });
 
+  it('labels the browser-only safe-output demo and shows the seeded verified snapshot', () => {
+    render(<Harness testId="h" />);
+
+    const safeOutput = screen.getByTestId('safe-output-panel');
+    expect(safeOutput).toHaveTextContent(/Browser demo state/i);
+    expect(safeOutput).toHaveTextContent(/Serving last verified demo snapshot/i);
+    expect(safeOutput).toHaveTextContent(/12 rows/i);
+    expect(safeOutput).toHaveTextContent(/Snapshot unchanged/i);
+  });
+
   it('says what each collector does in plain words before the reader meets it as a card title', () => {
     render(<Harness testId="h" />);
     // The names are only self-explaining if the panel actually explains
@@ -213,6 +223,14 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
     // substituted.
     expect(screen.getAllByTestId('entity-key-swap')).toHaveLength(1);
     expect(screen.getAllByText('Verified')).toHaveLength(2);
+    const safeOutput = screen.getByTestId('safe-output-panel');
+    expect(safeOutput).toHaveTextContent(/HTTP 200/i);
+    expect(safeOutput).toHaveTextContent(/Contract baseline: PASS/i);
+    expect(safeOutput).toHaveTextContent(/Wrong target/i);
+    expect(safeOutput).toHaveTextContent(/Repair refused/i);
+    expect(safeOutput).toHaveTextContent(/Current run quarantined/i);
+    expect(safeOutput).toHaveTextContent(/Serving last verified demo snapshot/i);
+    expect(safeOutput).toHaveTextContent(/Snapshot unchanged/i);
   });
 
   it('put it back genuinely returns the fleet to Verified after a prior break', async () => {
@@ -226,6 +244,8 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
     fireEvent.click(screen.getByTestId('sandbox-break-healthy'));
     await vi.advanceTimersByTimeAsync(600 + 1600);
     expect(screen.getAllByText('Verified')).toHaveLength(3);
+    expect(screen.getByTestId('safe-output-panel')).toHaveTextContent(/Healthy run released/i);
+    expect(screen.getByTestId('safe-output-panel')).toHaveTextContent(/Snapshot advanced/i);
   });
 });
 

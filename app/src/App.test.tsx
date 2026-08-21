@@ -99,6 +99,26 @@ describe('AppRoutes', () => {
     expect(screen.getByRole('heading', { name: /your scraper says 200 OK/i })).toBeInTheDocument();
   });
 
+  it('/legal/privacy renders a real privacy notice instead of redirecting to the landing page', () => {
+    render(
+      <MemoryRouter initialEntries={['/legal/privacy']}>
+        <AppRoutes />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('heading', { name: 'Privacy' })).toBeInTheDocument();
+    expect(screen.getByText(/does not ask for, transmit, or retain a Bright Data key/i)).toBeInTheDocument();
+  });
+
+  it('/legal/terms renders the terms route', () => {
+    render(
+      <MemoryRouter initialEntries={['/legal/terms']}>
+        <AppRoutes />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('heading', { name: 'Terms of use' })).toBeInTheDocument();
+    expect(screen.getByText(/does not automatically repair collectors/i)).toBeInTheDocument();
+  });
+
   it('/app for an anonymous visitor bounces to the landing page, not a bare 401', async () => {
     mockApi({ '/api/settings/key/status': { status: 401, body: { error: 'authentication required' } } });
     render(

@@ -118,7 +118,7 @@ export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyP
           </ReassuranceBlock>
           <ReassuranceBlock heading="What we will never do">
             <ul className="flex flex-col gap-0.5 pl-4">
-              <li className="list-disc">spend a credit on a repair — repairs are OFF and stay off until you turn them on, with a daily cap you set</li>
+              <li className="list-disc">spend a credit on a repair — hosted auto-repair is unavailable and stays OFF; Polygraph gives you the manual command instead</li>
               <li className="list-disc">modify a collector</li>
               <li className="list-disc">read anything outside the collectors you pick</li>
             </ul>

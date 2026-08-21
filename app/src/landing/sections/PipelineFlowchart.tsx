@@ -262,9 +262,9 @@ export function PipelineFlowchart({ sandbox }: { sandbox: UseSandboxEngineResult
 
         <Connector color={pathColor} active={revealed} delay={BEAT.path3} revealId={revealId} reduce={reduce} />
 
-        {/* 4 — the ledger */}
+        {/* 4 — the ledger and the release-only output */}
         <Node>
-          <NodeTitle>Written down, forever</NodeTitle>
+          <NodeTitle>Ledger + safe output</NodeTitle>
           <div className="flex items-center gap-2">
             <Receipt size={20} weight="regular" className="shrink-0 text-[#9B9B9B]" aria-hidden />
             <motion.span
@@ -279,7 +279,7 @@ export function PipelineFlowchart({ sandbox }: { sandbox: UseSandboxEngineResult
             </motion.span>
           </div>
           <p className="text-xs text-[#B4B4B4]">
-            Each entry is fingerprinted with the one before it. Change any row and the chain snaps.
+            Each entry is fingerprinted with the one before it. Only a release advances the last verified output.
           </p>
         </Node>
       </div>

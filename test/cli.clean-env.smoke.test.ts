@@ -27,6 +27,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import Database from 'better-sqlite3';
 import { stringify } from 'yaml';
 import { createFixtureServer } from '../src/fixture/server.js';
 import { writeChaosMode } from '../src/fixture/state.js';
@@ -95,7 +96,8 @@ describe('CLI: `polygraph run --collector <local>` in a clean environment (no Br
     const cleanEnv: NodeJS.ProcessEnv = { ...process.env, HOME: cleanHome };
     delete cleanEnv.BRIGHTDATA_API_KEY;
     delete cleanEnv.BRIGHTDATA_UNLOCKER_ZONE;
-    cleanEnv.POLYGRAPH_DB = join(workDir, 'polygraph.sqlite');
+    const dbPath = join(workDir, 'polygraph.sqlite');
+    cleanEnv.POLYGRAPH_DB = dbPath;
 
     const { stdout } = await execFileAsync(
       tsxBin,
@@ -105,7 +107,70 @@ describe('CLI: `polygraph run --collector <local>` in a clean environment (no Br
 
     expect(stdout).toContain('clean-fixture: verdict=PASS');
     expect(stdout).toContain('action=RELEASE');
+    const db = new Database(dbPath, { readonly: true });
+    const snapshot = db
+      .prepare('SELECT collector_id, row_count FROM safe_output_snapshots WHERE tenant_id = ? AND collector_id = ?')
+      .get('local', 'clean-fixture') as { collector_id: string; row_count: number } | undefined;
+    db.close();
+    expect(snapshot).toEqual({ collector_id: 'clean-fixture', row_count: 2 });
   });
+
+  it('`watch` persists its immediate RELEASE before serving it to the dashboard', async () => {
+    const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+    const tsxBin = join(repoRoot, 'node_modules', '.bin', 'tsx');
+    const entrypoint = join(repoRoot, 'src', 'index.ts');
+    const dbPath = join(workDir, `polygraph-watch-${Math.random().toString(36).slice(2)}.sqlite`);
+    const dashboardPort = 20000 + Math.floor(Math.random() * 20000);
+    const cleanEnv: NodeJS.ProcessEnv = { ...process.env, HOME: cleanHome, POLYGRAPH_DB: dbPath };
+    delete cleanEnv.BRIGHTDATA_API_KEY;
+    delete cleanEnv.BRIGHTDATA_UNLOCKER_ZONE;
+
+    const child = spawn(
+      tsxBin,
+      [entrypoint, 'watch', '--config', join(workDir, 'fleet.yaml'), '--port', String(dashboardPort)],
+      { cwd: workDir, env: cleanEnv }
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => (stdout += chunk.toString()));
+    child.stderr.on('data', (chunk) => (stderr += chunk.toString()));
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error(`watch did not release in time.\nstdout:\n${stdout}\nstderr:\n${stderr}`)),
+          15_000
+        );
+        const check = () => {
+          if (stdout.includes('clean-fixture: verdict=PASS') && stdout.includes('action=RELEASE')) {
+            clearTimeout(timer);
+            resolve();
+          }
+        };
+        child.stdout.on('data', check);
+        child.once('error', (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+        child.once('exit', (code) => {
+          clearTimeout(timer);
+          reject(new Error(`watch exited early with code ${code}.\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+        });
+      });
+
+      const db = new Database(dbPath, { readonly: true });
+      const snapshot = db
+        .prepare('SELECT collector_id, row_count FROM safe_output_snapshots WHERE tenant_id = ? AND collector_id = ?')
+        .get('local', 'clean-fixture') as { collector_id: string; row_count: number } | undefined;
+      db.close();
+      expect(snapshot).toEqual({ collector_id: 'clean-fixture', row_count: 2 });
+    } finally {
+      if (child.exitCode === null) child.kill('SIGTERM');
+      if (child.exitCode === null) {
+        await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      }
+    }
+  }, 20_000);
 
   it('a brightdata/unlocker collector reached in the SAME clean environment fails with the missing-key message, scoped to that one collector — never a startup crash', async () => {
     const mixedFleetDoc = {
@@ -167,11 +232,12 @@ describe('CLI: `polygraph run --collector <local>` in a clean environment (no Br
  * plan.md): "The CLI and `polygraph demo` must keep working exactly as
  * today, fully offline... tenancy code is dynamically imported so the CLI
  * never loads the crypto module." Task 4 (`serve`) is the ONLY thing that
- * touches `src/tenancy/**` — these two tests are the explicit proof the
- * spec asks for, run against the REAL compiled CLI entrypoint exactly like
- * the suite above, never `import`ing `src/index.ts` directly.
+ * owns hosted auth/key custody. Local commands may now dynamically load the
+ * shared database migration needed for atomic safe-output retention, but
+ * they must never load tenancy crypto or require a master key. These tests
+ * run against the real CLI entrypoint and never import index.ts directly.
  */
-describe('CLI: R9 — tenancy is never loaded outside `polygraph serve`', () => {
+describe('CLI: R9 — hosted crypto is never loaded outside `polygraph serve`', () => {
   let cleanHome: string;
   let workDir: string;
 
@@ -209,10 +275,11 @@ describe('CLI: R9 — tenancy is never loaded outside `polygraph serve`', () => 
     const dashboardPort = 20000 + Math.floor(Math.random() * 20000);
     const fixturePort = 40000 + Math.floor(Math.random() * 20000);
 
+    const env = cleanEnv();
     const child = spawn(
       tsxBin,
       [entrypoint, 'demo', '--config', configPath, '--port', String(dashboardPort), '--fixture-port', String(fixturePort)],
-      { cwd: workDir, env: cleanEnv() }
+      { cwd: workDir, env }
     );
 
     let stdout = '';
@@ -244,6 +311,12 @@ describe('CLI: R9 — tenancy is never loaded outside `polygraph serve`', () => 
     });
 
     expect(stdout).toMatch(/demo-store-products\s+PASS\s+NONE\s+RELEASE/);
+    const db = new Database(env.POLYGRAPH_DB!, { readonly: true });
+    const snapshot = db
+      .prepare('SELECT collector_id, row_count FROM safe_output_snapshots WHERE tenant_id = ?')
+      .get('local') as { collector_id: string; row_count: number } | undefined;
+    db.close();
+    expect(snapshot).toEqual({ collector_id: 'demo-store-products', row_count: 2 });
 
     child.kill('SIGTERM');
     await new Promise<void>((resolve) => child.once('exit', () => resolve()));

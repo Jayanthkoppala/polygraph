@@ -30,6 +30,7 @@ import { relativeAge } from '@/lib/time';
 import type { UseSandboxEngineResult } from './useSandboxEngine';
 import type { SandboxMode } from './engine';
 import type { CollectorState } from '@/lib/api';
+import { SafeOutputPanel } from './SafeOutputPanel';
 
 const BUTTONS: { mode: SandboxMode; label: string; breakingLabel: string }[] = [
   { mode: 'price_dead', label: 'Kill the price field', breakingLabel: 'Breaking…' },
@@ -114,6 +115,7 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
   }, [phase]);
 
   const proofLine = buildProofLine(fleet, targetId, sandbox.mode);
+  const target = fleet.find((collector) => collector.id === targetId);
 
   return (
     <div
@@ -209,6 +211,8 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
           {proofLine}
         </p>
       )}
+
+      {!busy && <SafeOutputPanel snapshot={sandbox.safeOutput} mode={sandbox.mode} target={target} />}
 
       <div className="relative mt-4">
         {limitReached ? (

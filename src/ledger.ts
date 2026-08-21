@@ -11,20 +11,21 @@ export const GENESIS_HASH = '0'.repeat(64);
 
 /** The tenant id every existing call site implicitly used before tenancy
  * existed. Duplicated here (rather than imported from src/tenancy/genesis.ts)
- * so this module stays free of any src/tenancy/ dependency — see
- * tenant-architecture.md §7 rule 3: the CLI must never load the tenancy
- * module, and ledger.ts is loaded by every CLI command. */
+ * so this low-level store stays free of hosted tenancy dependencies and can
+ * be used by both legacy local callers and the shared local write store. */
 const LOCAL_TENANT_ID = 'local';
 
 export interface LedgerOptions {
-  /** Defaults to 'local'. The CLI never passes this, so `new Ledger(path)`
-   * behaves exactly as it always has and every pre-tenancy call site and
-   * test keeps working unchanged. */
+  /** Defaults to 'local', so `new Ledger(path)` behaves exactly as it always
+   * has and every pre-tenancy call site and test keeps working unchanged. */
   tenantId?: string;
   /** Defaults to GENESIS_HASH ('0'.repeat(64)) so a migrated local chain's
    * first row still links off the value it was originally hashed against.
    * Hosted tenants pass their own tenants.genesis_hash. */
   genesisHash?: string;
+  /** Skip schema creation/backfill when the supplied handle is a proven
+   * read-only connection to an already-migrated database. */
+  initializeSchema?: boolean;
 }
 
 export interface LedgerEventInput {
@@ -156,6 +157,14 @@ function hashEvent(prevHash: string, payload: EventPayload): string {
   return createHash('sha256').update(prevHash + canonicalJson(payload)).digest('hex');
 }
 
+/** Verifies one persisted receipt against its own prev_hash and payload.
+ * Callers that need full-chain integrity must still use `verify()`; this is
+ * the bounded check used when serving one referenced release artifact. */
+export function isLedgerEventHashValid(row: LedgerEventRow): boolean {
+  const { id: _id, prev_hash, event_hash, tenant_id: _tenantId, ...payload } = row;
+  return hashEvent(prev_hash, payload) === event_hash;
+}
+
 interface ChainStepResult {
   ok: boolean;
   /** The hash to carry into the next row's check. Equal to the input
@@ -225,7 +234,7 @@ export class Ledger {
     this.tenantId = options.tenantId ?? LOCAL_TENANT_ID;
     this.genesisHash = options.genesisHash ?? GENESIS_HASH;
 
-    this.db.exec(`
+    if (options.initializeSchema !== false) this.db.exec(`
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts TEXT NOT NULL,
@@ -257,14 +266,16 @@ export class Ledger {
     // — a legacy single-tenant chain's existing rows are the local tenant's
     // history by definition, never the tenant this particular instance
     // happens to be scoped to.
-    if (!columnExists(this.db, 'events', 'tenant_id')) {
+    if (options.initializeSchema !== false && !columnExists(this.db, 'events', 'tenant_id')) {
       this.db.exec(`ALTER TABLE events ADD COLUMN tenant_id TEXT`);
       this.db.prepare(`UPDATE events SET tenant_id = ? WHERE tenant_id IS NULL`).run(LOCAL_TENANT_ID);
     }
     // idx_events_tenant_id / idx_events_tenant_coll_id per
     // tenant-architecture.md §3.
-    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_events_tenant_id ON events(tenant_id, id)`);
-    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_events_tenant_coll_id ON events(tenant_id, collector, id DESC)`);
+    if (options.initializeSchema !== false) {
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_events_tenant_id ON events(tenant_id, id)`);
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_events_tenant_coll_id ON events(tenant_id, collector, id DESC)`);
+    }
 
     const insertStmt = this.db.prepare(`
       INSERT INTO events (ts, tenant, collector, run_id, verdict, cause, evidence, action, heal_job_id, input_hash, output_hash, prev_hash, event_hash, tenant_id)

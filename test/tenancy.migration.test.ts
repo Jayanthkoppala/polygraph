@@ -245,7 +245,7 @@ describe('tenancy migrate() — legacy database backfill', () => {
     expect(count.n).toBe(1);
 
     const versions = writer.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number };
-    expect(versions.n).toBe(7); // M001-M007 — bump this when a new migration is added
+    expect(versions.n).toBe(8); // M001-M008 — bump this when a new migration is added
 
     writer.close();
   });
@@ -281,6 +281,38 @@ describe('tenancy migrate() — legacy database backfill', () => {
   it('runs cleanly against :memory: (no backup file to write)', () => {
     const writer = openWriter(':memory:');
     expect(() => migrate(writer, ':memory:')).not.toThrow();
+    writer.close();
+  });
+
+  it('creates the tenant-scoped safe output snapshot table on a fresh database', () => {
+    const { dir, path } = tempDbPath();
+    dirs.push(dir);
+    const writer = openWriter(path);
+    migrate(writer, path);
+
+    const columns = writer.prepare('PRAGMA table_info(safe_output_snapshots)').all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(['tenant_id', 'collector_id', 'release_event_id', 'released_at', 'run_id', 'row_count', 'output_hash', 'rows_json'])
+    );
+    writer.close();
+  });
+
+  it('upgrades an already-M007 database by applying only M008', () => {
+    const { dir, path } = tempDbPath();
+    dirs.push(dir);
+    const writer = openWriter(path);
+    migrate(writer, path);
+    writer.exec('DROP TABLE safe_output_snapshots');
+    writer.prepare('DELETE FROM schema_migrations WHERE version = 8').run();
+
+    migrate(writer, path);
+
+    const version = writer.prepare('SELECT version FROM schema_migrations WHERE version = 8').get() as { version: number };
+    const table = writer
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'safe_output_snapshots'")
+      .get() as { name: string };
+    expect(version.version).toBe(8);
+    expect(table.name).toBe('safe_output_snapshots');
     writer.close();
   });
 });

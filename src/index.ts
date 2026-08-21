@@ -5,10 +5,8 @@ import { stringify } from 'yaml';
 import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { Ledger, type LedgerEventRow } from './ledger.js';
 import { loadFleetConfig, type FleetConfig } from './config.js';
-import { Governor } from './policy.js';
 import { BrightDataClient, createLazyBrightDataClient } from './brightdata.js';
 import { runFleet, type RunnerContext, type CollectorRunSummary } from './runner.js';
-import { AlertNotifier } from './alerts.js';
 import { createServer, ackLedgerEvent, AckError } from './server.js';
 import { DEFAULT_WATCH_HOST, resolveWatchHost } from './watch-host.js';
 import { createFixtureServer } from './fixture/server.js';
@@ -73,6 +71,7 @@ program
     'restrict this pass to a single collector id — e.g. re-running just the chaos fixture during a live demo without also touching any network-backed collectors in the same fleet.yaml'
   )
   .action(async (opts: { config?: string; once?: boolean; collector?: string }) => {
+    let closeStore: (() => void) | undefined;
     try {
       const configPath = resolveConfigPath(opts.config);
       const fullConfig = loadFleetConfig(configPath);
@@ -83,8 +82,9 @@ program
         throw new Error(`no collector with id "${opts.collector}" in ${configPath}`);
       }
       const dbPath = resolveDbPath();
-      const governor = new Governor(dbPath);
-      const ledger = new Ledger(dbPath);
+      const { openLocalWriteStore } = await import('./local-store.js');
+      const store = openLocalWriteStore(dbPath);
+      closeStore = store.close;
       // Lazy: resolves (and can throw on a missing key) only when a
       // collector whose adapter actually calls a client method is reached —
       // never at startup, so a run scoped to purely local/fixture
@@ -96,8 +96,6 @@ program
       // like they each have — better-sqlite3 + WAL supports multiple
       // connections to one file), so the debounce table survives a
       // process restart exactly like the governor's attempt counts do.
-      const notifier = new AlertNotifier(dbPath);
-
       // Contract/coherence/identity checks fall back to extractors.ts's
       // COLLECTOR_REGISTRY (keyed by collector name) automatically — no
       // schemas/entityExtractors override needed here for a registered
@@ -108,19 +106,24 @@ program
       // the same COLLECTOR_REGISTRY entries (Task 9 closed the gap Task 5
       // left open here).
       const extractors = extractorsForCollectors(config.collectors);
-      const summary = await runFleet(config, { adapterContext: { client, extractors }, governor, ledger, notifier });
+      const summary = await runFleet(config, {
+        adapterContext: { client, extractors },
+        governor: store.governor,
+        ledger: store.ledger,
+        notifier: store.notifier,
+        decisions: store.decisions,
+      });
 
       for (const r of summary.results) {
         for (const line of formatRunLines(r)) process.stdout.write(`${line}\n`);
       }
 
-      governor.close();
-      ledger.close();
-      notifier.close();
       process.exitCode = summary.results.some((r) => r.action !== 'RELEASE') ? 1 : 0;
     } catch (err) {
       process.stderr.write(`polygraph run: ${(err as Error).message}\n`);
       process.exitCode = 1;
+    } finally {
+      closeStore?.();
     }
   });
 
@@ -150,18 +153,23 @@ program
     try {
       const config = loadFleetConfig(resolveConfigPath(opts.config));
       const dbPath = resolveDbPath();
-      const governor = new Governor(dbPath);
-      const ledger = new Ledger(dbPath);
+      const { openLocalWriteStore } = await import('./local-store.js');
+      const store = openLocalWriteStore(dbPath);
       // Lazy — see the `run` command's own comment on createLazyBrightDataClient.
       const client = createLazyBrightDataClient();
       // Same SQLite file as run's own wiring (own connection — WAL supports
       // multiple connections to one file), so alert debounce/state and the
       // dashboard both see exactly what the scheduled runs just produced.
-      const notifier = new AlertNotifier(dbPath);
       const extractors = extractorsForCollectors(config.collectors);
-      const runnerCtx: RunnerContext = { adapterContext: { client, extractors }, governor, ledger, notifier };
+      const runnerCtx: RunnerContext = {
+        adapterContext: { client, extractors },
+        governor: store.governor,
+        ledger: store.ledger,
+        notifier: store.notifier,
+        decisions: store.decisions,
+      };
 
-      const server = createServer({ config, ledger, governor });
+      const server = createServer({ config, ledger: store.ledger, governor: store.governor });
       const port = Number.parseInt(opts.port ?? String(DEFAULT_WATCH_PORT), 10) || DEFAULT_WATCH_PORT;
       const { host, warnNonLoopback } = resolveWatchHost(opts.host);
       if (warnNonLoopback) {
@@ -213,9 +221,7 @@ program
         process.stdout.write('polygraph watch: shutting down\n');
         for (const task of tasks) task.stop();
         server.close();
-        governor.close();
-        ledger.close();
-        notifier.close();
+        store.close();
         process.exit(0);
       };
       process.on('SIGINT', shutdown);
@@ -230,6 +236,24 @@ program
   .command('status')
   .description('Show current health status for the fleet')
   .action(stub('status'));
+
+program
+  .command('mcp')
+  .description('Serve Polygraph tools to a local coding agent over MCP stdio')
+  .action(async () => {
+    try {
+      // Dynamic import keeps MCP and the hosted tenancy graph out of every
+      // ordinary CLI command. Never write a startup banner to stdout: that
+      // stream belongs exclusively to JSON-RPC while this command is alive.
+      const { createLocalPolygraphMcpOperations, servePolygraphMcp } = await import('./mcp.js');
+      await servePolygraphMcp(createLocalPolygraphMcpOperations(), {
+        allowNetworkRuns: process.env.POLYGRAPH_MCP_ALLOW_NETWORK === '1',
+      });
+    } catch (err) {
+      process.stderr.write(`polygraph mcp: ${(err as Error).message}\n`);
+      process.exitCode = 1;
+    }
+  });
 
 program
   .command('log')
@@ -421,8 +445,8 @@ program
       process.stdout.write(`polygraph demo: chaos fixture on http://127.0.0.1:${fixturePort}\n`);
 
       const config = loadFleetConfig(configPath);
-      const governor = new Governor(dbPath);
-      const ledger = new Ledger(dbPath);
+      const { openLocalWriteStore } = await import('./local-store.js');
+      const store = openLocalWriteStore(dbPath);
       // BrightDataClient's constructor throws if it can't resolve a real key
       // anywhere (env/file) — offline-safe here with a placeholder fallback:
       // the two books.toscrape.com collectors only ever reach a real network
@@ -432,12 +456,12 @@ program
       // per-input QUARANTINE, never a crash. This is what makes "no Bright
       // Data account needed" literally true for `polygraph demo`.
       const client = new BrightDataClient({ apiKey: process.env.BRIGHTDATA_API_KEY ?? 'demo-unused' });
-      const notifier = new AlertNotifier(dbPath);
       const runnerCtx: RunnerContext = {
         adapterContext: { client, extractors: extractorsForCollectors(config.collectors) },
-        governor,
-        ledger,
-        notifier,
+        governor: store.governor,
+        ledger: store.ledger,
+        notifier: store.notifier,
+        decisions: store.decisions,
       };
 
       // `demo`'s own automatic pass is scoped to `local`-adapter collectors
@@ -462,7 +486,7 @@ program
       printVerdictTable(summary.results);
       process.stdout.write('\n');
 
-      const dashboardServer = createServer({ config, ledger, governor });
+      const dashboardServer = createServer({ config, ledger: store.ledger, governor: store.governor });
       await new Promise<void>((resolve, reject) => {
         dashboardServer.once('error', reject);
         dashboardServer.listen(dashboardPort, DEFAULT_WATCH_HOST, () => resolve());
@@ -483,9 +507,7 @@ program
         process.stdout.write('\npolygraph demo: shutting down\n');
         dashboardServer.close();
         fixtureServer.close();
-        governor.close();
-        ledger.close();
-        notifier.close();
+        store.close();
         process.exit(0);
       };
       process.on('SIGINT', shutdown);
@@ -518,13 +540,11 @@ ledger
   });
 
 // ---------------------------------------------------------------------------
-// Hosted commands — tenant-architecture.md §7 rule 3: `serve` is the ONLY
-// command that touches src/tenancy/, via a DYNAMIC import. This is what
-// keeps every other command (`run`/`watch`/`demo`/`ack`/`ledger verify`)
-// fully unchanged and offline-safe: POLYGRAPH_MASTER_KEY is required by
-// src/tenancy/crypto.ts, so a static import here would make every CLI
-// invocation — including `polygraph demo` — require a master key it has no
-// reason to need. See test/cli.clean-env.smoke.test.ts.
+// Hosted commands — tenant-architecture.md §7 rule 3: `serve` dynamically
+// loads the hosted auth/crypto graph. Local write commands share the
+// migration primitives through local-store.ts, but never load crypto, so
+// `polygraph demo` remains offline and needs no POLYGRAPH_MASTER_KEY. See
+// test/cli.clean-env.smoke.test.ts.
 
 program
   .command('serve')

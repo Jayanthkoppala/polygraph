@@ -7,9 +7,8 @@ import { LOCAL_TENANT_ID } from './genesis.js';
 /**
  * The migration runner, per tenant-architecture.md §8. Idempotent and
  * versioned: safe to call on every `serve` boot, on a fresh database, or on
- * a legacy pre-tenancy database. Never called by the CLI (tenant-
- * architecture.md §7 rule 3) — only `serve` (Task 4) dynamically imports
- * this module.
+ * a legacy pre-tenancy database. Hosted `serve` and the local write store
+ * both load it dynamically; it has no dependency on hosted auth or crypto.
  *
  * The property that makes this safe: `tenant_id` is NOT part of the ledger's
  * hashed payload (see ledger.ts's `EventPayload`/`normalizePayload`), so
@@ -350,6 +349,26 @@ function up007(db: Database.Database): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// M008 — last-known-good outputs. A single current snapshot is retained per
+// tenant + collector. `release_event_id` is the monotonic authority marker:
+// an older completed run can never replace a newer released result.
+function up008(db: Database.Database): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS safe_output_snapshots (
+    tenant_id        TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    collector_id     TEXT NOT NULL,
+    release_event_id INTEGER NOT NULL,
+    released_at      TEXT NOT NULL,
+    run_id           TEXT NOT NULL,
+    row_count        INTEGER NOT NULL,
+    output_hash      TEXT NOT NULL,
+    rows_json        TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, collector_id)
+  )`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_safe_output_release_event
+    ON safe_output_snapshots(tenant_id, collector_id, release_event_id DESC)`);
+}
+
 const MIGRATIONS: Migration[] = [
   { version: 1, destructive: false, up: up001 },
   { version: 2, destructive: false, up: up002 },
@@ -358,6 +377,7 @@ const MIGRATIONS: Migration[] = [
   { version: 5, destructive: false, up: up005 },
   { version: 6, destructive: false, up: up006 },
   { version: 7, destructive: false, up: up007 },
+  { version: 8, destructive: false, up: up008 },
 ];
 
 /** One consistent snapshot before the first destructive step. VACUUM INTO

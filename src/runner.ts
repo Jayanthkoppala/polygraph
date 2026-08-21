@@ -33,7 +33,8 @@ import { checkCoherence } from './checks/coherence.js';
 import { checkIdentity, type KeyExtractor } from './checks/identity.js';
 import { checkCanary, type RerunFn } from './checks/canary.js';
 import { causeForErrorCode, worstCause, decide, decideWithGovernor, Governor, type Action, type Decision } from './policy.js';
-import { Ledger } from './ledger.js';
+import { Ledger, type LedgerEventInput, type LedgerEventRow } from './ledger.js';
+import type { DecisionRecorder } from './safe-output.js';
 import { getAdapter, type AdapterContext } from './adapters.js';
 import { COLLECTOR_REGISTRY, type EntityKeyFn } from './extractors.js';
 import { AlertNotifier } from './alerts.js';
@@ -67,6 +68,10 @@ export interface RunnerContext {
    * field existed. `AlertNotifier.notify` never throws, so this is safe to
    * call unconditionally without its own try/catch here. */
   notifier?: AlertNotifier;
+  /** Hosted runs provide this tenant-scoped seam so a RELEASE receipt and
+   * its last-known-good snapshot commit together. Local/legacy callers omit
+   * it and keep the historical direct-ledger behavior. */
+  decisions?: Pick<DecisionRecorder, 'recordRelease'>;
 }
 
 export interface CollectorRunSummary {
@@ -381,7 +386,7 @@ export async function runFleet(config: FleetConfig, ctx: RunnerContext): Promise
       evidence = [{ check: 'adapter', ok: false, detail: `adapter error: ${(err as Error).message ?? String(err)}` }];
     }
 
-    const ledgerRow = ctx.ledger.append({
+    const ledgerInput: LedgerEventInput = {
       ts: nowIso(ctx),
       tenant: config.tenant.name,
       collector: collector.id,
@@ -390,7 +395,46 @@ export async function runFleet(config: FleetConfig, ctx: RunnerContext): Promise
       cause,
       evidence,
       action: actionType,
-    });
+    };
+
+    let ledgerRow: LedgerEventRow;
+    if (actionType === 'RELEASE' && evaluated && ctx.decisions) {
+      try {
+        // `DecisionRecorder` preflights the canonical payload and commits
+        // this receipt plus its snapshot in one transaction. Never append a
+        // standalone RELEASE first: a downstream consumer must not see a
+        // release claim for rows that Polygraph failed to retain safely.
+        ledgerRow = ctx.decisions.recordRelease({ event: ledgerInput, rows: evaluated.result.rows }).event;
+      } catch (err) {
+        // Fail closed. The recorder's transaction has rolled back the
+        // RELEASE and any partial snapshot. Preserve the prior snapshot and
+        // leave an auditable quarantine receipt when the ordinary ledger is
+        // still available.
+        verdictCode = 'SUSPECT_UNEXPLAINED_ANOMALY';
+        cause = 'DATA';
+        actionType = 'QUARANTINE';
+        evidence = [
+          ...evidence,
+          {
+            check: 'safe-output',
+            ok: false,
+            detail: `safe output persistence failed: ${(err as Error).message ?? String(err)}`,
+          },
+        ];
+        ledgerRow = ctx.ledger.append({
+          ...ledgerInput,
+          verdict: verdictCode,
+          cause,
+          evidence,
+          action: actionType,
+        });
+      }
+    } else {
+      // Any non-release action (and every legacy local caller) records its
+      // decision normally. In particular, QUARANTINE/HOLD/REPAIR paths can
+      // never overwrite the last verified safe-output snapshot.
+      ledgerRow = ctx.ledger.append(ledgerInput);
+    }
 
     // Alerts hook-in (Task 7): fire-and-await, never fire-and-forget — but
     // `AlertNotifier.notify` catches every failure of its own (bad webhook,

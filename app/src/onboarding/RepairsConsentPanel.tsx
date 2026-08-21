@@ -7,9 +7,9 @@
  * dialog in the entire product") — built on shadcn's `AlertDialog`, the
  * primitive whose entire purpose is a blocking, must-choose confirmation.
  *
- * Plan ruling R6: hosted v2's server never sets POLYGRAPH_HEAL_ENABLED, so
- * live heals are structurally impossible regardless of what a tenant
- * configures — auto-heal remains a local-only (CLI) capability. Rendering
+ * Plan ruling R6: hosted v2's scheduler forces policy healing off, so an
+ * inherited POLYGRAPH_HEAL_ENABLED cannot combine with a stale tenant flag
+ * to enable repairs. Auto-heal remains a local-only (CLI) capability. Rendering
  * a working switch here would be a toggle that silently does nothing, which
  * this task's brief explicitly forbids ("explain that honestly rather than
  * showing a toggle that silently does nothing"). `hostedHealAvailable`

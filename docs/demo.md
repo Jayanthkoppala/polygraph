@@ -5,12 +5,17 @@ Bright Data account, no API key, no network access required. One terminal runs
 `polygraph demo`; a second terminal drives the chaos.
 
 **What this is and isn't.** `polygraph demo` is the single-tenant offline path — one
-fleet, one ledger, no signup, no key custody, nothing under `src/tenancy/` even loaded.
+fleet, one ledger, no signup, no key custody, and no hosted auth or crypto loaded.
 It exists to show the verification engine's decision-making in three minutes with no
-setup. The hosted multi-tenant product is a different entry point (`polygraph serve`),
-where a stranger signs up, pastes their own Bright Data key, and gets their own
-scheduled fleet with its own hash chain — see the README's "Being a tenant" section.
-The engine below the two is identical; only what wraps it differs.
+setup. The self-hosted multi-tenant server is a different entry point (`polygraph serve`),
+where an operator can create tenant accounts, connect Bright Data keys, and schedule
+separate fleets with separate hash chains. The engine below the two is identical; only
+what wraps it differs. The public Vercel site is a static browser sandbox, not this
+server, and there is no public Fly instance to sign into today.
+
+After the demo, the same local installation can be connected to Codex, Claude Code, or
+another MCP client. That is an optional secondary control surface, not part of this
+three-minute audience flow; setup and approval gates are in [`MCP.md`](MCP.md).
 
 ## Setup (before you start talking)
 
@@ -32,10 +37,11 @@ on this path.
 > step is `npm publish`, which needs a logged-in npm account. Until that lands, run
 > the from-source path below. Delete this block the moment the publish lands.
 
-From a checkout of this repo instead:
+From the public repository instead:
 
 ```
-cd path/to/polygraph      # a checkout of this repo
+git clone https://github.com/Jayanthkoppala/polygraph.git
+cd polygraph
 npm install                # first time only
 cd app && npm install && npm run build && cd ..   # first time only — builds the React UI
 npx tsx src/index.ts demo

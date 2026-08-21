@@ -25,17 +25,17 @@ working. This plan is additive.
 - R4. **Cut `learning: n/7`** everywhere (UI + /api/state). It is a run counter that looks like
   an ML warm-up; drift was deliberately never built. Also cut all trend/sparkline surfaces.
 - R5. **Tailwind v4** (the nested-radius math breaks on v3's radius scale). Vite + React + TS.
-- R6. **Hosted heal is structurally impossible**: the server never sets POLYGRAPH_HEAL_ENABLED,
-  so the existing AND-gate blocks live heals regardless of tenant settings. Tenants get the
-  suggested command; auto-heal remains a local-only capability in v2.
+- R6. **Hosted heal is structurally impossible**: the scheduler forces the runner policy's
+  `heal_enabled` false, so even an inherited `POLYGRAPH_HEAL_ENABLED=1` cannot open the AND-gate.
+  Tenants get the suggested command; auto-heal remains a local-only capability in v2.
 - R7. **Per-tenant ledger chains**, genesis = sha256("polygraph:genesis:v1:"+tenant_id); the
   migrated local tenant keeps its existing 64-zero genesis so v1 ledgers still verify.
 - R8. **Sandbox state is per-visitor**, never the shared fixture/state.json. Exclude `blocked`
   mode from the sandbox (it teaches a stranger something false — it cannot produce cause=BLOCKED
   locally). Minimum 1.6s re-verify animation.
 - R9. **The CLI and `polygraph demo` must keep working exactly as today, fully offline.** The
-  hosted server is a new `serve` command; tenancy code is dynamically imported so the CLI never
-  loads the crypto module.
+  hosted server is a new `serve` command; local write commands dynamically share migration/storage
+  primitives but never load the hosted auth or crypto modules.
 - R10. Vetoed components stay vetoed: no magic-card (interior background gradient violates B4),
   no animated-list for live ledger data (replays from index 0), 21st data-stream structure only
   with its single-sided borders / scanline gradients / arbitrary text sizes stripped.

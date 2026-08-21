@@ -5,7 +5,13 @@
  * mode rather than a table of canned per-button responses.
  */
 import { describe, expect, it } from 'vitest';
-import { SandboxEngine, SandboxLimitError, SandboxBlockedModeError, SANDBOX_MAX_ACTIONS, walkChain } from './engine';
+import {
+  SandboxEngine,
+  SandboxLimitError,
+  SandboxBlockedModeError,
+  SANDBOX_MAX_ACTIONS,
+  walkChain,
+} from './engine';
 import { PRODUCTS, SANDBOX_COLLECTORS, substituteProduct } from './fixtureData';
 import type { SandboxCollectorDef } from './fixtureData';
 import { toVerdictState } from '@/lib/verdict';
@@ -48,6 +54,29 @@ describe('SandboxEngine — seeded state (ux-spec.md §3)', () => {
     }
     expect(engine.getLedger()).toHaveLength(3);
     expect(engine.verifyChain().ok).toBe(true);
+  });
+});
+
+describe('SandboxEngine — safe output (browser demo)', () => {
+  it('seeds a verified snapshot, advances it on a healthy release, and preserves it for every non-release action', () => {
+    const engine = new SandboxEngine(1_700_000_000_000);
+    const seeded = engine.getSafeOutputSnapshot();
+
+    expect(seeded.rowCount).toBe(12);
+    expect(seeded.releaseEventId).toBe(1);
+    expect(seeded.outputHash).toMatch(/^[a-f0-9]{64}$/);
+
+    engine.applyMode('wrong_entity');
+    expect(engine.getSafeOutputSnapshot()).toEqual(seeded);
+
+    engine.applyMode('price_dead');
+    expect(engine.getSafeOutputSnapshot()).toEqual(seeded);
+
+    engine.applyMode('healthy');
+    const released = engine.getSafeOutputSnapshot();
+    expect(released.releaseEventId).toBe(10);
+    expect(released.releasedAt).not.toBe(seeded.releasedAt);
+    expect(released.outputHash).toBe(seeded.outputHash);
   });
 });
 

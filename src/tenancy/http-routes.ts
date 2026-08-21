@@ -200,7 +200,9 @@ async function buildDashboardState(
     tenantId: tenantRow.id,
     genesisHash: tenantRow.genesis_hash,
     displayName: tenantRow.display_name,
-    healEnabled: tenantRow.heal_enabled === 1,
+    // Hosted execution is hard-off in scheduler.ts, so the dashboard must
+    // report the same effective policy even if an old/manual row says 1.
+    healEnabled: false,
     client,
   });
   return buildFleetState(config, ctx.ledger, ctx.governor, nowIso);
@@ -496,6 +498,76 @@ export async function handleTenantRequest(req: IncomingMessage, res: ServerRespo
       if (method === 'GET' && path === '/api/collectors') {
         const scope = scopeFor(deps.reader, session.tenantId, tenantRowWriter.genesis_hash);
         sendJson(res, 200, { collectors: scope.collectors.list() });
+        return;
+      }
+
+      const safeOutputMatch = /^\/api\/collectors\/([^/]+)\/safe-output$/.exec(path);
+      if (method === 'GET' && safeOutputMatch) {
+        const collectorId = decodeURIComponent(safeOutputMatch[1]);
+        const scope = scopeFor(deps.reader, session.tenantId, tenantRowWriter.genesis_hash);
+        // Resolve ownership before looking at either ledger or snapshot. A
+        // foreign collector is deliberately indistinguishable from a
+        // nonexistent one, and must never reveal whether it has released
+        // output.
+        if (!scope.collectors.get(collectorId)) {
+          sendJson(res, 404, { error: 'no such collector' });
+          return;
+        }
+
+        let latestDecision;
+        let snapshot;
+        let readStage: 'decision' | 'snapshot' = 'decision';
+        try {
+          // Pin both reads to one SQLite snapshot. A release cannot otherwise
+          // land between these two queries and pair old rows with a new
+          // decision (or vice versa).
+          ({ latestDecision, snapshot } = deps.reader.transaction(() => {
+            // ACKED rows are annotations, not verification decisions. Use the
+            // indexed non-ACK query so even a long acknowledgement history
+            // cannot hide the prior quarantine/release state.
+            const decision = scope.ledger
+              .latestNonAckedPerCollector()
+              .find((event) => event.collector === collectorId);
+            readStage = 'snapshot';
+            return { latestDecision: decision, snapshot: scope.safeOutput.latest(collectorId) };
+          })());
+        } catch (error) {
+          if (readStage === 'decision') {
+            // Do not serve rows without the accompanying decision state when
+            // the ledger is unavailable — consumers must fail closed too.
+            sendJson(res, 503, { error: 'safe output decision state is temporarily unavailable' });
+            return;
+          }
+          // Snapshot integrity/provenance failures are data-corruption
+          // signals. Let the outer handler turn them into a generic 500.
+          throw error;
+        }
+        sendJson(res, 200, {
+          version: 'safe-output/v1',
+          collector_id: collectorId,
+          snapshot: snapshot
+            ? {
+                release_event_id: snapshot.releaseEventId,
+                released_at: snapshot.releasedAt,
+                run_id: snapshot.runId,
+                row_count: snapshot.rowCount,
+                output_hash: snapshot.outputHash,
+                rows: snapshot.rows,
+              }
+            : null,
+          latest_decision: latestDecision
+            ? {
+                id: latestDecision.id,
+                ts: latestDecision.ts,
+                run_id: latestDecision.run_id,
+                verdict: latestDecision.verdict,
+                cause: latestDecision.cause,
+                evidence: latestDecision.evidence,
+                action: latestDecision.action,
+                output_hash: latestDecision.output_hash,
+              }
+            : null,
+        });
         return;
       }
 

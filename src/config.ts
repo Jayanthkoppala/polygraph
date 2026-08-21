@@ -9,8 +9,8 @@ import type { KeyExtractor } from './checks/identity.js';
 import type { BrightDataClient, PollOptions } from './brightdata.js';
 import type { AlertNotifier } from './alerts.js';
 // Type-only — erased at compile time, so this adds NO runtime import and the
-// CLI's module graph is unaffected (tenant-architecture.md §7 rule 3: the
-// CLI must never load src/tenancy/**). `TenantCollectorRow` is scope.ts's
+// CLI's base module graph is unaffected (tenant-architecture.md §7 rule 3:
+// local commands must never load hosted auth/crypto). `TenantCollectorRow` is scope.ts's
 // own row shape (see src/tenancy/scope.ts) — `buildTenantContext` below
 // takes an already-loaded array of these rather than a `TenantScope`
 // itself, so this module never calls into src/tenancy/ at the type level
@@ -193,9 +193,8 @@ function numberOr(v: unknown, fallback: number): number {
 // DYNAMIC import inside the function body instead, so `config.ts`'s own
 // module-load-time behavior (and therefore every CLI command's, since
 // index.ts imports config.ts unconditionally) is byte-for-byte unchanged:
-// nothing under src/tenancy/ is even parsed unless this function is actually
-// called, which only `src/tenancy/serve.ts`/`scheduler.ts` (the hosted path)
-// ever do.
+// hosted onboarding code is not parsed unless this function is actually
+// called by `src/tenancy/serve.ts`/`scheduler.ts`.
 
 export interface BuildTenantContextInput {
   db: Database.Database;

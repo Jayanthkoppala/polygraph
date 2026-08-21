@@ -20,7 +20,7 @@ import { runFleet, type FleetRunSummary } from '../runner.js';
 import { buildTenantContext } from '../config.js';
 import { BrightDataClient, type PollOptions } from '../brightdata.js';
 import type { AlertNotifier } from '../alerts.js';
-import type { TenantCollectorRow } from './scope.js';
+import { scopeFor, type TenantCollectorRow } from './scope.js';
 import { ScopedSecrets, revealPlaintext } from './secrets.js';
 
 export interface DueRow {
@@ -342,11 +342,20 @@ export function createDefaultRunOne(deps: DefaultRunOneDeps): (row: DueRow) => P
         tenantId: row.tenant_id,
         genesisHash: tenantRow.genesis_hash,
         displayName: tenantRow.display_name,
-        healEnabled: tenantRow.heal_enabled === 1,
+        // Hosted execution is structurally non-healing. Do not pass the
+        // tenant column through: heal.ts also reads a process-wide env flag,
+        // so an inherited POLYGRAPH_HEAL_ENABLED=1 would otherwise combine
+        // with this row and enable a paid mutation inside the server.
+        healEnabled: false,
         client,
         pollOptions: deps.pollOptions,
         notifier: deps.notifier,
       });
+      // Hosted RELEASEs must travel through the tenant-bound recorder so
+      // their ledger receipt and last-known-good snapshot cannot diverge.
+      // buildTenantContext intentionally remains usable by legacy/local
+      // callers, so this hosted wiring stays at the scheduler boundary.
+      ctx.decisions = scopeFor(deps.db, row.tenant_id, tenantRow.genesis_hash).decisions;
       const summary = await withTimeout(runFleet(config, ctx), deps.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS);
       onDispatchSuccess(deps.db, row, nowIso, collectorRow.interval_minutes);
       markKeyVerifiedIfNeeded(secrets, summary);

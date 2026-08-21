@@ -12,6 +12,7 @@ import { LOCAL_TENANT_ID, tenantGenesis } from './genesis.js';
 // addition for whichever task next touches TenantScope's construction
 // site, once a master key is available at that call site").
 import type { ScopedSecrets } from './secrets.js';
+import { DecisionRecorder, ScopedSafeOutput } from '../safe-output.js';
 
 /**
  * Tenant isolation, per tenant-architecture.md §3: five layers, a bug has to
@@ -31,7 +32,7 @@ import type { ScopedSecrets } from './secrets.js';
  *   substitute noted in §9 — a mis-bound statement, a bad join, or a future
  *   refactor that drops a WHERE predicate is caught here instead of leaking.
  *
- * (Layers 2/4/5 — no hand-written SQL outside src/tenancy/, NOT NULL +
+ * (Layers 2/4/5 — SQL restricted to explicit persistence owners, NOT NULL +
  * ON DELETE CASCADE schema constraints, and the two-tenant test suite — live
  * in the DDL (migrate.ts) and test/tenancy/*.test.ts.)
  */
@@ -85,6 +86,10 @@ export class ScopedLedger {
 
   latestPerCollector(): LedgerEventRow[] {
     return assertOwned(this.ledger.latestPerCollector(), this.tenantId);
+  }
+
+  latestNonAckedPerCollector(): LedgerEventRow[] {
+    return assertOwned(this.ledger.latestNonAckedPerCollector(), this.tenantId);
   }
 
   recent(opts?: RecentOptions): LedgerEventRow[] {
@@ -256,6 +261,8 @@ export class TenantScope {
   readonly ledger: ScopedLedger;
   readonly governor: ScopedGovernor;
   readonly collectors: ScopedCollectors;
+  readonly safeOutput: ScopedSafeOutput;
+  readonly decisions: DecisionRecorder;
   /** Absent until the caller wires it in — `TenantScope`'s own constructor
    * has no master key to build one with (Task 1's construction sites never
    * had one available). Task 4's serve bootstrap is the one call site that
@@ -277,6 +284,8 @@ export class TenantScope {
     this.ledger = new ScopedLedger(db, tenantId, this.genesisHash);
     this.governor = new ScopedGovernor(db, tenantId);
     this.collectors = new ScopedCollectors(db, tenantId);
+    this.safeOutput = new ScopedSafeOutput(db, tenantId);
+    this.decisions = new DecisionRecorder(db, tenantId, this.ledger, this.safeOutput);
   }
 
   /** Fails closed. Exposed for a caller elsewhere in src/tenancy/ that reads

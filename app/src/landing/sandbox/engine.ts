@@ -36,6 +36,7 @@ import { sha256Hex } from './sha256';
 import {
   SANDBOX_COLLECTORS,
   SANDBOX_ROWS,
+  PRODUCTS,
   probedProduct,
   receivedProduct,
   type SandboxCollectorDef,
@@ -57,6 +58,19 @@ export interface SandboxLedgerRow {
   action: string;
   eventHash: string;
   prevHash: string;
+}
+
+/**
+ * The browser demo's equivalent of a downstream safe-output read. This is
+ * deliberately a snapshot of the last RELEASE, not the latest run: a failed
+ * run can change the verdict and ledger while leaving this object untouched.
+ */
+export interface SandboxSafeOutputSnapshot {
+  collectorId: string;
+  rowCount: number;
+  releasedAt: string;
+  releaseEventId: number;
+  outputHash: string;
 }
 
 export class SandboxLimitError extends Error {
@@ -259,6 +273,7 @@ export class SandboxEngine {
   private mode: SandboxMode = 'healthy';
   private fleet: CollectorState[];
   private ledger: SandboxLedgerRow[] = [];
+  private safeOutput: SandboxSafeOutputSnapshot;
   private actionsUsed = 0;
 
   /** Seeded already-green, per ux-spec.md §3: "Seeded at creation: fleet of
@@ -278,6 +293,20 @@ export class SandboxEngine {
       this.ledger.push(row);
       prevHash = row.eventHash;
     }
+    this.safeOutput = this.createSafeOutput(ts, 1);
+  }
+
+  private createSafeOutput(releasedAt: string, releaseEventId: number): SandboxSafeOutputSnapshot {
+    return {
+      collectorId: this.targetId,
+      rowCount: SANDBOX_ROWS,
+      releasedAt,
+      releaseEventId,
+      // This is a hash of the released fixture rows, so a healthy re-run of
+      // identical output advances the snapshot's provenance without claiming
+      // that the data itself changed.
+      outputHash: sha256Hex(JSON.stringify(PRODUCTS)),
+    };
   }
 
   private hashRow(
@@ -304,6 +333,10 @@ export class SandboxEngine {
 
   getMode(): SandboxMode {
     return this.mode;
+  }
+
+  getSafeOutputSnapshot(): SandboxSafeOutputSnapshot {
+    return { ...this.safeOutput };
   }
 
   get actionsRemaining(): number {
@@ -340,6 +373,11 @@ export class SandboxEngine {
       const row = this.hashRow(this.ledger.length + 1, ts, c.name, c.verdict!, c.cause, c.pureAction!, prevHash);
       this.ledger.push(row);
       prevHash = row.eventHash;
+    }
+
+    const target = this.fleet.find((collector) => collector.id === this.targetId);
+    if (target?.pureAction === 'RELEASE' && target.ledgerId !== null) {
+      this.safeOutput = this.createSafeOutput(ts, target.ledgerId);
     }
 
     return this.getFleet();

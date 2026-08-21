@@ -684,18 +684,20 @@ export type ReadOnlyTenantScope = Omit<TenantScope, 'governor'> & {
 };
 ```
 
-**Layer 2 — no hand-written SQL outside `src/tenancy/`.** All statements live in
-the scoped classes and are prepared once. Enforced by a test:
+**Layer 2 — SQL lives only in explicit persistence owners.** Tenant repositories
+live under `src/tenancy/`; the local-compatible ledger, policy, alerts, and safe-output
+stores each own their tables and enforce tenant binding internally. Enforced by a test:
 
 ```ts
 // test/tenancy.isolation.test.ts
-it('no module outside src/tenancy prepares its own SQL', () => {
+it('no module outside the persistence-owner allowlist prepares its own SQL', () => {
   const offenders = execSync(
-    `grep -rln 'db.prepare\\|\\.exec(' src/ --include=*.ts | grep -v '^src/tenancy/'`
+    `grep -rlnE '\\.prepare\\(|\\.exec\\(' src/ --include=*.ts | grep -v '^src/tenancy/'`
   ).toString().trim().split('\n').filter(Boolean)
-    // ledger.ts / policy.ts / alerts.ts own their tables; they are scoped
-    // internally by construction (see §7) and are the allowlist.
-    .filter((f) => !['src/ledger.ts', 'src/policy.ts', 'src/alerts.ts'].includes(f));
+    // These stores own their tables and are tenant-bound internally (§7).
+    .filter((f) => ![
+      'src/ledger.ts', 'src/policy.ts', 'src/alerts.ts', 'src/safe-output.ts'
+    ].includes(f));
   expect(offenders).toEqual([]);
 });
 ```
@@ -743,8 +745,8 @@ catches leakage through a nested field nobody thought to assert on.
 ```ts
 // src/ledger.ts — additive, backwards compatible (see §7)
 export interface LedgerOptions {
-  /** Defaults to 'local'. The CLI never passes this, so `new Ledger(path)`
-   *  behaves exactly as it does today and all 347 tests keep passing. */
+  /** Defaults to 'local', so legacy `new Ledger(path)` callers keep their
+   *  original single-tenant behavior. */
   tenantId?: string;
   /** Defaults to GENESIS_HASH ('0'*64) so migrated local chains verify
    *  unchanged. Hosted tenants pass tenants.genesis_hash. */
@@ -1414,14 +1416,15 @@ new Governor(dbPath, { tenantId })
 new AlertNotifier(dbPath, { tenantId })
 ```
 
-`index.ts` needs **zero changes** to its `run`, `watch`, `demo`, `verify`, `ack`, and
-`export` commands. The 347 existing tests keep passing without edits, which is also
-the regression proof that the seam is real.
+The original v2 migration required zero CLI changes. The later safe-output release seam
+intentionally moved `run`, `watch`, and `demo` onto one shared migrated writer through
+`src/local-store.ts`, so their RELEASE receipt and snapshot commit atomically. Commands
+still default to the local tenant and remain fully offline.
 
-**3. The tenancy module is lazily imported, so the CLI never loads it.**
+**3. Hosted auth and crypto remain lazily imported.**
 
 ```ts
-// src/index.ts — `serve` is the ONLY command that touches src/tenancy/
+// src/index.ts — `serve` is the only command that loads hosted auth/crypto
 program.command('serve')
   .description('Run the hosted multi-tenant server')
   .action(async (opts) => {
@@ -1430,10 +1433,10 @@ program.command('serve')
   });
 ```
 
-This matters concretely: `POLYGRAPH_MASTER_KEY` is required by `src/tenancy/crypto.ts`
-at module load. A static import would make every CLI invocation — including
-`polygraph demo` — fail without a master key. The dynamic import means the crypto
-module, the scheduler, and the auth layer are never even parsed unless `serve` runs.
+This matters concretely: local commands may dynamically load the shared database migration
+through `src/local-store.ts`, but never the crypto module, scheduler, or auth layer.
+`POLYGRAPH_MASTER_KEY` therefore remains exclusive to `serve`; `polygraph demo` still runs
+without it.
 
 `test/cli.clean-env.smoke.test.ts` already exists to assert clean-environment CLI
 behaviour. Extend it:
@@ -1446,7 +1449,7 @@ it('demo runs offline with no master key and no network', async () => {
   expect(r.exitCode).toBe(0);
 });
 
-it('the CLI never loads the tenancy module', async () => {
+it('the CLI never loads hosted crypto', async () => {
   const r = await runCli(['run', '--collector', 'demo-store-products'],
                          { env: { ...cleanEnv, NODE_DEBUG: 'module' } });
   expect(r.stderr).not.toContain('tenancy/crypto');
@@ -1458,12 +1461,13 @@ it('the CLI never loads the tenancy module', async () => {
 `demo` seeds a fleet using `adapter: local` against the in-process fixture server
 (`src/fixture/`), resolves its schema from `COLLECTOR_REGISTRY['Fixture Catalog']`,
 and constructs `new BrightDataClient({ apiKey: … ?? 'demo-unused' })`
-(`index.ts:421`) — a client that is never called. None of that touches tenancy,
-crypto, sessions, or the network. **The `COLLECTOR_REGISTRY` stays exactly as it is**
+(`index.ts:421`) — a client that is never called. None of that touches hosted auth,
+crypto, sessions, or the network; the local store only shares the idempotent migration.
+**The `COLLECTOR_REGISTRY` stays exactly as it is**
 — it is the CLI's schema source, and hosted tenants simply supply
 `ctx.schemas` instead, which already takes precedence (`runner.ts:205`).
 
-### What is genuinely new (all of it under `src/tenancy/`)
+### Hosted v2 modules
 
 ```
 src/tenancy/
@@ -1481,9 +1485,10 @@ src/tenancy/
   routes/*.ts      signup, settings, collectors, onboarding wizard, showcase
 ```
 
-Modified outside that directory, minimally: `ledger.ts`, `policy.ts` (Governor),
+Modified outside that directory: `ledger.ts`, `policy.ts` (Governor),
 `alerts.ts` (optional `tenantId`), `server.ts` (`buildFleetState`'s query, request
-body cap, security headers), `index.ts` (one new `serve` command).
+body cap, security headers), and `index.ts`. The later safe-delivery/MCP increment also
+adds `safe-output.ts`, `local-store.ts`, and `mcp.ts` outside the hosted directory.
 
 ---
 

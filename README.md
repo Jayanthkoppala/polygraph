@@ -32,8 +32,7 @@ Then it decides — and the decision is the product:
 - **Refuse** — the scraper fetched the *wrong thing*. A repair here would teach the
   scraper to be confidently wrong, so Polygraph refuses to offer one and tells you why.
 
-That last one is the part that doesn't exist anywhere else. Every other tool in this space
-tries to heal on failure. Polygraph's position is that healing a wrong-target failure is
+Polygraph takes a deliberately cautious position: healing a wrong-target failure can be
 worse than leaving it broken, because a repaired scraper that fetches the wrong page still
 returns 200 OK — and now nobody is looking.
 
@@ -75,7 +74,7 @@ back clean**. The full write-up is in [`docs/FINDING-heal-promotion.md`](docs/FI
 No account, no API key, no network. The demo runs entirely offline against a fixture:
 
 ```bash
-git clone <this repo>
+git clone https://github.com/Jayanthkoppala/polygraph.git
 cd polygraph
 npm install
 npm run demo
@@ -87,9 +86,9 @@ and finally `ledger verify` confirming the chain is intact.
 
 ---
 
-## Run it as a service
+## Run the server yourself
 
-Polygraph is also a hosted multi-tenant product. You run one server; each account connects
+Polygraph includes a self-hosted multi-tenant server. You run one server; each account connects
 its own Bright Data key and gets its own collectors, its own schedule, and its own ledger
 chain starting from its own genesis hash.
 
@@ -98,12 +97,37 @@ npm run build
 POLYGRAPH_MASTER_KEY=<32-byte hex> npm run serve
 ```
 
+The public Vercel deployment is a static landing page and browser sandbox only. It does not
+run this server, accept signups, or store tenant data. Fly configuration is present for a
+self-hosted deployment, but no public Fly instance is currently live.
+
 **On key custody**, because you should ask before pasting an API key anywhere: keys are
 encrypted per tenant with AES-256-GCM, and the key that decrypts them lives in the server
 environment, never in the database — stealing the database file yields ciphertext and
 nothing else. No endpoint returns a key back to you. The server never spends your Bright
 Data credits: auto-repair is structurally disabled in the hosted path and there is no
 setting that turns it on.
+
+---
+
+## Use it from a coding agent
+
+Coding agents are a secondary control surface for Polygraph, not the product itself. A local MCP
+server exposes four narrow tools: fleet status, ledger verification, last verified output, and an
+explicit one-collector verification run.
+
+```bash
+npm run build
+codex mcp add polygraph \
+  --env POLYGRAPH_CONFIG=/absolute/path/to/fleet.yaml \
+  --env POLYGRAPH_DB=/absolute/path/to/polygraph.sqlite \
+  -- node /absolute/path/to/polygraph/dist/index.js mcp
+codex mcp list
+```
+
+MCP can never auto-heal. Network-backed runs are disabled by default and require both a server
+startup opt-in and confirmation on the individual tool call. See [`docs/MCP.md`](docs/MCP.md) for
+Codex, Claude Code, generic client setup, tool contracts, and the exact safety gates.
 
 ---
 
@@ -120,16 +144,16 @@ that overstates its own progress is self-defeating:
 | Offline demo | **Done** | `npm run demo`, no account, no network |
 | Multi-tenancy — isolation, key custody, onboarding | **Built, not live** | Code and tests are in; no public instance is running, so it is unproven at any real scale |
 | Dashboard — fleet view, evidence, ledger stream | **Built, polishing** | Works; density and keyboard nav are unfinished |
-| Front end / landing page | **In progress** | Actively being rebuilt as of this commit |
-| Published to npm | **Not yet** | Package name reserved as `polygraph-data`, not pushed |
-| Hosted service anyone can sign up for | **Not yet** | You run it yourself today |
+| Front end / landing page | **Built** | Static landing page, browser sandbox, safe-output story, and legal routes |
+| Published to npm | **Not yet** | Package is configured as `polygraph-data`, but has not been published |
+| Public hosted service anyone can sign up for | **Not yet** | The server is self-hosted today; the public Vercel site is static |
 | Peer corroboration between collectors | **Not wired** | Built, but needs 3+ same-purpose collectors to say anything |
 | Drift / trend detection | **Not built** | No trend signal exists; a chart drawn from nothing would be a lie |
 
 And the specifics behind those rows:
 
-- **The verdict engine, the ledger, tenancy, and key custody are real and tested.**
-  1,022 tests, typecheck clean.
+- **The verdict engine, ledger, safe-output retention, tenancy, key custody, and MCP surface are real and tested.**
+  1,059 tests, typechecks and production builds clean.
 - **The landing page sandbox is real** — actual verdicts and an actual SHA-256 chain
   computed in your browser, against fixtures rather than a live fleet.
 - **Auto-repair is off in the hosted path**, structurally, not as a default. Repairs spend
@@ -147,6 +171,7 @@ And the specifics behind those rows:
 ```
 src/            verdict engine, policy, ledger, Bright Data client, heal controller
 src/tenancy/    multi-tenant isolation, auth, AES-256-GCM key custody, scheduler
+src/mcp.ts      local coding-agent tools and explicit network-run approval gates
 app/            React front end — landing page, live sandbox, fleet dashboard
 test/           engine, ledger, tenancy and isolation suites
 docs/           architecture, design specs, the heal-promotion finding
@@ -159,3 +184,8 @@ docs/           architecture, design specs, the heal-promotion finding
 Built by **Jayanth Koppala**.
 
 MIT licensed — see [`LICENSE`](LICENSE). Use it, fork it, run it against your own fleet.
+
+## AI assistance
+
+This project used AI-assisted development. The scope of that assistance, review expectations,
+and how to reproduce the checks are documented in [`docs/AI-ASSISTANCE.md`](docs/AI-ASSISTANCE.md).

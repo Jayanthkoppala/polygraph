@@ -1,15 +1,14 @@
 /**
  * `polygraph serve` — the hosted multi-tenant server, per tenant-
- * architecture.md §1-§8. This is the ONLY module `src/index.ts`'s `serve`
- * command dynamically imports (R9 / §7 rule 3): nothing under
- * `src/tenancy/` is even parsed by a plain `polygraph run`/`watch`/`demo`
- * invocation, so `POLYGRAPH_MASTER_KEY` is never required outside this path.
+ * architecture.md §1-§8. `src/index.ts` loads this hosted graph only for
+ * `serve`. Local commands dynamically share migration/storage primitives,
+ * but never load auth or crypto, so `POLYGRAPH_MASTER_KEY` remains exclusive
+ * to the hosted path.
  *
- * R6 (hosted heal is structurally off): this module never reads, sets, or
- * forwards `POLYGRAPH_HEAL_ENABLED`. It is simply absent from everything
- * `serve` touches — the existing AND-gate in heal.ts's `isHealEnabled`
- * blocks live heals regardless of any tenant's `heal_enabled` setting. See
- * test/tenancy.serve.test.ts's explicit assertion.
+ * R6 (hosted heal is structurally off): scheduler.ts forces the runner's
+ * policy flag false. heal.ts's process-wide env gate therefore cannot
+ * enable a hosted repair even when the process inherits
+ * POLYGRAPH_HEAL_ENABLED=1 and a tenant row has heal_enabled=1.
  */
 import { createServer as createHttpServer, type Server } from 'node:http';
 import { fileURLToPath } from 'node:url';
