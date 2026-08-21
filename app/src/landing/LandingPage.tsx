@@ -64,9 +64,8 @@ export function LandingPage() {
 }
 
 /** positioning.md S0: nav ≤48px tall, one job — stay out of the way.
- * py-2 + a py-1 button lands the bar at ~46px; the ~16px this recovered is
- * part of what keeps the hero's refusal kicker above the 800px fold in the
- * broken-fleet state (measured, see landing-hero report). */
+ * py-2 + a py-1 button lands the bar at ~46px and preserves a true first
+ * viewport for the proposition before the suite begins. */
 function TopNav() {
   return (
     <nav aria-label="Primary" className="flex items-center gap-4 border-b border-[#272727] bg-[#000000] px-6 py-2">

@@ -74,10 +74,8 @@ describe('landing section rhythm (ui-system.md §1.6: "Section padding, landing 
   it('the hero is the one documented exception, and only on the edge that faces the nav', () => {
     const hero = readFileSync(path.join(SECTIONS_DIR, 'Hero.tsx'), 'utf8');
     // `pt-4` is the hero's offset from the top nav — not a section-to-section
-    // boundary. Measured at 1512x800 with the flow-in-viewport hero
-    // (2026-08-20): at pt-8 the refusal kicker's bottom edge landed at
-    // 813px, 13px below the fold; pt-4 recovers it. The bottom edge, which
-    // IS a section boundary, stays on the 96px rhythm.
+    // boundary. The bottom edge, which IS a section boundary, stays on the
+    // 96px rhythm before the dedicated sandbox viewport.
     expect(hero).toMatch(/pb-24 pt-4/);
   });
 });

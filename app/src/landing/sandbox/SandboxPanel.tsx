@@ -120,7 +120,7 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
   return (
     <div
       data-testid="sandbox-panel"
-      className="relative w-full overflow-hidden rounded-3xl border border-[#272727] bg-[#0B0C0C] p-4 sm:p-5"
+      className="relative w-full overflow-hidden rounded-3xl border border-[#272727] bg-[#181818] p-4"
     >
       {/* ui-system.md §2.5/§3.8: Magic UI's static `noise-texture` over
           #1F1F1F at ~3%, same material grain the rest of the product's
@@ -172,7 +172,7 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
         hosted server pipeline your account would use.
       </p>
 
-      <div className="relative pt-9 sm:pt-12">
+      <div className="relative pt-12">
         {/* The suite map's parent-to-collector branches. SVG keeps the paths
             curved at every desktop width; mobile stacks the same nodes and
             drops purely decorative lines instead of squeezing the cards. */}
@@ -185,10 +185,10 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
           <path d="M500 1 C500 34 166 22 166 71" fill="none" stroke="#313131" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
           <path d="M500 1 C500 34 500 34 500 71" fill="none" stroke="#313131" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
           <path d="M500 1 C500 34 834 22 834 71" fill="none" stroke="#313131" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-          <circle cx="500" cy="2" r="5" fill="#0B0C0C" stroke="#8B949E" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-          <circle cx="166" cy="70" r="5" fill="#0B0C0C" stroke="#8B949E" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-          <circle cx="500" cy="70" r="5" fill="#0B0C0C" stroke="#8B949E" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-          <circle cx="834" cy="70" r="5" fill="#0B0C0C" stroke="#8B949E" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+          <circle cx="500" cy="2" r="5" fill="#181818" stroke="#8B949E" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+          <circle cx="166" cy="70" r="5" fill="#181818" stroke="#8B949E" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+          <circle cx="500" cy="70" r="5" fill="#181818" stroke="#8B949E" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+          <circle cx="834" cy="70" r="5" fill="#181818" stroke="#8B949E" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
         </svg>
 
         <div

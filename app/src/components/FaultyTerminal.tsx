@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, type CSSProperties, type HTMLAttributes } from 'react';
 import { Color, Mesh, Program, Renderer, Triangle } from 'ogl';
+import { hexToRgb } from '@/lib/color';
 import './FaultyTerminal.css';
 
 const vertexShader = `
@@ -166,13 +167,6 @@ void main() {
 }
 `;
 
-function hexToRgb(hex: string): [number, number, number] {
-  let value = hex.replace('#', '').trim();
-  if (value.length === 3) value = value.split('').map((character) => character + character).join('');
-  const numeric = Number.parseInt(value.slice(0, 6), 16);
-  return [((numeric >> 16) & 255) / 255, ((numeric >> 8) & 255) / 255, (numeric & 255) / 255];
-}
-
 interface FaultyTerminalProps extends Omit<HTMLAttributes<HTMLDivElement>, 'style'> {
   scale?: number;
   gridMul?: [number, number];
@@ -243,14 +237,14 @@ export function FaultyTerminal({
     const element = container;
 
     // OGL assumes context creation succeeds and otherwise dereferences null
-    // inside Renderer. Probe first so hardened browsers, remote desktops,
-    // and test/headless environments receive the quiet static fallback.
-    const probeCanvas = document.createElement('canvas');
-    const probeContext = probeCanvas.getContext('webgl2') ?? probeCanvas.getContext('webgl');
-    if (!probeContext) return;
-    probeContext.getExtension('WEBGL_lose_context')?.loseContext();
+    // inside Renderer. Create and verify one canvas first, then hand that same
+    // canvas to OGL so constrained/headless environments fall back quietly
+    // without spending a second WebGL context.
+    const canvas = document.createElement('canvas');
+    const availableContext = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+    if (!availableContext) return;
 
-    const renderer = new Renderer({ dpr: dpr ?? Math.min(window.devicePixelRatio || 1, 2) });
+    const renderer = new Renderer({ canvas, dpr: dpr ?? Math.min(window.devicePixelRatio || 1, 2) });
     const gl = renderer.gl;
     gl.clearColor(0, 0, 0, 1);
     const geometry = new Triangle(gl);

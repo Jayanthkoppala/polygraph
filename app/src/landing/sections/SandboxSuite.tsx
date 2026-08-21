@@ -19,7 +19,7 @@ export function SandboxSuite({ sandbox }: { sandbox: UseSandboxEngineResult }) {
     <section
       id="sandbox"
       aria-labelledby="sandbox-title"
-      className="relative isolate min-h-[100svh] overflow-hidden border-y border-[#272727] bg-[#030404] px-4 py-24 sm:px-6"
+      className="relative isolate min-h-[100svh] overflow-hidden border-y border-[#272727] bg-[#000000] px-4 py-24 sm:px-6"
     >
       <div
         aria-hidden
@@ -42,10 +42,10 @@ export function SandboxSuite({ sandbox }: { sandbox: UseSandboxEngineResult }) {
           </p>
         </div>
 
-        <div className="relative mt-10 overflow-hidden rounded-[28px] border border-[#272727] bg-[#060707] shadow-[var(--shadow-e3)]">
+        <div className="relative mt-10 overflow-hidden rounded-3xl border border-[#272727] bg-[#000000] shadow-[var(--shadow-e3)]">
           <DotGrid
             dotSize={2}
-            gap={14}
+            gap={16}
             baseColor="#272727"
             activeColor="#8B949E"
             proximity={130}
@@ -55,7 +55,7 @@ export function SandboxSuite({ sandbox }: { sandbox: UseSandboxEngineResult }) {
           />
 
           <div className="relative flex min-h-16 items-center border-b border-[#272727] px-4 sm:px-6">
-            <div className="flex min-h-11 items-center gap-3 rounded-2xl border border-[#272727] bg-[#101111] px-3">
+            <div className="flex min-h-11 items-center gap-3 rounded-2xl border border-[#272727] bg-[#181818] px-3">
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#EDEDED] text-[#000000]">
                 <ShieldCheck size={16} weight="fill" aria-hidden />
               </span>
@@ -78,7 +78,7 @@ export function SandboxSuite({ sandbox }: { sandbox: UseSandboxEngineResult }) {
 
           <div className="relative grid grid-cols-1 gap-8 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:p-8">
             <div className="relative min-w-0">
-              <div className="relative z-10 mx-auto w-full max-w-sm rounded-2xl border border-[#313131] bg-[#101111] p-4">
+              <div className="relative z-10 mx-auto w-full max-w-sm rounded-2xl border border-[#313131] bg-[#181818] p-4">
                 <div className="flex items-start gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#313131] bg-[#181818] text-[#EDEDED]">
                     <Cube size={18} weight="duotone" aria-hidden />
@@ -99,7 +99,7 @@ export function SandboxSuite({ sandbox }: { sandbox: UseSandboxEngineResult }) {
               </div>
 
               <div aria-hidden className="mx-auto h-10 w-px bg-[#313131]" />
-              <span aria-hidden className="absolute left-1/2 top-[154px] z-10 h-2.5 w-2.5 -translate-x-1/2 rounded-full border border-[#6E7681] bg-[#060707]" />
+              <span aria-hidden className="absolute left-1/2 top-40 z-10 h-2.5 w-2.5 -translate-x-1/2 rounded-full border border-[#6E7681] bg-[#000000]" />
 
               <div className="relative z-10">
                 <SandboxPanel sandbox={sandbox} />
@@ -162,7 +162,7 @@ function SuiteConversation({ sandbox }: { sandbox: UseSandboxEngineResult }) {
       </div>
       <div
         aria-live="polite"
-        className="rounded-2xl rounded-tl-md border bg-[#101111] px-4 py-3 text-sm leading-relaxed text-[#B4B4B4] transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-fluid)]"
+        className="rounded-2xl rounded-tl-md border bg-[#181818] px-4 py-3 text-sm leading-relaxed text-[#B4B4B4] transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-fluid)]"
         style={{ borderColor: busy ? '#313131' : stateColor(sandbox.mode === 'wrong_entity' ? 'wrong-target' : sandbox.mode === 'price_dead' ? 'wrong-shape' : 'verified') }}
       >
         <span className="mb-2 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-wide text-[#EDEDED]">
@@ -172,7 +172,7 @@ function SuiteConversation({ sandbox }: { sandbox: UseSandboxEngineResult }) {
         {response}
       </div>
 
-      <div className="mt-2 rounded-2xl border border-[#272727] bg-[#0B0C0C] p-4">
+      <div className="mt-2 rounded-2xl border border-[#272727] bg-[#181818] p-4">
         <p className="font-mono text-xs font-semibold uppercase tracking-wide text-[#9B9B9B]">What changes</p>
         <ul className="mt-3 flex flex-col gap-3 text-xs leading-relaxed text-[#9B9B9B]">
           <li className="flex gap-2"><span aria-hidden className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-verdict-pass)]" />Green runs can advance safe output.</li>

@@ -2,17 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, type CSSProperties } from 'rea
 import { useReducedMotion } from 'motion/react';
 import { gsap } from 'gsap';
 import { InertiaPlugin } from 'gsap/InertiaPlugin';
+import { hexToRgb } from '@/lib/color';
 import './DotGrid.css';
 
 gsap.registerPlugin(InertiaPlugin);
 
 type Dot = { cx: number; cy: number; xOffset: number; yOffset: number; inertiaApplied: boolean };
-
-function hexToRgb(hex: string) {
-  const match = hex.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
-  if (!match) return { r: 0, g: 0, b: 0 };
-  return { r: Number.parseInt(match[1], 16), g: Number.parseInt(match[2], 16), b: Number.parseInt(match[3], 16) };
-}
 
 interface DotGridProps {
   dotSize?: number;
@@ -100,7 +95,7 @@ export function DotGrid({
         let color = baseColor;
         if (!reducedMotion && distanceSquared <= proximitySquared) {
           const amount = 1 - Math.sqrt(distanceSquared) / proximity;
-          color = `rgb(${Math.round(baseRgb.r + (activeRgb.r - baseRgb.r) * amount)},${Math.round(baseRgb.g + (activeRgb.g - baseRgb.g) * amount)},${Math.round(baseRgb.b + (activeRgb.b - baseRgb.b) * amount)})`;
+          color = `rgb(${Math.round((baseRgb[0] + (activeRgb[0] - baseRgb[0]) * amount) * 255)},${Math.round((baseRgb[1] + (activeRgb[1] - baseRgb[1]) * amount) * 255)},${Math.round((baseRgb[2] + (activeRgb[2] - baseRgb[2]) * amount) * 255)})`;
         }
         context.beginPath();
         context.arc(dot.cx + dot.xOffset, dot.cy + dot.yOffset, dotSize / 2, 0, Math.PI * 2);
