@@ -78,20 +78,22 @@ export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyP
         </div>
 
         <div className="flex flex-col gap-4 text-sm">
-          <ReassuranceBlock heading="What we do with it">
+          <ReassuranceBlock heading="What Polygraph does with it">
             Encrypted with AES-256-GCM before it touches disk. Decrypted only in
-            memory, only to make a request you can see below.
+            memory to discover your collectors, read the selected contract, and—when
+            the recovery policy permits—ask Bright Data to repair a proven break.
           </ReassuranceBlock>
-          <ReassuranceBlock heading="What we call, and nothing else">
+          <ReassuranceBlock heading="The delivery-led recovery loop">
             <ul className="flex flex-col gap-0.5 pl-4">
               <li className="list-disc">list your collectors (once, now)</li>
-              <li className="list-disc">read the published contract for the collector you choose</li>
+              <li className="list-disc">receive each completed Bright Data delivery for collectors you choose</li>
+              <li className="list-disc">when a structural break is proven, ask Bright Data to repair it and verify the result</li>
             </ul>
           </ReassuranceBlock>
           <ReassuranceBlock heading="What we will never do">
             <ul className="flex flex-col gap-0.5 pl-4">
-              <li className="list-disc">never start or schedule customer runs</li>
-              <li className="list-disc">modify or auto-heal a customer collector</li>
+              <li className="list-disc">take over your day-to-day collector schedule</li>
+              <li className="list-disc">repair a wrong target, blocked response, or ambiguous anomaly</li>
               <li className="list-disc">read anything outside the collectors you pick</li>
             </ul>
           </ReassuranceBlock>

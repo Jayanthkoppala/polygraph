@@ -33,10 +33,10 @@ describe('FirstVerdictStep — never a fake pass', () => {
     expect(screen.getByTestId('first-verdict-status')).toHaveAttribute('data-verdict-state', 'NOT_CHECKED');
   });
 
-  it('states that Bright Data owns scheduling and customer auto-repair remains disabled', () => {
+  it('states that Bright Data owns scheduling and explains the guarded recovery policy', () => {
     render(<FirstVerdictStep confirmedIds={['amazon-prices']} deliveryUrl={DELIVERY_URL} onGoToFleet={vi.fn()} />);
     expect(screen.getByText(/bright data still owns the schedule/i)).toBeInTheDocument();
-    expect(screen.getByText(/automatic customer repair off/i)).toBeInTheDocument();
+    expect(screen.getByText(/proven structural break enters the recovery policy/i)).toBeInTheDocument();
   });
 
   it('shows and copies the one-time Bright Data delivery URL', async () => {

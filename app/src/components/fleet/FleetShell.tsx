@@ -119,8 +119,8 @@ function ShellHeader({ fleet, ledgerRows }: { fleet: FleetState; ledgerRows: Led
       </span>
       <span className="ml-auto font-mono text-xs tabular-nums text-[#9B9B9B]">
         {fleet.governor.heal_enabled
-          ? `heal ${fleet.governor.totalAttemptsToday}/${fleet.governor.daily_heal_budget}`
-          : 'Repairs: OFF'}
+          ? `recovery ${fleet.governor.totalAttemptsToday}/${fleet.governor.daily_heal_budget}`
+          : 'Recovery policy: protected'}
       </span>
       <span className="font-mono text-xs tabular-nums text-[#9B9B9B]">
         {fleet.ts ? new Date(fleet.ts).toLocaleTimeString() : '—'}

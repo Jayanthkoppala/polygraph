@@ -87,7 +87,7 @@ export function FirstVerdictStep({ confirmedIds, deliveryUrl, onGoToFleet }: Fir
           <CalendarBlank size={16} className="mt-0.5 shrink-0 text-[#a78bfa]" aria-hidden />
           <div className="flex flex-col gap-1">
             <b className="font-medium text-[#EDEDED]">Bright Data still owns the schedule</b>
-            <span className="text-xs leading-5 text-[#9B9B9B]">Polygraph receives completed rows, checks them, and keeps automatic customer repair off.</span>
+            <span className="text-xs leading-5 text-[#9B9B9B]">Polygraph builds evidence from each completed delivery. A proven structural break enters the recovery policy; ambiguous data is held, never repaired blindly.</span>
           </div>
         </div>
 

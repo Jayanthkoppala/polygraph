@@ -19,18 +19,18 @@ const steps = [
 const stories = [
   {
     kicker: 'BRIGHT DATA ACCESS',
-    title: 'One token. One collector. No new scheduler.',
-    lede: 'Polygraph verifies your account, discovers the collectors already there, and then gets out of Bright Data’s way.',
+    title: 'One token. Selected collectors. No new scheduler.',
+    lede: 'Polygraph verifies your account, discovers the collectors already there, and lets Bright Data keep running them on their existing schedule.',
   },
   {
     kicker: 'COLLECTOR MEMORY',
-    title: 'Choose the scraper Polygraph should remember.',
-    lede: 'We save its published output contract once. Bright Data keeps running it exactly as it does today.',
+    title: 'Choose the scraper Polygraph should learn.',
+    lede: 'Each completed delivery grows an evidence history: expected fields, entity identity, and the shape of normal output.',
   },
   {
     kicker: 'EVIDENCE LOOP',
-    title: 'Send every finished run into the evidence loop.',
-    lede: 'A private delivery URL turns each real Bright Data result into a contract check, a verdict, and a permanent receipt.',
+    title: 'Send every finished run into a guarded recovery loop.',
+    lede: 'A private delivery URL turns each real Bright Data result into evidence, a policy decision, and—only when a break is proven—a repair attempt with a receipt.',
   },
 ] as const;
 

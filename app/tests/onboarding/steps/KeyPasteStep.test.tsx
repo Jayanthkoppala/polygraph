@@ -72,7 +72,7 @@ describe('KeyPasteStep — the key is never rendered back', () => {
     render(<KeyPasteStep onVerified={vi.fn()} onRejected={vi.fn()} onListUnavailable={vi.fn()} />);
     expect(screen.getByTestId('api-key-input')).toBeInTheDocument();
     expect(screen.getByText(/AES-256-GCM/)).toBeInTheDocument();
-    expect(screen.getByText(/never start or schedule customer runs/i)).toBeInTheDocument();
-    expect(document.body.textContent).not.toMatch(/trigger a run/i);
+    expect(screen.getByText(/take over your day-to-day collector schedule/i)).toBeInTheDocument();
+    expect(screen.getByText(/when a structural break is proven/i)).toBeInTheDocument();
   });
 });
