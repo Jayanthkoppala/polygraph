@@ -60,7 +60,7 @@ describe('GlobalChrome', () => {
     expect(dither).toHaveAttribute('data-wave-color', '[0,0.06274509803921569,0.792156862745098]');
     expect(dither).toHaveAttribute('data-wave-speed', '0.05');
     expect(dither).toHaveAttribute('data-wave-frequency', '3');
-    expect(dither).toHaveAttribute('data-wave-amplitude', '0.19');
+    expect(dither).toHaveAttribute('data-wave-amplitude', '0.3');
     expect(dither).toHaveAttribute('data-color-num', '4');
     expect(dither).toHaveAttribute('data-pixel-size', '2');
     expect(dither).toHaveAttribute('data-mouse-radius', '0.3');

@@ -190,8 +190,8 @@ function DitheredWaves({
   enableMouseInteraction: boolean;
   mouseRadius: number;
 }) {
-  const mesh = useRef<THREE.Mesh>(null);
   const mouseRef = useRef(new THREE.Vector2());
+  const materialRef = useRef<THREE.ShaderMaterial>(null);
   const { viewport, size, gl } = useThree();
 
   const waveUniformsRef = useRef({
@@ -213,10 +213,12 @@ function DitheredWaves({
     const h = Math.floor(size.height * dpr);
     const res = waveUniformsRef.current.resolution.value;
     if (res.x !== w || res.y !== h) res.set(w, h);
+    const materialResolution = materialRef.current?.uniforms.resolution?.value as THREE.Vector2 | undefined;
+    materialResolution?.set(w, h);
   }, [size, gl]);
 
   useFrame(({ clock }) => {
-    const u = waveUniformsRef.current;
+    const u = (materialRef.current?.uniforms ?? waveUniformsRef.current) as typeof waveUniformsRef.current;
     if (!disableAnimation) u.time.value = clock.getElapsedTime();
 
     if (u.waveSpeed.value !== waveSpeed) u.waveSpeed.value = waveSpeed;
@@ -243,12 +245,13 @@ function DitheredWaves({
 
   return (
     <>
-      <mesh ref={mesh} scale={[viewport.width, viewport.height, 1]}>
+      <mesh scale={[viewport.width, viewport.height, 1]}>
         <planeGeometry args={[1, 1]} />
         <shaderMaterial
+          ref={materialRef}
           vertexShader={waveVertexShader}
           fragmentShader={waveFragmentShader}
-          uniforms={waveUniformsRef.current as any}
+          uniforms={waveUniformsRef.current}
         />
       </mesh>
       <EffectComposer>

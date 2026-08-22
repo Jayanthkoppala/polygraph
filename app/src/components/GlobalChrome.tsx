@@ -99,7 +99,7 @@ export function GlobalChrome({ children }: { children: ReactNode }) {
           waveColor={[0, 0.06274509803921569, 0.792156862745098]}
           waveSpeed={0.05}
           waveFrequency={3}
-          waveAmplitude={0.19}
+          waveAmplitude={0.3}
           colorNum={4}
           pixelSize={2}
           enableMouseInteraction={!reducedMotion}
