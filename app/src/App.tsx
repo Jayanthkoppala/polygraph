@@ -32,7 +32,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { LandingPage } from '@/landing/LandingPage';
 import { AppGate } from '@/routes/AppGate';
 import { OnboardingEntry } from '@/routes/OnboardingEntry';
-import { IS_STATIC_DEPLOY, SelfHostedNotice } from '@/deploy/SelfHostedNotice';
 import { PrivacyPage, TermsPage } from '@/routes/legal';
 import { GlobalChrome } from '@/components/GlobalChrome';
 
@@ -41,23 +40,14 @@ import { GlobalChrome } from '@/components/GlobalChrome';
  * which always reads the real (jsdom) address bar. `App` below is the only
  * thing that actually ships. */
 export function AppRoutes() {
-  // On the static public build there is no API behind any of these four
-  // routes, so the session-gated components would each fire a request that
-  // 404s and strand the visitor on a retry spinner. Swap them for a page
-  // that says so and hands over the command to run the real one. Off by
-  // default — dev, tests, `polygraph serve` and `polygraph demo` all keep
-  // the real gates. See `deploy/staticMode.ts`.
-  const gated = IS_STATIC_DEPLOY ? <SelfHostedNotice surface="dashboard" /> : <AppGate />;
-  const entry = IS_STATIC_DEPLOY ? <SelfHostedNotice surface="signup" /> : <OnboardingEntry />;
-
   return (
     <GlobalChrome>
       <Routes>
         <Route path="/" element={<LandingPage />} />
-        <Route path="/signup" element={entry} />
-        <Route path="/login" element={entry} />
-        <Route path="/app" element={gated} />
-        <Route path="/fleet" element={gated} />
+        <Route path="/signup" element={<OnboardingEntry />} />
+        <Route path="/login" element={<OnboardingEntry />} />
+        <Route path="/app" element={<AppGate />} />
+        <Route path="/fleet" element={<AppGate />} />
         <Route path="/legal/privacy" element={<PrivacyPage />} />
         <Route path="/legal/terms" element={<TermsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
