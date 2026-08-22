@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchSessionStatus } from '@/lib/session';
+import { fetchSessionStatus, signOut } from '@/lib/session';
 
 function mockFetchOnce(status: number, body?: unknown) {
   vi.stubGlobal(
@@ -85,5 +85,23 @@ describe('fetchSessionStatus', () => {
     vi.stubGlobal('fetch', fetchMock);
     expect(await fetchSessionStatus()).toBe('anonymous');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('signOut', () => {
+  it('posts to the server logout endpoint and resolves only after it succeeds', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, statusText: 'OK' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(signOut()).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith('/api/logout', {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+    });
+  });
+
+  it('keeps the user on the dashboard when the server logout request fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503, statusText: 'Unavailable' }));
+    await expect(signOut()).rejects.toThrow('Could not sign out');
   });
 });

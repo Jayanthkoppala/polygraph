@@ -76,6 +76,35 @@ describe('FleetShell — n=0: composed empty state, never blank', () => {
   });
 });
 
+describe('FleetShell — account exit and collector entry', () => {
+  it('offers a real sign-out action and opens a centered collector dialog', async () => {
+    const onSignOut = vi.fn();
+    const onAddCollector = vi.fn().mockResolvedValue(undefined);
+    render(
+      <FleetShell
+        fleet={fleetState([makeCollector('amazon-prices', 'PASS')])}
+        ledgerRows={[]}
+        onRepair={noop}
+        onAcknowledge={noop}
+        onSignOut={onSignOut}
+        onAddCollector={onAddCollector}
+        signOutError="Could not sign you out. Please try again."
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    expect(onSignOut).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not sign you out. Please try again.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add collector' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add a collector' });
+    expect(dialog).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Bright Data collector ID'), { target: { value: 'c_new' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add collector' }));
+    await vi.waitFor(() => expect(onAddCollector).toHaveBeenCalledWith('c_new'));
+  });
+});
+
 describe('FleetShell — n=1: hero mode, FLEET+FOCUS combined, no empty region', () => {
   it('renders the hero card and its evidence inline in the same region', () => {
     render(

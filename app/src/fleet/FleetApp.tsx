@@ -1,8 +1,11 @@
 // Polls `/api/state` and `/api/ledger` into `FleetShell`. Mounted at `/app` and
 // `/fleet` only once `AppGate` has confirmed the session is authenticated and keyed.
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { FleetShell } from '@/components/fleet/FleetShell';
 import { fetchFleetState, fetchLedger, acknowledgeCollector, ApiError } from '@/lib/api';
+import { signOut } from '@/lib/session';
+import { connectCollector } from '@/onboarding/api';
 import type { CollectorState, FleetState } from '@/lib/api';
 import { toVerdictState } from '@/lib/verdict';
 import type { LedgerRow } from '@/components/ledger/LedgerStream';
@@ -16,9 +19,12 @@ function ledgerRowState(verdict: string, cause: string | null) {
 }
 
 export function FleetApp() {
+  const navigate = useNavigate();
   const [fleet, setFleet] = useState<FleetState | null>(null);
   const [ledgerRows, setLedgerRows] = useState<LedgerRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
 
   const poll = useCallback(async () => {
     try {
@@ -70,6 +76,27 @@ export function FleetApp() {
     [fleet],
   );
 
+  const handleAddCollector = useCallback(
+    async (collectorId: string) => {
+      await connectCollector(collectorId);
+      await poll();
+    },
+    [poll],
+  );
+
+  const handleSignOut = useCallback(async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    setSignOutError(null);
+    try {
+      await signOut();
+      navigate('/', { replace: true });
+    } catch {
+      setSignOutError('Could not sign you out. Please try again.');
+      setSigningOut(false);
+    }
+  }, [navigate, signingOut]);
+
   if (error && !fleet) {
     return (
       <main className="flex min-h-[calc(100svh-var(--poly-chrome-offset,0px))] flex-col items-center justify-center gap-4 bg-black/55 p-8 font-sans text-[#EDEDED]">
@@ -88,5 +115,16 @@ export function FleetApp() {
     );
   }
 
-  return <FleetShell fleet={fleet} ledgerRows={ledgerRows} onRepair={handleRepair} onAcknowledge={handleAcknowledge} />;
+  return (
+    <FleetShell
+      fleet={fleet}
+      ledgerRows={ledgerRows}
+      onRepair={handleRepair}
+      onAcknowledge={handleAcknowledge}
+      onAddCollector={handleAddCollector}
+      onSignOut={handleSignOut}
+      signingOut={signingOut}
+      signOutError={signOutError}
+    />
+  );
 }

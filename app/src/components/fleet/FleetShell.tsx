@@ -2,7 +2,7 @@
 // fill space, so the SHELL changes shape: hero (n<=1), docked (2-3), overlay (n>=4).
 import { useMemo, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { X } from '@phosphor-icons/react';
+import { CircleNotch, Plus, SignOut, X } from '@phosphor-icons/react';
 import Counter from '@/components/Counter';
 import { FleetColumn } from './FleetColumn';
 import { VerdictCard } from './VerdictCard';
@@ -18,9 +18,22 @@ export interface FleetShellProps {
   ledgerRows: LedgerRow[];
   onRepair: (id: string) => void;
   onAcknowledge: (id: string) => void;
+  onAddCollector?: (collectorId: string) => Promise<void>;
+  onSignOut?: () => void;
+  signingOut?: boolean;
+  signOutError?: string | null;
 }
 
-export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: FleetShellProps) {
+export function FleetShell({
+  fleet,
+  ledgerRows,
+  onRepair,
+  onAcknowledge,
+  onAddCollector,
+  onSignOut,
+  signingOut = false,
+  signOutError = null,
+}: FleetShellProps) {
   const collectors = fleet.collectors;
   const layout = layoutFor(collectors.length);
 
@@ -31,6 +44,7 @@ export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: Fleet
   const selectedId = focus.id;
   const selected = collectors.find((c) => c.id === selectedId) ?? null;
   const selectCollector = (id: string) => setSelection(pinFocus(id, collectors));
+  const [addingCollector, setAddingCollector] = useState(false);
 
   const shellMode: 'hero' | 'docked' | 'overlay' =
     layout.kind === 'hero' ? 'hero' : layout.kind === 'single-column' ? 'docked' : 'overlay';
@@ -38,7 +52,14 @@ export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: Fleet
 
   return (
     <div className="flex h-[calc(100svh-var(--poly-chrome-offset,0px))] flex-col bg-black/65 font-sans text-[#EDEDED] backdrop-blur-[2px]">
-      <ShellHeader fleet={fleet} ledgerRows={ledgerRows} />
+      <ShellHeader
+        fleet={fleet}
+        ledgerRows={ledgerRows}
+        onAddCollector={onAddCollector ? () => setAddingCollector(true) : undefined}
+        onSignOut={onSignOut}
+        signingOut={signingOut}
+        signOutError={signOutError}
+      />
 
       <div
         data-testid="fleet-shell-grid"
@@ -88,11 +109,28 @@ export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: Fleet
       {shellMode === 'overlay' && selectedId != null && (
         <FocusOverlay collector={selected} onClose={() => setSelection({ id: null, source: 'user' })} />
       )}
+      {addingCollector && onAddCollector && (
+        <AddCollectorDialog onClose={() => setAddingCollector(false)} onAddCollector={onAddCollector} />
+      )}
     </div>
   );
 }
 
-function ShellHeader({ fleet, ledgerRows }: { fleet: FleetState; ledgerRows: LedgerRow[] }) {
+function ShellHeader({
+  fleet,
+  ledgerRows,
+  onAddCollector,
+  onSignOut,
+  signingOut,
+  signOutError,
+}: {
+  fleet: FleetState;
+  ledgerRows: LedgerRow[];
+  onAddCollector?: () => void;
+  onSignOut?: () => void;
+  signingOut: boolean;
+  signOutError: string | null;
+}) {
   // The latest event's own id, not `ledgerRows.length`: rows are capped to the
   // fetch window, so a length would plateau while ids keep climbing honestly.
   const latestLedgerId = ledgerRows.length > 0 ? ledgerRows[ledgerRows.length - 1].id : 0;
@@ -125,7 +163,105 @@ function ShellHeader({ fleet, ledgerRows }: { fleet: FleetState; ledgerRows: Led
       <span className="font-mono text-xs tabular-nums text-[#9B9B9B]">
         {fleet.ts ? new Date(fleet.ts).toLocaleTimeString() : '—'}
       </span>
+      {onAddCollector && (
+        <button
+          type="button"
+          onClick={onAddCollector}
+          className="flex h-10 items-center gap-1.5 rounded-lg border border-[#49405d] bg-[#171220] px-3 text-sm font-medium text-[#EDEDED] transition-[background-color,border-color,transform] hover:border-[#8b5cf6] hover:bg-[#211832] active:scale-[0.96] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]"
+        >
+          <Plus size={16} weight="bold" aria-hidden />
+          Add collector
+        </button>
+      )}
+      {onSignOut && (
+        <button
+          type="button"
+          onClick={onSignOut}
+          disabled={signingOut}
+          className="flex h-10 items-center gap-1.5 rounded-lg px-3 text-sm text-[#9B9B9B] transition-[background-color,color,transform] hover:bg-[var(--color-raised)] hover:text-[#EDEDED] active:scale-[0.96] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED] disabled:cursor-wait disabled:opacity-70"
+        >
+          {signingOut ? <CircleNotch size={16} className="animate-spin" aria-hidden /> : <SignOut size={16} aria-hidden />}
+          {signingOut ? 'Signing out…' : 'Sign out'}
+        </button>
+      )}
+      {signOutError && <span role="alert" className="text-xs text-red-200">{signOutError}</span>}
     </header>
+  );
+}
+
+function AddCollectorDialog({
+  onClose,
+  onAddCollector,
+}: {
+  onClose: () => void;
+  onAddCollector: (collectorId: string) => Promise<void>;
+}) {
+  const [collectorId, setCollectorId] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const id = collectorId.trim();
+    if (!id || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onAddCollector(id);
+      onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Collector could not be connected.');
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" role="presentation">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-collector-title"
+        className="flex w-full max-w-lg flex-col gap-5 rounded-2xl border border-[#38333f] bg-[var(--color-sunken)] p-6 shadow-[var(--shadow-e3)]"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[#a78bfa]">Collector fleet</p>
+            <h2 id="add-collector-title" className="text-balance text-xl font-semibold text-[#EDEDED]">Add a collector</h2>
+            <p className="text-sm leading-6 text-[#9B9B9B]">Paste the ID of a published Bright Data collector. Its existing schedule stays in Bright Data.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            aria-label="Close add collector"
+            className="grid size-10 shrink-0 place-items-center rounded-lg text-[#9B9B9B] transition-[background-color,color,transform] hover:bg-[var(--color-raised)] hover:text-[#EDEDED] active:scale-[0.96] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]"
+          >
+            <X size={18} aria-hidden />
+          </button>
+        </div>
+        <form className="flex flex-col gap-4" onSubmit={(event) => void submit(event)}>
+          <label className="flex flex-col gap-2 text-sm font-medium text-[#EDEDED]" htmlFor="collector-id">
+            Bright Data collector ID
+            <input
+              id="collector-id"
+              autoFocus
+              value={collectorId}
+              onChange={(event) => setCollectorId(event.target.value)}
+              placeholder="c_your_collector_id"
+              className="h-11 rounded-lg border border-[#38333f] bg-black/30 px-3 font-mono text-sm text-[#EDEDED] outline-none transition-[border-color,box-shadow] placeholder:text-[#69656d] focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#8b5cf6]/30"
+            />
+          </label>
+          {error && <p role="alert" className="rounded-lg border border-red-400/20 bg-red-950/20 px-3 py-2 text-sm text-red-200">{error}</p>}
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={onClose} disabled={submitting} className="h-10 rounded-lg px-3 text-sm text-[#9B9B9B] transition-[background-color,color,transform] hover:bg-[var(--color-raised)] hover:text-[#EDEDED] active:scale-[0.96] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]">Cancel</button>
+            <button type="submit" disabled={!collectorId.trim() || submitting} className="flex h-10 items-center gap-2 rounded-lg bg-[#EDEDED] px-4 text-sm font-medium text-[#131209] transition-[background-color,transform] hover:bg-white active:scale-[0.96] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED] disabled:cursor-not-allowed disabled:bg-[#403e40] disabled:text-[#9B9B9B]">
+              {submitting && <CircleNotch size={16} className="animate-spin" aria-hidden />}
+              {submitting ? 'Adding collector…' : 'Add collector'}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
   );
 }
 

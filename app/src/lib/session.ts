@@ -26,6 +26,16 @@ export async function fetchSessionStatus(): Promise<SessionStatus> {
   return probeOnce();
 }
 
+/** Ends only this browser session. The server clears the HttpOnly cookie and
+ * deletes its matching hashed session row before we navigate away. */
+export async function signOut(): Promise<void> {
+  const res = await fetch('/api/logout', {
+    method: 'POST',
+    headers: { accept: 'application/json' },
+  });
+  if (!res.ok) throw new Error('Could not sign out');
+}
+
 async function probeOnce(): Promise<SessionStatus> {
   let res: Response;
   const controller = typeof AbortController === 'undefined' ? null : new AbortController();
