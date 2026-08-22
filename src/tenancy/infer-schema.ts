@@ -22,15 +22,24 @@ function collectorIdOf(entry: Record<string, unknown>): string | undefined {
   return typeof id === 'string' ? id : undefined;
 }
 
-/** Finds the `collectors_list` entry matching `collectorId`. Returns
- * `undefined` for anything that isn't a plain array of matchable objects —
- * never throws. */
+/** Bright Data currently returns collectors as a paginated
+ * `{total, offset, limit, data: [...]}` envelope. Older responses and tests
+ * use the bare array, so accept both without trusting any other object shape. */
+function collectorEntriesOf(response: unknown): unknown[] {
+  if (Array.isArray(response)) return response;
+  if (!response || typeof response !== 'object') return [];
+  const data = (response as Record<string, unknown>).data;
+  return Array.isArray(data) ? data : [];
+}
+
+/** Finds the `collectors_list` entry matching `collectorId`. Accepts both a
+ * bare array and Bright Data's paginated `{data: [...]}` envelope; returns
+ * `undefined` for every other shape and never throws. */
 export function findCollectorListEntry(
   collectorsListResponse: unknown,
   collectorId: string
 ): Record<string, unknown> | undefined {
-  if (!Array.isArray(collectorsListResponse)) return undefined;
-  for (const entry of collectorsListResponse) {
+  for (const entry of collectorEntriesOf(collectorsListResponse)) {
     if (!entry || typeof entry !== 'object') continue;
     if (collectorIdOf(entry as Record<string, unknown>) === collectorId) {
       return entry as Record<string, unknown>;
@@ -60,9 +69,8 @@ export interface CollectorSummary {
  * "never throws, degrade instead" posture as the rest of this module.
  */
 export function summarizeCollectorsList(collectorsListResponse: unknown): CollectorSummary[] {
-  if (!Array.isArray(collectorsListResponse)) return [];
   const out: CollectorSummary[] = [];
-  for (const entry of collectorsListResponse) {
+  for (const entry of collectorEntriesOf(collectorsListResponse)) {
     if (!entry || typeof entry !== 'object') continue;
     const id = collectorIdOf(entry as Record<string, unknown>);
     if (!id) continue;
@@ -73,9 +81,10 @@ export function summarizeCollectorsList(collectorsListResponse: unknown): Collec
 }
 
 /**
- * Parses an `output_schema` value into field names. Accepts three plausible
- * encodings and returns `[]` for anything else:
+ * Parses an `output_schema` value into field names. Accepts four
+ * observed/plausible encodings and returns `[]` for anything else:
  *   - an array: `[{name: "sku", ...}, ...]` or `["sku", "title"]`
+ *   - Bright Data's live wrapper: `{type: "object", fields: {sku: {...}}}`
  *   - a JSON-Schema-ish object: `{properties: {sku: {...}, ...}}`
  *   - a flat map: `{sku: "text", price: "number"}`
  */
@@ -93,6 +102,11 @@ export function fieldNamesFromOutputSchema(raw: unknown): string[] {
   }
   if (raw && typeof raw === 'object') {
     const obj = raw as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(obj, 'fields')) {
+      const fields = obj.fields;
+      if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return [];
+      return Object.keys(fields as object);
+    }
     if (obj.properties && typeof obj.properties === 'object') {
       return Object.keys(obj.properties as object);
     }

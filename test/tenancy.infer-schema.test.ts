@@ -8,6 +8,23 @@ import {
 } from '../src/tenancy/infer-schema.js';
 
 describe('summarizeCollectorsList — the settings/key save route\'s "Found N collectors" payload', () => {
+  it('unwraps Bright Data\'s live paginated {data: [...]} response envelope', () => {
+    expect(
+      summarizeCollectorsList({
+        total: 2,
+        offset: 0,
+        limit: 100,
+        data: [
+          { id: 'c_1', name: 'Acme Catalog' },
+          { id: 'c_2', name: 'Widget Pricing' },
+        ],
+      })
+    ).toEqual([
+      { id: 'c_1', name: 'Acme Catalog' },
+      { id: 'c_2', name: 'Widget Pricing' },
+    ]);
+  });
+
   it('maps a collectors_list response to a minimal {id, name}[]', () => {
     expect(
       summarizeCollectorsList([
@@ -63,6 +80,23 @@ describe('fieldNamesFromOutputSchema — defensive parsing of an unverified shap
     ]);
   });
 
+  it('parses Bright Data\'s live {type, fields: {...}} schema envelope', () => {
+    expect(
+      fieldNamesFromOutputSchema({
+        type: 'object',
+        fields: {
+          sku: { type: 'string' },
+          price: { type: 'object' },
+        },
+      })
+    ).toEqual(['sku', 'price']);
+  });
+
+  it('degrades malformed Bright Data fields wrappers instead of treating wrapper keys as fields', () => {
+    expect(fieldNamesFromOutputSchema({ type: 'object', fields: null })).toEqual([]);
+    expect(fieldNamesFromOutputSchema({ type: 'object', fields: [] })).toEqual([]);
+  });
+
   it('parses a flat field-name-to-type map', () => {
     expect(fieldNamesFromOutputSchema({ sku: 'text', price: 'number' })).toEqual(['sku', 'price']);
   });
@@ -77,6 +111,23 @@ describe('fieldNamesFromOutputSchema — defensive parsing of an unverified shap
 });
 
 describe('findCollectorListEntry', () => {
+  it('finds a collector inside Bright Data\'s live paginated response envelope', () => {
+    const response = {
+      total: 2,
+      offset: 0,
+      limit: 100,
+      data: [
+        { id: 'c_1', name: 'A' },
+        { id: 'c_2', name: 'B', output_schema: [{ name: 'sku' }] },
+      ],
+    };
+    expect(findCollectorListEntry(response, 'c_2')).toEqual({
+      id: 'c_2',
+      name: 'B',
+      output_schema: [{ name: 'sku' }],
+    });
+  });
+
   it('finds the matching entry by id', () => {
     const list = [{ id: 'c_1', name: 'A' }, { id: 'c_2', name: 'B' }];
     expect(findCollectorListEntry(list, 'c_2')).toEqual({ id: 'c_2', name: 'B' });
@@ -87,7 +138,7 @@ describe('findCollectorListEntry', () => {
     expect(findCollectorListEntry(list, 'c_1')).toEqual({ collector_id: 'c_1', name: 'A' });
   });
 
-  it('returns undefined when nothing matches, or the response is not an array', () => {
+  it('returns undefined when nothing matches, or the response shape is unrecognised', () => {
     expect(findCollectorListEntry([{ id: 'c_1' }], 'c_9')).toBeUndefined();
     expect(findCollectorListEntry({ not: 'an array' }, 'c_1')).toBeUndefined();
     expect(findCollectorListEntry(null, 'c_1')).toBeUndefined();
@@ -96,6 +147,32 @@ describe('findCollectorListEntry', () => {
 });
 
 describe('inferFieldsForCollector — the three required degrade cases', () => {
+  it('infers fields end to end from Bright Data\'s live paginated response and schema envelopes', () => {
+    const response = {
+      total: 1,
+      offset: 0,
+      limit: 100,
+      data: [
+        {
+          id: 'c_1',
+          output_schema: {
+            type: 'object',
+            fields: {
+              sku: { type: 'string' },
+              price: { type: 'object' },
+            },
+          },
+        },
+      ],
+    };
+
+    expect(inferFieldsForCollector(response, 'c_1')).toEqual({
+      fieldNames: ['sku', 'price'],
+      found: true,
+      hasOutputSchema: true,
+    });
+  });
+
   it('recognised: output_schema present and parseable', () => {
     const list = [{ id: 'c_1', output_schema: [{ name: 'sku' }, { name: 'price' }] }];
     const result = inferFieldsForCollector(list, 'c_1');
