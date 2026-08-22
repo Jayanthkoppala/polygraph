@@ -1,25 +1,5 @@
-/**
- * The repairs consent control — ux-spec.md §6, task-9-brief.md item 5.
- * "Never a lone switch — a switch is not informed consent when money is
- * involved." Always switch + daily budget + an explicit "spends your
- * Bright Data credits" statement, gated behind the ONLY confirm dialog in
- * the entire product (ux-spec.md §6: "That is the only confirmation
- * dialog in the entire product") — built on shadcn's `AlertDialog`, the
- * primitive whose entire purpose is a blocking, must-choose confirmation.
- *
- * Plan ruling R6: hosted v2's scheduler forces policy healing off, so an
- * inherited POLYGRAPH_HEAL_ENABLED cannot combine with a stale tenant flag
- * to enable repairs. Auto-heal remains a local-only (CLI) capability. Rendering
- * a working switch here would be a toggle that silently does nothing, which
- * this task's brief explicitly forbids ("explain that honestly rather than
- * showing a toggle that silently does nothing"). `hostedHealAvailable`
- * defaults to `false` for exactly that reason: today, this panel always
- * renders the honest, disabled explanation. The interactive switch +
- * budget + confirm-dialog path is fully built and tested (not dead code) —
- * it activates the moment R6 is lifted and hosted heal ships, without this
- * component needing to change, and it is what `/settings` should reuse
- * rather than re-implementing the same consent gate.
- */
+/** Repairs consent: never a lone switch — switch + budget + "spends your Bright Data
+ * credits", behind the product's only confirm dialog (§6). R6 keeps hosted heal off. */
 import { useState } from 'react';
 import { Wrench } from '@phosphor-icons/react';
 import { Switch } from '@/components/ui/switch';
@@ -40,8 +20,7 @@ export interface RepairBudget {
 }
 
 export interface RepairsConsentPanelProps {
-  /** Off (and this whole panel non-interactive) until hosted heal actually
-   * ships — see module doc, R6. */
+  /** Off, and the whole panel non-interactive, until hosted heal ships (R6). */
   hostedHealAvailable?: boolean;
   usedToday?: number;
   onConfirmEnable?: (budget: RepairBudget) => void;
@@ -93,10 +72,8 @@ export function RepairsConsentPanel({
           checked={enabled}
           disabled={!hostedHealAvailable}
           onClick={handleSwitchClick}
-          // Radix Switch drives its own state via onCheckedChange; this
-          // panel needs the click INTERCEPTED first (to open the confirm
-          // dialog instead of flipping immediately), so onCheckedChange is
-          // a no-op and onClick (which fires first) owns the behaviour.
+          // The click must be INTERCEPTED to open the confirm dialog rather than
+          // flip immediately, so onClick (which fires first) owns the behaviour.
           onCheckedChange={() => {}}
         />
       </div>

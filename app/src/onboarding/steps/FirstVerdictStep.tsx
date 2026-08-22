@@ -1,12 +1,5 @@
-/**
- * Step 4 — the handoff. ux-spec.md §2's E1 "Verifying" empty state (cards
- * resolving one at a time on `/fleet`) is that dashboard's own concern —
- * Task 7 owns `/fleet` and its skeletons. This screen's job is narrower and
- * ends onboarding honestly (task-9-brief.md item 4): summarise what got
- * confirmed, and NEVER render a fake pass for a collector that hasn't run
- * yet. Bright Data remains the only scheduler. Polygraph waits for its
- * delivery webhook, so "Awaiting first delivery" is the only honest copy.
- */
+/** Step 4 — the handoff. NEVER render a pass for a collector that hasn't run: Bright
+ * Data owns the schedule, so "Awaiting first delivery" is the only honest copy. */
 import { useState } from 'react';
 import { SealCheck, EyeSlash, ArrowRight, CalendarBlank, Copy, Check, ArrowSquareOut } from '@phosphor-icons/react';
 import { OnboardingPanel } from '../OnboardingPanel';

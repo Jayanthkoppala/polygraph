@@ -1,12 +1,5 @@
-/**
- * Step 1 — signup. Just a fleet name (recovery email optional). On submit,
- * POST /api/signup returns a one-time token; the caller must NAVIGATE the
- * browser to `exchangeTokenUrl(token)` (a real `window.location.assign`,
- * not a fetch) since that's how the httpOnly session cookie gets set, via
- * a 302 (src/tenancy/auth.ts `exchangeTokenForSession`). That navigation
- * leaves this component's lifetime — the caller (OnboardingWizard) owns
- * performing it so this file stays a pure form.
- */
+/** Step 1 — signup. Stays a pure form: the caller owns navigating to
+ * `exchangeTokenUrl(token)`, which is what sets the httpOnly session cookie. */
 import { useState } from 'react';
 import { ArrowRight } from '@phosphor-icons/react';
 import { OnboardingPanel } from '../OnboardingPanel';

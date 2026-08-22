@@ -1,6 +1,5 @@
-/** Shared "checking session…" state for both gate routes below — same
- * quiet, on-brand loading text `FleetApp` already uses for `/api/state`,
- * never a blank white screen while the session check is in flight. */
+/** Shared "checking session…" state for both gate routes — never a blank white
+ * screen while the session check is in flight. */
 export function SessionLoading() {
   return (
     <main className="flex min-h-[calc(100svh-var(--poly-chrome-offset,0px))] items-center justify-center bg-black/55 font-sans text-[#EDEDED]">
@@ -9,21 +8,8 @@ export function SessionLoading() {
   );
 }
 
-/**
- * What both gates render when the session probe could not answer at all —
- * a timeout, a 5xx, an unparseable body — as opposed to answering 401.
- *
- * This screen exists because the alternative shipped and was wrong: every
- * probe failure used to resolve to `'anonymous'`, and `AppGate` sends
- * `'anonymous'` to `<Navigate to="/">`, so a single transient failure
- * silently ejected a working authenticated session onto the marketing page
- * (seen live twice, with `/api/settings/key/status` healthy either side).
- *
- * It states only what is true — Polygraph could not be reached — claims
- * nothing about whether the user is signed in, and offers the one action
- * that can resolve it. No auto-redirect: bouncing someone somewhere on the
- * strength of an answer we did not get is the bug.
- */
+/** Shown when the session probe could not answer at all, as opposed to answering 401.
+ * Never auto-redirects: resolving failures to `'anonymous'` ejected live sessions. */
 export function SessionUnavailable({ onRetry }: { onRetry: () => void }) {
   return (
     <main

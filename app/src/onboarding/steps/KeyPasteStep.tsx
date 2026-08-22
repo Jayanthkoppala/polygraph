@@ -1,22 +1,5 @@
-/**
- * Step 2 — the key-paste screen. ux-spec.md §6: "the highest-friction
- * moment in the funnel." Two hard rules this component exists to satisfy:
- *
- *   1. Reassurance sits INLINE around the input, always visible — never a
- *      modal, never behind an info icon. Someone deciding whether to paste
- *      a credential will not click anything first.
- *   2. Payoff within ~2 seconds. On success the panel replaces itself with
- *      "Connected. Found N collectors." (or the calm fallback) rather than
- *      staying on the form.
- *
- * The pasted key is local, ephemeral component state ONLY — it is never
- * written into `OnboardingState` (machine.ts has no field for it at all)
- * and this component clears its own `apiKey` state the instant a submit
- * attempt resolves, success or failure. Combined, a plaintext key exists
- * in exactly one place in this whole app for the shortest possible window:
- * this input's value, between paste and submit. Nothing downstream can
- * ever render it back — there is nowhere for it to be read from.
- */
+/** Step 2 — key paste. Reassurance stays INLINE and always visible, never a modal (§6);
+ * the plaintext key lives only here, cleared on submit, never in `OnboardingState`. */
 import { useState } from 'react';
 import { LockKey, Info } from '@phosphor-icons/react';
 import { OnboardingPanel } from '../OnboardingPanel';
@@ -33,16 +16,8 @@ export interface KeyPasteStepProps {
   onListUnavailable: () => void;
 }
 
-/**
- * Two different failures, never conflated. `upstream` is Bright Data
- * genuinely refusing the credential (HTTP 400 from our own route, carrying
- * the literal upstream reason — ux-spec.md §6: "plus the literal upstream
- * status. Never 'something went wrong'"). `local` is anything that went
- * wrong on OUR side of the wire — an unreachable server, a 404 on the save
- * route, a 500. Attributing a Polygraph-side failure to Bright Data would
- * be a fabricated claim about a third party the user is about to trust us
- * with a credential for, so the two get different copy.
- */
+/** Never conflate the two: `upstream` is Bright Data refusing the key, `local` is our
+ * own side failing. Blaming a third party for our outage is a fabricated claim. */
 type KeyFailure = { source: 'upstream' | 'local'; message: string };
 
 export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyPasteStepProps) {
@@ -58,8 +33,7 @@ export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyP
     const submitted = apiKey;
     setVerifying(true);
     setFailure(null);
-    // Cleared immediately, before the request even resolves — nothing in
-    // this component's own state holds the plaintext past this line.
+    // Cleared before the request resolves — no state holds the plaintext past here.
     setApiKey('');
     try {
       const outcome = await saveApiKey(submitted);
@@ -74,10 +48,8 @@ export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyP
       }
     } catch (err) {
       setVerifying(false);
-      // `saveApiKey` only rethrows for statuses it does NOT classify as a
-      // key rejection (400) or a calm list fallback (503) — so everything
-      // arriving here is Polygraph's own side failing, not Bright Data's
-      // verdict on the key.
+      // `saveApiKey` swallows 400 and 503, so everything reaching here is
+      // Polygraph's own side failing — never Bright Data's verdict on the key.
       setFailure({
         source: 'local',
         message:

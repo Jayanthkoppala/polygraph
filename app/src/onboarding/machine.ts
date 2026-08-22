@@ -1,23 +1,5 @@
-/**
- * The onboarding state machine — pure, no React, no network. Everything
- * that decides WHAT SCREEN IS SHOWN lives here so it can be unit tested
- * without rendering anything (task-9-brief.md: "the onboarding state
- * machine (each step's transitions incl. the 403 fallback path)").
- *
- * Mirrors the backend flow this wizard drives (src/tenancy/onboarding.ts,
- * src/tenancy/http-routes.ts): signup -> key save (+ live verification) ->
- * per-collector infer/probe/confirm -> handoff. ux-spec.md §2/§6 constrain
- * the shape:
- *   - the key-paste screen's payoff is "Connected. Found N collectors." OR,
- *     when the collectors_list call is refused/unavailable, a CALM fallback
- *     to manual collector-ID entry — never phrased as the user's fault
- *     (§6, "Your account doesn't expose the collector list to us.").
- *   - schema-confirm is per collector; a collector that probes to zero rows
- *     goes to NOT_VERIFIED and onboarding CONTINUES rather than blocking
- *     (§6, "onboarding continues rather than blocking").
- *   - the first-verdict step must never fabricate a pass — "Awaiting first
- *     run" is the only honest state for a just-confirmed collector.
- */
+/** The onboarding state machine — pure, so every screen decision is testable without
+ * rendering. Mirrors signup -> key save -> infer/probe/confirm -> handoff (§2/§6). */
 
 export interface CollectorCandidate {
   id: string;
@@ -39,9 +21,8 @@ export interface OnboardingState {
   fleetName: string;
   tenantId: string | null;
   keyLast4: string | null;
-  /** The literal upstream status/message on a rejected or unavailable key —
-   * ux-spec §6: "Bright Data rejected that key. [literal upstream status].
-   * Never 'something went wrong.'" */
+  /** The LITERAL upstream status on a rejected key — ux-spec §6 forbids
+   * "something went wrong" here. */
   keyError: string | null;
   /** Discovered (or manually entered) collectors, in the order to confirm. */
   candidates: CollectorCandidate[];
@@ -78,10 +59,8 @@ export const initialOnboardingState: OnboardingState = {
   skippedIds: [],
 };
 
-/** Advances past the collector currently at `confirmIndex`, moving to the
- * next one or to `first-verdict` once every candidate has been resolved
- * (confirmed OR skipped-empty) — the "continues rather than blocking" rule.
- */
+/** Advances past `confirmIndex` — to the next candidate, or to `first-verdict` once all
+ * are confirmed OR skipped-empty. A zero-row probe must not block the flow (§6). */
 function advancePastCurrentCollector(state: OnboardingState): OnboardingState {
   const nextIndex = state.confirmIndex + 1;
   if (nextIndex >= state.candidates.length) {
@@ -102,10 +81,8 @@ export function onboardingReducer(state: OnboardingState, event: OnboardingEvent
       return { ...state, stage: 'key-verifying', keyError: null };
 
     case 'KEY_VERIFIED':
-      // Empty collectors is treated exactly like the fallback path — the
-      // spec never distinguishes "technically 200 but nothing came back"
-      // from "refused" in how it's presented to the user (§6: never framed
-      // as the user's fault either way).
+      // Zero collectors takes the fallback path: §6 presents "200 but nothing came
+      // back" and "refused" identically, never as the user's fault.
       if (event.collectors.length === 0) {
         return { ...state, stage: 'collectors-fallback', keyLast4: event.last4, keyError: null };
       }
@@ -121,26 +98,16 @@ export function onboardingReducer(state: OnboardingState, event: OnboardingEvent
       return { ...state, stage: 'key-rejected', keyError: event.message };
 
     case 'KEY_LIST_UNAVAILABLE':
-      // The 403 (or any non-fatal "we can't see your collector list")
-      // path — the key itself is fine, so no keyError; the screen changes,
-      // not the tone.
+      // "We can't see your collector list" — the key is fine, so no keyError.
+      // The screen changes, not the tone.
       return { ...state, stage: 'collectors-fallback', keyError: null };
 
     case 'KEY_RETRY':
       return { ...state, stage: 'key-paste', keyError: null };
 
+    // Discovered and hand-typed collectors land identically: the flow connects from
+    // the published output schema, so no inputs, identity field or schedule.
     case 'COLLECTORS_SELECTED':
-      // The simplified customer flow connects from Bright Data's published
-      // output schema. No representative inputs or identity field are asked
-      // for, and Polygraph does not create a schedule.
-      return {
-        ...state,
-        stage: 'first-verdict',
-        candidates: event.collectors,
-        confirmIndex: event.collectors.length,
-        confirmedIds: event.collectors.map((collector) => collector.id),
-      };
-
     case 'MANUAL_COLLECTORS_ENTERED':
       return {
         ...state,
@@ -172,19 +139,8 @@ export function onboardingReducer(state: OnboardingState, event: OnboardingEvent
   }
 }
 
-/**
- * The collector currently being schema-confirmed, or `null` when the list
- * is exhausted.
- *
- * WHICH SCREEN TO SHOW IS NOT THIS FUNCTION'S QUESTION. `candidates` is
- * populated by `KEY_VERIFIED`, one transition BEFORE the user has picked
- * anything, so this returns a candidate while the stage is still
- * `collectors-found`. A caller that branches on this before branching on
- * `state.stage` will skip the collectors-found payoff screen entirely —
- * that shipped, and ux-spec.md §6's "Connected. Found N collectors." was
- * unreachable for every tenant whose key verified. Branch on the stage
- * first; use this only to answer "which one am I confirming".
- */
+/** The collector being schema-confirmed, or `null`. NOT a screen selector: candidates
+ * exist one transition before the user picks, so branch on `state.stage` first. */
 export function currentCandidate(state: OnboardingState): CollectorCandidate | null {
   return state.candidates[state.confirmIndex] ?? null;
 }

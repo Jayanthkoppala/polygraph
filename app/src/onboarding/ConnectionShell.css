@@ -172,7 +172,7 @@
 .connection-shell-card [data-testid='onboarding-panel'] > div:first-child { margin-bottom: 30px; gap: 9px; }
 .connection-shell-card [data-testid='onboarding-panel'] > div:first-child p { line-height: 1.55; }
 .connection-shell-card input,
-.connection-shell-card textarea { border-radius: 12px; }
+.connection-shell-card textarea,
 .connection-shell-card button { border-radius: 12px; }
 .connection-shell-back {
   position: relative;

@@ -10,17 +10,13 @@ import React, {
 } from 'react';
 import { motion, AnimatePresence, useReducedMotion, type Variants } from 'motion/react';
 
-/** How long the step slide/height transition runs (see `stepVariants` and
- * `StepContentWrapper`'s `transition`), plus a frame of slack. The content
- * box only masks overflow for this long — see `StepContentWrapper`. */
+/** Slide/height transition duration, plus a frame of slack. The content box masks
+ * overflow only for `SLIDE_SETTLE_MS` — see `StepContentWrapper`. */
 const SLIDE_MS = 400;
 const SLIDE_SETTLE_MS = SLIDE_MS + 120;
 
-/** Space kept between the bottom of the scrollable step content and the
- * bottom of the viewport: the card's own bottom padding/border plus the
- * outer `p-4`. Used to cap the content box so an over-tall step scrolls
- * INSIDE the card instead of scrolling the page (ux-spec.md §6: every
- * onboarding screen fits one viewport). */
+/** Card padding/border plus the outer `p-4`. Caps the content box so an over-tall
+ * step scrolls INSIDE the card, never the page (ux-spec.md §6: one viewport). */
 const VIEWPORT_GUTTER = 28;
 
 interface StepperProps extends HTMLAttributes<HTMLDivElement> {
@@ -155,8 +151,6 @@ export default function Stepper({
               {currentStep !== 1 && (
                 <button
                   onClick={handleBack}
-                  // Only rendered when `currentStep !== 1`, so there is no
-                  // disabled variant to branch on here.
                   className="duration-350 rounded-sm px-2 py-1 transition text-[#8B949E] hover:text-[#EDEDED]"
                   {...backButtonProps}
                 >
@@ -186,43 +180,8 @@ interface StepContentWrapperProps {
   className?: string;
 }
 
-/**
- * The animated step-content box.
- *
- * This is where a real, measured defect lived: the box is `overflow: hidden`
- * with an explicit animated height, and that height used to come from a
- * ONE-SHOT `offsetHeight` read taken in `useLayoutEffect` at first layout.
- * On the key-paste step that read happened before the Geist webfont swapped
- * in, so the box froze at 562px around content that settled at 594px — and
- * because React bails out of a re-render when `setState` is given the same
- * value, the measuring effect never ran again. The bottom 32px, which is
- * exactly where the step's `Connect` button lives, was clipped away: 8px of
- * a 40px button inside the box, 32px (80%) outside it. Playwright's
- * `isVisible()` still returned true, because it only checks the element's
- * own box, never an ancestor's clip.
- *
- * Three changes close that off, in order of how load-bearing they are:
- *
- *  1. The height is now measured CONTINUOUSLY (`ResizeObserver`), so a late
- *     reflow — a webfont swap, an error alert appearing, an async list
- *     arriving — moves the box with it. This is the correctness fix.
- *  2. The box only masks overflow WHILE a step transition is actually in
- *     flight. `overflow: hidden` exists here to hide the horizontal slide,
- *     and there is no slide at rest — so at rest it is `visible`, and a
- *     measurement race can never again silently swallow a control. This is
- *     the defence-in-depth fix.
- *  3. If a step genuinely cannot fit the viewport, the box is capped and
- *     becomes a real `overflow-y: auto` scroll region, so the action stays
- *     reachable and the PAGE never scrolls (ux-spec.md §6).
- *
- * The alternative fix — moving each step's submit into the Stepper's own
- * footer slot — was rejected: the footer is a single shared slot rendered
- * outside `<Step>`, so a step's submit button would leave its own `<form>`
- * (breaking `type="submit"`, native Enter-to-submit and per-step
- * disabled/busy state), and `OnboardingWizard` deliberately hides that
- * footer because every advance in this flow is gated on an async result,
- * never on a free "Continue" click.
- */
+/** The animated step-content box. TRAP: a one-shot `offsetHeight` read here froze the
+ * height pre-webfont and clipped 80% of `Connect` away — keep measuring continuously. */
 function StepContentWrapper({
   isCompleted,
   currentStep,
@@ -236,9 +195,8 @@ function StepContentWrapper({
   const boxRef = useRef<HTMLDivElement | null>(null);
   const reduceMotion = useReducedMotion();
 
-  /** Only the ENTERING step may report a height: `AnimatePresence` runs in
-   * `mode="sync"`, so the outgoing step is still mounted and would otherwise
-   * race its old height back in. */
+  /** Only the ENTERING step may report a height: `AnimatePresence` is `mode="sync"`,
+   * so the outgoing step is still mounted and would race its old height back in. */
   const handleHeightReady = useCallback(
     (height: number, reportedStep: number) => {
       if (reportedStep !== currentStep) return;
@@ -271,9 +229,8 @@ function StepContentWrapper({
 
   const mustScroll = maxHeight !== null && parentHeight > maxHeight;
   const height = isCompleted ? 0 : mustScroll ? maxHeight : parentHeight;
-  // `hidden` ONLY while something is genuinely moving; `auto` when the step
-  // is honestly taller than the viewport; `visible` — the resting case — so
-  // no control can ever be clipped out of existence again.
+  // `hidden` only while something is moving, `auto` when the step is taller than
+  // the viewport, `visible` at rest — so nothing can be clipped out of existence.
   const overflow = isCompleted || isSliding ? 'hidden' : mustScroll ? 'auto' : 'visible';
 
   return (
@@ -282,12 +239,8 @@ function StepContentWrapper({
       data-testid="step-content-box"
       style={{ position: 'relative', overflowX: overflow === 'auto' ? 'hidden' : overflow, overflowY: overflow }}
       animate={{ height }}
-      // The height only ANIMATES as part of a step transition. A height
-      // change at rest is content growing under it (an error alert
-      // appearing, a webfont swapping, an async list arriving) — springing
-      // to that would let the content sit outside the card's bottom border
-      // for ~400ms, which is the same "action floating outside its box"
-      // failure this box is being fixed for. At rest it snaps.
+      // Height animates only during a step transition; at rest it snaps, since
+      // springing to content growth floats it outside the card for ~400ms.
       transition={isSliding && !reduceMotion ? { type: 'spring', duration: SLIDE_MS / 1000 } : { duration: 0 }}
       className={className}
     >
@@ -319,11 +272,8 @@ interface SlideTransitionProps {
 function SlideTransition({ children, direction, stepKey, reduceMotion, onHeightReady }: SlideTransitionProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Measured on every layout AND on every subsequent resize of the content
-  // itself. The one-shot version of this effect is what clipped the
-  // `Connect` button — see `StepContentWrapper`'s note. `ResizeObserver` is
-  // guarded because jsdom (the unit-test environment) does not implement it;
-  // there the initial `useLayoutEffect` read is still the source of truth.
+  // Re-measured on every content resize, not just first layout — the one-shot
+  // version is what clipped `Connect`. `ResizeObserver` is guarded for jsdom.
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -344,9 +294,8 @@ function SlideTransition({ children, direction, stepKey, reduceMotion, onHeightR
       initial="enter"
       animate="center"
       exit="exit"
-      // ui-system.md §1.9/§6.5: `prefers-reduced-motion: reduce` collapses
-      // every transition to a 120ms opacity crossfade, and the slide is
-      // dropped entirely rather than compressed.
+      // ui-system.md §1.9/§6.5: reduced motion is a 120ms opacity crossfade with
+      // the slide dropped entirely, never a compressed slide.
       transition={{ duration: reduceMotion ? 0.12 : SLIDE_MS / 1000 }}
       style={{ position: 'absolute', left: 0, right: 0, top: 0 }}
     >
@@ -407,24 +356,14 @@ function StepIndicator({ step, currentStep, onClickStep, disableStepIndicators =
       role="listitem"
       aria-current={status === 'active' ? 'step' : undefined}
       aria-label={`Step ${step}${status === 'complete' ? ' (done)' : status === 'active' ? ' (current)' : ''}`}
-      // `disableStepIndicators` removes the CLICK affordance only. It used to
-      // also drop the whole rail to `opacity-40`, which dimmed the one piece
-      // of orientation chrome onboarding has to roughly 2:1 contrast and read
-      // as "this thing is broken/disabled" rather than "this is your
-      // progress". ui-system.md §5 is explicit that the usual `opacity`
-      // disabled treatment must not be used where it costs contrast — and a
-      // progress rail is not a disabled control in the first place, it is a
-      // non-interactive indicator.
+      // Removes the CLICK affordance ONLY — never add an opacity dim back: a progress
+      // rail is a non-interactive indicator, and ui-system.md §5 forbids the contrast cost.
       className={`relative outline-none focus:outline-none ${disableStepIndicators ? 'pointer-events-none' : 'cursor-pointer'}`}
       animate={status}
       initial={false}
     >
-      {/* Motion's `animate`/`variants` interpolate real colour values, not
-       * `var(--token)` references — these literal hex values are the same
-       * ones app.css defines for `--color-raised` / `--color-verdict-pass`
-       * / `--color-line`, kept in sync by hand since a CSS custom property
-       * can't be read into a JS animation config at build time (same
-       * constraint noted in lib/motion.ts for the duration tokens). */}
+      {/* Motion interpolates real colours, not `var(--token)`, so these literals
+       * mirror app.css's `--color-raised`/`--color-verdict-pass` by hand. */}
       <motion.div
         variants={{
           inactive: { scale: 1, backgroundColor: '#272727', color: '#8B949E' },
