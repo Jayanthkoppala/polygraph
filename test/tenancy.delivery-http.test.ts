@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import { startServer, type RunningServer } from '../src/tenancy/serve.js';
 
 const ORIGIN = 'http://test.local';
@@ -95,6 +96,26 @@ describe('Bright Data webhook deliveries', () => {
       snapshot: { rows: [{ sku: 'SKU-1', title: 'Coffee Grinder', price: 89 }] },
       latest_decision: { verdict: 'PASS', action: 'RELEASE' },
     });
+  });
+
+  it('acknowledges Bright Data compressed Test Webhook probes without recording them as scraper results', async () => {
+    const { base, cookie, deliveryUrl } = await bootAndConnect();
+    const probe = await fetch(deliveryUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-encoding': 'gzip' },
+      body: gzipSync(JSON.stringify({ test: true })),
+    });
+
+    expect(probe.status).toBe(200);
+    expect(await probe.json()).toMatchObject({
+      accepted: true,
+      probe: true,
+      collector_id: 'c_customer',
+      stored: false,
+      auto_heal: false,
+    });
+    const safe = await fetch(`${base}/api/collectors/c_customer/safe-output`, { headers: { cookie } });
+    expect(await safe.json()).toMatchObject({ snapshot: null, latest_decision: null });
   });
 
   it('quarantines a broken delivered row and preserves the prior released snapshot', async () => {

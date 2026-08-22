@@ -33,7 +33,7 @@ export async function tryHandleDemoMissionRequest(req: IncomingMessage, res: Ser
     const method = req.method ?? 'GET';
     if (!service) { sendJson(res, 503, { error: 'demo mission configuration is incomplete or POLYGRAPH_DEMO_LIVE is not 1' }); return true; }
     if (method === 'POST' && !trustedJsonMutation(req)) { sendJson(res, 415, { error: 'demo mutations require same-site application/json requests' }); return true; }
-    if (method === 'POST' && url.pathname === '/api/demo/missions') { if (!(await jsonBody(req))) { sendJson(res, 400, { error: 'invalid JSON body' }); return true; } const mission = service.create(); sendJson(res, 201, { id: mission.id }); return true; }
+    if (method === 'POST' && url.pathname === '/api/demo/missions') { if (!(await jsonBody(req))) { sendJson(res, 400, { error: 'invalid JSON body' }); return true; } const acquired = service.acquire(); sendJson(res, acquired.reused ? 200 : 201, { id: acquired.mission.id, reused: acquired.reused }); return true; }
     const match = url.pathname.match(/^\/api\/demo\/missions\/([^/]+)(?:\/(shift|reset))?$/);
     if (!match) { sendJson(res, 404, { error: 'not found' }); return true; }
     const id = decodeURIComponent(match[1]); const action = match[2];

@@ -52,6 +52,7 @@ export class DemoMissionService {
   private readonly missions = new Map<string, DemoMission>();
   private readonly runtimes = new Map<string, Runtime>();
   private activeId: string | undefined;
+  private lastReceiptId: string | undefined;
   private lastGeneration = 0;
   private readonly now: () => string;
   private readonly id: () => string;
@@ -60,6 +61,21 @@ export class DemoMissionService {
   constructor(private readonly deps: DemoMissionDeps) { this.now = deps.now ?? (() => new Date().toISOString()); this.id = deps.id ?? randomUUID; this.nextGeneration = deps.nextGeneration ?? (() => String(Math.max(Date.now(), this.lastGeneration + 1))); }
   current(id: string): DemoMission | undefined { return this.missions.get(id); }
   whenSettled(id: string): Promise<void> { const runtime = this.runtimes.get(id); if (!runtime) return Promise.reject(new DemoMissionNotFoundError(id)); return runtime.settled; }
+  acquire(): { mission: DemoMission; reused: boolean } {
+    if (this.activeId) return { mission: this.require(this.activeId), reused: true };
+    const maxMissions = this.deps.config.maxMissions ?? 2;
+    if (this.createdMissions < maxMissions) return { mission: this.create(), reused: false };
+    if (this.lastReceiptId) {
+      const receipt = this.require(this.lastReceiptId);
+      receipt.scene = 'receipt';
+      receipt.status = 'healed';
+      receipt.activeStep = 6;
+      receipt.last_error = null;
+      this.activeId = receipt.id;
+      return { mission: receipt, reused: true };
+    }
+    throw new DemoMissionBudgetError(maxMissions);
+  }
   create(): DemoMission {
     if (this.activeId) throw new DemoMissionLeaseError();
     const maxMissions = this.deps.config.maxMissions ?? 2;
@@ -88,7 +104,7 @@ export class DemoMissionService {
     const prompt = 'The live V2 fixture still returns the correct SKU, but price.value collapsed to 0 after the markup changed from .product-price to .money-widget__value. Refactor the collector to extract the visible product price from the new markup while preserving the existing SKU identity field.';
     this.event(mission, 'healing_prompt', `Healing prompt prepared: ${prompt}`); mission.scene = 'self_healing'; mission.activeStep = 5; await this.heal(mission, prompt); mission.activeStep = 6;
     const recovered = await this.scrape(mission, 'C recovery verification'); assertFixtureRow(recovered.result, 'C recovery verification', this.deps.config, true); mission.evidence.proof_run_id = recovered.jobId;
-    this.event(mission, 'receipt', `Bright Data C re-proved SKU ${this.deps.config.expectedSku} at ${this.deps.config.expectedPrice} after the repair.`); mission.scene = 'receipt'; mission.status = 'healed';
+    this.event(mission, 'receipt', `Bright Data C re-proved SKU ${this.deps.config.expectedSku} at ${this.deps.config.expectedPrice} after the repair.`); mission.scene = 'receipt'; mission.status = 'healed'; this.lastReceiptId = mission.id;
   }
   private async runReset(mission: DemoMission): Promise<void> { await this.deploy('v1', mission); this.event(mission, 'reset_v1', 'V1 live marker confirmed; reset performs no additional Bright Data scrape.'); const runtime = this.runtime(mission.id); runtime.scrapes = 0; runtime.heals = 0; mission.status = 'idle'; this.activeId = undefined; }
   private async deploy(version: 'v1' | 'v2', mission: DemoMission): Promise<void> { const generation = this.newGeneration(); this.event(mission, `dispatch_${version}`, `Dispatched fixture workflow for ${version.toUpperCase()} generation ${generation}.`); await this.deps.github.dispatch(version, generation, mission.id); await this.deps.github.waitForMarker(version, generation, mission.id); mission.evidence.marker_url = this.markerUrl(generation); this.event(mission, `marker_${version}`, `Live version.json confirmed ${version.toUpperCase()} generation ${generation} for this mission.`); }

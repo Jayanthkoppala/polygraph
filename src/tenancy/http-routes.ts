@@ -63,7 +63,7 @@ import { loginWithGoogleIdentity, type GoogleAuthVerifier } from './google-auth.
 import {
   DeliveryPayloadError,
   issueDeliveryToken,
-  readDeliveredRows,
+  readDeliveryPayload,
   recordDeliveredRows,
   resolveDeliveryTarget,
 } from './delivery.js';
@@ -260,7 +260,18 @@ export async function handleTenantRequest(req: IncomingMessage, res: ServerRespo
         return;
       }
       try {
-        const rows = await readDeliveredRows(req);
+        const payload = await readDeliveryPayload(req);
+        if (payload.kind === 'probe') {
+          sendJson(res, 200, {
+            accepted: true,
+            probe: true,
+            collector_id: target.collectorId,
+            stored: false,
+            auto_heal: false,
+          });
+          return;
+        }
+        const rows = payload.rows;
         const candidateRunId = req.headers['x-brightdata-job-id'];
         const externalRunId = typeof candidateRunId === 'string' && /^[A-Za-z0-9._:-]{1,200}$/.test(candidateRunId)
           ? candidateRunId

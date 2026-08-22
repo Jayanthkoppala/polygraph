@@ -22,7 +22,7 @@ afterEach(() => {
   const restore = (key: string, value: string | undefined) => { if (value === undefined) delete process.env[key]; else process.env[key] = value; };
   restore('POLYGRAPH_HEAL_ENABLED', savedGateEnv.heal); restore('POLYGRAPH_DEMO_LIVE', savedGateEnv.live); restore('POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE', savedGateEnv.autosave); restore('POLYGRAPH_DEMO_COLLECTOR_ID', savedGateEnv.collector); restore('POLYGRAPH_DEMO_FIXTURE_URL', savedGateEnv.fixture);
 });
-function fakes(options: { brokenRow?: Record<string, unknown>; healthyRow?: Record<string, unknown> } = {}) {
+function fakes(options: { brokenRow?: Record<string, unknown>; healthyRow?: Record<string, unknown>; maxMissions?: number } = {}) {
   const calls: string[] = []; let dataset = 0; let ids = 0; let generation = 100;
   const github: DemoGithubClient = { workflowUrl: 'https://github.test/workflow', async dispatch(version, value, missionId) { calls.push(`dispatch:${version}:${value}:${missionId}`); }, async waitForMarker(version, value, missionId) { calls.push(`marker:${version}:${value}:${missionId}`); } };
   const brightData: DemoBrightDataClient = {
@@ -30,7 +30,7 @@ function fakes(options: { brokenRow?: Record<string, unknown>; healthyRow?: Reco
     async pollDataset() { calls.push(`poll:${dataset}`); return dataset === 2 ? { rows: [options.brokenRow ?? { sku: 'SKU-ASTER-001', price: { value: 0, currency: 'GBP', symbol: '£' } }], ambiguous: false } : { rows: [options.healthyRow ?? { sku: 'SKU-ASTER-001', price: { value: 51.77, currency: 'GBP', symbol: '£' } }], ambiguous: false }; },
     async refactorTemplate() { calls.push('heal:start'); return {}; }, async pollRefactorTemplateProgress() { calls.push('heal:poll'); return calls.includes('heal:resume:true:true') ? { status: 'completed', id: 'heal-1' } : { status: 'pending_answer', id: 'heal-1' }; }, async resumeAutomationJob(_id, opts) { calls.push(`heal:resume:${opts.message}:${opts.autoSave}`); },
   };
-  const service = new DemoMissionService({ config, github, brightData, now: () => '2026-08-22T00:00:00.000Z', id: () => `mission-${++ids}`, nextGeneration: () => String(++generation) });
+  const service = new DemoMissionService({ config: { ...config, maxMissions: options.maxMissions }, github, brightData, now: () => '2026-08-22T00:00:00.000Z', id: () => `mission-${++ids}`, nextGeneration: () => String(++generation) });
   return { calls, service };
 }
 
@@ -92,5 +92,30 @@ describe('demo mission HTTP API', () => {
     const { service } = fakes(); server = createDemoMissionServer({ service, appDir: '/definitely-unbuilt' }); await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
     const livePort = (server.address() as AddressInfo).port;
     expect((await fetch(`http://127.0.0.1:${livePort}/api/demo/missions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' })).status).toBe(400);
+  });
+
+  it('reuses the last verified receipt after the live mission budget is spent without scheduling more provider work', async () => {
+    const { calls, service } = fakes({ maxMissions: 1 });
+    const first = service.create();
+    await service.whenSettled(first.id);
+    service.shift(first.id);
+    await service.whenSettled(first.id);
+    service.reset(first.id);
+    await service.whenSettled(first.id);
+    const callsBeforeReplay = [...calls];
+
+    server = createDemoMissionServer({ service, appDir: '/definitely-unbuilt' });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const replay = await fetch(`http://127.0.0.1:${port}/api/demo/missions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ id: first.id, reused: true });
+    expect(service.current(first.id)).toMatchObject({ scene: 'receipt', status: 'healed' });
+    expect(calls).toEqual(callsBeforeReplay);
   });
 });

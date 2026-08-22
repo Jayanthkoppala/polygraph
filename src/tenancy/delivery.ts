@@ -86,12 +86,18 @@ export class DeliveryPayloadError extends Error {
   }
 }
 
-/** Bright Data webhook delivery is a JSON array. Gzip is accepted because
+export type DeliveryPayload =
+  | { kind: 'rows'; rows: Record<string, unknown>[] }
+  | { kind: 'probe' };
+
+/** Bright Data result delivery is a JSON array. Its dashboard's Test Webhook
+ * action sends a JSON object instead; that object is treated as a connectivity
+ * probe and is never stored as scraper output. Gzip is accepted because
  * several Bright Data webhook products compress by default; the onboarding
  * screen still asks for uncompressed JSON because it is easier to inspect
  * during the hackathon demo. Both compressed and expanded bodies are
  * bounded to the same 1 MB cap as the retained safe-output snapshot. */
-export async function readDeliveredRows(req: IncomingMessage): Promise<Record<string, unknown>[]> {
+export async function readDeliveryPayload(req: IncomingMessage): Promise<DeliveryPayload> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
@@ -125,10 +131,13 @@ export async function readDeliveredRows(req: IncomingMessage): Promise<Record<st
   } catch {
     throw new DeliveryPayloadError('delivery body must be valid JSON', 400);
   }
+  if (parsed !== null && !Array.isArray(parsed) && typeof parsed === 'object') {
+    return { kind: 'probe' };
+  }
   if (!Array.isArray(parsed) || parsed.some((row) => row === null || Array.isArray(row) || typeof row !== 'object')) {
     throw new DeliveryPayloadError('delivery body must be a JSON array of result objects', 400);
   }
-  return parsed as Record<string, unknown>[];
+  return { kind: 'rows', rows: parsed as Record<string, unknown>[] };
 }
 
 export interface DeliveryDecision {
