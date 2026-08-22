@@ -13,9 +13,9 @@
  * never automatic — same posture as auto-heal (`policy.heal_enabled`):
  * never spend a tenant's credits without an explicit consent.
  */
-import type { Collector } from '../config.js';
-import { brightdataAdapter, type AdapterContext } from '../adapters.js';
-import type { RunResult } from '../types.js';
+import type { Collector } from '../core/config.js';
+import { brightdataAdapter, type AdapterContext } from '../evidence/adapters.js';
+import type { RunResult } from '../core/types.js';
 import { inferType } from './infer-schema.js';
 
 export class ConsentRequiredError extends Error {

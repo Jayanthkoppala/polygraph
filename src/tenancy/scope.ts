@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
-import { Ledger, GENESIS_HASH, type LedgerEventInput, type LedgerEventRow, type RecentOptions, type VerifyResult } from '../ledger.js';
-import { Governor, type GovernorGate, type GovernorSnapshot } from '../policy.js';
-import type { Policy } from '../config.js';
+import { Ledger, GENESIS_HASH, type LedgerEventInput, type LedgerEventRow, type RecentOptions, type VerifyResult } from '../store/ledger.js';
+import { Governor, type GovernorGate, type GovernorSnapshot } from '../loop/policy.js';
+import type { Policy } from '../core/config.js';
 import { LOCAL_TENANT_ID, tenantGenesis } from './genesis.js';
 // Type-only: secrets.ts itself imports `assertOwned` from THIS module, so a
 // runtime import here would be circular. `TenantScope.secrets` only ever
@@ -12,7 +12,7 @@ import { LOCAL_TENANT_ID, tenantGenesis } from './genesis.js';
 // addition for whichever task next touches TenantScope's construction
 // site, once a master key is available at that call site").
 import type { ScopedSecrets } from './secrets.js';
-import { DecisionRecorder, ScopedSafeOutput } from '../safe-output.js';
+import { DecisionRecorder, ScopedSafeOutput } from '../store/safe-output.js';
 
 /**
  * Tenant isolation, per tenant-architecture.md §3: five layers, a bug has to

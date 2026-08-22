@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { GENESIS_HASH } from '../ledger.js';
+import { GENESIS_HASH } from '../store/ledger.js';
 import { LOCAL_TENANT_ID } from './genesis.js';
 
 /**

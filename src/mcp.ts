@@ -1,17 +1,17 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { loadFleetConfig, type FleetConfig } from './config.js';
-import { createLazyBrightDataClient } from './brightdata.js';
-import { extractorsForCollectors } from './extractors.js';
-import { resolveInputUrl } from './adapters.js';
-import type { LedgerEventRow } from './ledger.js';
-import { runFleet, type FleetRunSummary } from './runner.js';
+import { loadFleetConfig, type FleetConfig } from './core/config.js';
+import { createLazyBrightDataClient } from './brightdata/client.js';
+import { extractorsForCollectors } from './evidence/extractors.js';
+import { resolveInputUrl } from './evidence/adapters.js';
+import type { LedgerEventRow } from './store/ledger.js';
+import { runFleet, type FleetRunSummary } from './loop/runner.js';
 import {
   LocalDatabaseMigrationRequiredError,
   openLocalReadStore,
   openLocalWriteStore,
-} from './local-store.js';
+} from './store/local.js';
 
 type MaybePromise<T> = T | Promise<T>;
 type Structured = Record<string, unknown>;

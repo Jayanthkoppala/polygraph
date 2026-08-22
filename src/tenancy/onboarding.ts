@@ -18,7 +18,7 @@
  * concern — this module only owns turning ONE persisted row back into the
  * override shapes runner.ts consumes.
  */
-import type { FieldSchema, OutputSchema } from '../types.js';
+import type { FieldSchema, OutputSchema } from '../core/types.js';
 import type { TenantScope, TenantCollectorRow } from './scope.js';
 import { compileEntityKeyRule, type EntityKeyRule, type KeyExtractor } from './entity-key.js';
 

@@ -1,9 +1,9 @@
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { BrightDataClient } from '../brightdata.js';
-import { readRequestBody, RequestBodyTooLargeError } from '../server.js';
-import { serveStaticOrSpa } from '../static-serve.js';
+import { BrightDataClient } from '../brightdata/client.js';
+import { readRequestBody, RequestBodyTooLargeError } from '../http/server.js';
+import { serveStaticOrSpa } from '../http/static.js';
 import { GithubFixtureClient } from './github.js';
 import { DemoMissionBudgetError, DemoMissionConflictError, DemoMissionLeaseError, DemoMissionNotFoundError, DemoMissionService, type DemoBrightDataClient, type DemoMissionConfig } from './mission.js';
 export interface DemoServerDeps { config?: DemoMissionConfig; service?: DemoMissionService; appDir?: string }

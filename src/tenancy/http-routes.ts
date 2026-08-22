@@ -28,11 +28,11 @@ import {
   RequestBodyTooLargeError,
   parseLimit,
   MAX_LEDGER_LIMIT,
-} from '../server.js';
-import { serveStaticOrSpa } from '../static-serve.js';
-import { Ledger } from '../ledger.js';
-import { buildTenantContext } from '../config.js';
-import { BrightDataClient, BrightDataError } from '../brightdata.js';
+} from '../http/server.js';
+import { serveStaticOrSpa } from '../http/static.js';
+import { Ledger } from '../store/ledger.js';
+import { buildTenantContext } from '../core/config.js';
+import { BrightDataClient, BrightDataError } from '../brightdata/client.js';
 import {
   resolveSession,
   checkCsrf,

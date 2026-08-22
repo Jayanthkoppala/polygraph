@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { DatasetPollResult, RefactorProgress } from '../brightdata.js';
-import { healOwnedFixture, mintOwnedFixtureHealPermit } from '../heal.js';
+import type { DatasetPollResult, RefactorProgress } from '../brightdata/client.js';
+import { healOwnedFixture, mintOwnedFixtureHealPermit } from '../brightdata/heal.js';
 
 export const DEMO_STEPS = ['mission-created', 'v1-baseline', 'deploy-wait', 'v2-broken', 'diagnosis', 'self-healing', 'receipt'] as const;
 type Scene = 'landing' | 'v1_baseline' | 'deploy_wait' | 'broken_v2' | 'diagnosis' | 'self_healing' | 'receipt';

@@ -33,7 +33,7 @@
  * — see `ScopedSecrets.markVerified()`, called by whichever code path runs
  * that first job on success.
  */
-import { BrightDataClient, BrightDataError, type SleepFn } from '../brightdata.js';
+import { BrightDataClient, BrightDataError, type SleepFn } from '../brightdata/client.js';
 import { InvalidApiKeyFormatError, KEY_FORMAT, type ScopedSecrets, type TenantSecretStatus } from './secrets.js';
 
 export class TenantKeyRejectedError extends Error {

@@ -15,11 +15,11 @@
  * "no network in tests" rule.
  */
 import type Database from 'better-sqlite3';
-import { Ledger, type VerifyResult } from '../ledger.js';
-import { runFleet, type FleetRunSummary } from '../runner.js';
-import { buildTenantContext } from '../config.js';
-import { BrightDataClient, type PollOptions } from '../brightdata.js';
-import type { AlertNotifier } from '../alerts.js';
+import { Ledger, type VerifyResult } from '../store/ledger.js';
+import { runFleet, type FleetRunSummary } from '../loop/runner.js';
+import { buildTenantContext } from '../core/config.js';
+import { BrightDataClient, type PollOptions } from '../brightdata/client.js';
+import type { AlertNotifier } from '../loop/alerts.js';
 import { scopeFor, type TenantCollectorRow } from './scope.js';
 import { ScopedSecrets, revealPlaintext } from './secrets.js';
 

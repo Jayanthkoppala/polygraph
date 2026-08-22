@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import type Database from 'better-sqlite3';
 import { openWriter, openReader } from './db.js';
 import { migrate } from './migrate.js';
-import { Ledger } from '../ledger.js';
+import { Ledger } from '../store/ledger.js';
 import { loadMasterKey, loadPreviousMasterKey, assertMasterKeyCanary, MasterKeyMismatchError } from './crypto.js';
 import { handleTenantRequest, type TenantServerDeps } from './http-routes.js';
 import { startScheduler, type Dispatcher } from './scheduler.js';

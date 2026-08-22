@@ -7,8 +7,8 @@
  * attribute — same principle a real extractor's CSS selector would be
  * broken by on a real site.
  */
-import type { Extractor } from '../adapters.js';
-import type { OutputSchema } from '../types.js';
+import type { Extractor } from '../evidence/adapters.js';
+import type { OutputSchema } from '../core/types.js';
 
 /** A field never found on the page (the default_value every FieldSchema
  * below declares) must round-trip through `checkContract`'s isUnfilled

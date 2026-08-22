@@ -3,16 +3,16 @@ import { Command } from 'commander';
 import * as cron from 'node-cron';
 import { stringify } from 'yaml';
 import { existsSync, rmSync, writeFileSync } from 'node:fs';
-import { Ledger, type LedgerEventRow } from './ledger.js';
-import { loadFleetConfig, type FleetConfig } from './config.js';
-import { BrightDataClient, createLazyBrightDataClient } from './brightdata.js';
-import { runFleet, type RunnerContext, type CollectorRunSummary } from './runner.js';
-import { createServer, ackLedgerEvent, AckError } from './server.js';
-import { DEFAULT_WATCH_HOST, resolveWatchHost } from './watch-host.js';
+import { Ledger, type LedgerEventRow } from './store/ledger.js';
+import { loadFleetConfig, type FleetConfig } from './core/config.js';
+import { BrightDataClient, createLazyBrightDataClient } from './brightdata/client.js';
+import { runFleet, type RunnerContext, type CollectorRunSummary } from './loop/runner.js';
+import { createServer, ackLedgerEvent, AckError } from './http/server.js';
+import { DEFAULT_WATCH_HOST, resolveWatchHost } from './http/watch-host.js';
 import { createFixtureServer } from './fixture/server.js';
 import { CHAOS_MODES, DEFAULT_FIXTURE_STATE_PATH, isChaosMode, writeChaosMode } from './fixture/state.js';
 import { PRODUCTS as FIXTURE_PRODUCTS } from './fixture/products.js';
-import { extractorsForCollectors } from './extractors.js';
+import { extractorsForCollectors } from './evidence/extractors.js';
 
 const program = new Command();
 
@@ -82,7 +82,7 @@ program
         throw new Error(`no collector with id "${opts.collector}" in ${configPath}`);
       }
       const dbPath = resolveDbPath();
-      const { openLocalWriteStore } = await import('./local-store.js');
+      const { openLocalWriteStore } = await import('./store/local.js');
       const store = openLocalWriteStore(dbPath);
       closeStore = store.close;
       // Lazy: resolves (and can throw on a missing key) only when a
@@ -153,7 +153,7 @@ program
     try {
       const config = loadFleetConfig(resolveConfigPath(opts.config));
       const dbPath = resolveDbPath();
-      const { openLocalWriteStore } = await import('./local-store.js');
+      const { openLocalWriteStore } = await import('./store/local.js');
       const store = openLocalWriteStore(dbPath);
       // Lazy — see the `run` command's own comment on createLazyBrightDataClient.
       const client = createLazyBrightDataClient();
@@ -445,7 +445,7 @@ program
       process.stdout.write(`polygraph demo: chaos fixture on http://127.0.0.1:${fixturePort}\n`);
 
       const config = loadFleetConfig(configPath);
-      const { openLocalWriteStore } = await import('./local-store.js');
+      const { openLocalWriteStore } = await import('./store/local.js');
       const store = openLocalWriteStore(dbPath);
       // BrightDataClient's constructor throws if it can't resolve a real key
       // anywhere (env/file) — offline-safe here with a placeholder fallback:
