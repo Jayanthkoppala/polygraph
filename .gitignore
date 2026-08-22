@@ -1,5 +1,4 @@
 node_modules/
-reference/
 gates/
 *.sqlite
 *.sqlite-shm
