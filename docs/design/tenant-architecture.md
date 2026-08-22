@@ -123,7 +123,7 @@ weekly is a fleet monitor nobody uses. Sessions expire after 30 days and are
 sliding-renewed on any authenticated request more than 24 hours old (one write per
 day per session, not per request).
 
-**Cookie.** `HttpOnly` (no JS access), `Secure` (HTTPS-only — Fly gives us this for
+**Cookie.** `HttpOnly` (no JS access), `Secure` (HTTPS-only — Caddy terminates TLS for
 free), `SameSite=Lax` (survives the `/t/:token` → `/app` top-level redirect while
 blocking cross-site POSTs), `Path=/`.
 
@@ -1256,136 +1256,26 @@ an optimisation.**
 
 ## 6. Deploy
 
-> **This section is the one part of this document that was not carried out.** The
-> Fly.io deploy below was prepared — `Dockerfile`, `fly.toml`, `scripts/deploy-fly.sh`,
-> `scripts/verify-fly.sh`, and `test/deploy.config.test.ts` all exist and pass — but no
-> `fly deploy` was ever run, because always-on hosting costs money and that was declined.
-> What actually runs today: the full product self-hosted via `polygraph serve`, exposed
-> through a Cloudflare quick tunnel when it needs to be publicly reachable (a new random
-> hostname on every restart, so `POLYGRAPH_PUBLIC_ORIGIN` has to be set to match it), plus
-> a separate static Vercel build serving only the landing page and its in-browser sandbox.
-> Read everything below as a plan for whoever wants always-on hosting later.
+One always-on VM runs one process, with the SQLite database on its persistent
+disk. That constraint is the whole design: a second instance would mount its own
+copy and fork the ledger into two divergent hash chains.
 
-### Recommendation: Fly.io, single machine, one persistent volume.
+This section previously recommended Fly.io and specified a `fly.toml`. That
+deploy was prepared but never run, and the live instance is a Google Cloud VM
+behind Caddy instead. The Fly files have been removed; **[`deploy/README.md`](../../deploy/README.md)**
+is the authoritative deploy reference, including the environment contract.
 
-**Why Fly over the alternatives.**
+The invariants below outlive whichever host is in use:
 
-- **Volumes are a first-class primitive.** SQLite needs a real block device that
-  survives deploys. `fly volumes create` is one command and the mount is declarative
-  in `fly.toml`. Railway has volumes too and would work; Fly's single-machine +
-  volume shape is the more predictable of the two for exactly this topology.
-- **Automatic HTTPS on `*.fly.dev`.** Zero configuration, no cert management. This is
-  load-bearing, not cosmetic: the session cookie is `Secure`, so the whole auth
-  design requires TLS on the first request a judge makes.
-- **Secrets are proper secrets.** `fly secrets set POLYGRAPH_MASTER_KEY=…` stores it
-  encrypted and injects it as an environment variable at runtime. It never lands in
-  the image, the repo, or the volume — exactly what §2 requires.
-- **Cost.** One `shared-cpu-1x` 512 MB machine plus a 1 GB volume is a few dollars a
-  month, and well within the free allowance for a hackathon.
-- A plain VPS would also work and is cheaper at scale, but costs a half-day on TLS
-  (certbot), a systemd unit, and firewall rules — time this project does not have.
-
-**The critical constraint, stated loudly:** SQLite on a volume means **exactly one
-machine, always running**. Two machines would each mount their own volume and diverge
-into two different databases. A stopped machine means no cron and no monitoring —
-which for a monitoring product is a total outage.
-
-```toml
-# fly.toml
-app = "polygraph"
-primary_region = "iad"       # pick the region nearest Bright Data's API for latency
-
-[build]
-  dockerfile = "Dockerfile"
-
-[env]
-  PORT = "8080"
-  POLYGRAPH_DB = "/data/polygraph.sqlite"
-  POLYGRAPH_PUBLIC_ORIGIN = "https://polygraph.fly.dev"
-  POLYGRAPH_CONCURRENCY = "4"
-  # POLYGRAPH_HEAL_ENABLED is deliberately ABSENT. See §5.
-
-[mounts]
-  source = "polygraph_data"
-  destination = "/data"
-
-[http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = false    # a stopped machine means no cron. Never true.
-  auto_start_machines = true
-  min_machines_running = 1
-  max_machines_running = 1      # SQLite + volume = EXACTLY ONE. Never raise this.
-
-  [http_service.concurrency]
-    type = "requests"
-    soft_limit = 200
-    hard_limit = 250
-
-[[http_service.checks]]
-  interval = "30s"
-  timeout = "5s"
-  grace_period = "10s"
-  method = "GET"
-  path = "/healthz"             # new: returns 200 only if the master-key canary decrypts
-```
-
-```dockerfile
-# Dockerfile
-# better-sqlite3 is a native module. Build it in a full-toolchain stage, then
-# copy only the built artefact into a slim runtime image.
-FROM node:22-slim AS build
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 make g++ ca-certificates && rm -rf /var/lib/apt/lists/*
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY tsconfig.json ./
-COPY src ./src
-RUN npm run build && npm prune --omit=dev
-
-FROM node:22-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY package.json ./
-COPY web ./web
-# The volume mount point. `polygraph serve` runs migrations on boot (§8) and
-# refuses to start if the master-key canary does not decrypt (§2).
-VOLUME ["/data"]
-USER node
-EXPOSE 8080
-CMD ["node", "dist/index.js", "serve", "--host", "0.0.0.0", "--port", "8080"]
-```
-
-`web/` is copied because `server.ts`'s `defaultWebDir()` resolves `../web` relative to
-the module — which works from `dist/server.js` exactly as it does from `src/`
-(`server.ts:248-253`). No change needed.
-
-**Setup, in order:**
-
-```bash
-fly launch --no-deploy --name polygraph
-fly volumes create polygraph_data --size 1 --region iad
-fly secrets set POLYGRAPH_MASTER_KEY="$(openssl rand -base64 32)"
-fly deploy
-```
-
-**Backups.** The volume alone is not a backup. Add a daily job inside the process:
-`VACUUM INTO '/data/backup/polygraph-<date>.sqlite'` (a consistent snapshot with no
-write lock held), keeping 7 days. `fly volumes snapshots` also runs daily by default
-and is the off-machine layer.
-
-**Other headers** the public server must set on every response (none exist today):
-`Strict-Transport-Security: max-age=31536000`, `X-Content-Type-Options: nosniff`,
-`X-Frame-Options: DENY`, and a `Content-Security-Policy` of
-`default-src 'self'; script-src 'self' 'unsafe-inline'` (the dashboard is one inline
-HTML file today — tighten to a nonce when it stops being).
-
----
+1. **Exactly one instance, always running.** SQLite on a local disk cannot be
+   shared, and a stopped process means no scheduler tick — for a monitoring
+   product that is an outage, not a saving.
+2. **Persistent disk for `POLYGRAPH_DB`.** An ephemeral filesystem silently
+   destroys every tenant's encrypted key and the whole ledger on restart.
+3. **Secrets come from the environment, never a committed file.**
+   `POLYGRAPH_MASTER_KEY`, `BRIGHTDATA_API_KEY` and `POLYGRAPH_DEMO_GITHUB_TOKEN`
+   are set on the service.
+4. **Back up the database.** The ledger is the product's memory.
 
 ## 7. What stays single-tenant
 
@@ -1696,9 +1586,6 @@ confirmed.
    is deliberately called **outside** the per-migration transaction for this reason.
    Confirm before moving it.
 
-5. **Fly.io pricing and free-allowance specifics** are from general knowledge, not
-   checked against current pricing pages. The architectural reasoning (volumes,
-   automatic TLS, `fly secrets`) is stable; the dollar figures are not sourced.
 
 6. **`ledger.all()`'s real-world cost** is reasoned from the code
    (`server.ts:157` → full table scan + per-row `JSON.parse`), not measured. The

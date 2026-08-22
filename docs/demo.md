@@ -68,10 +68,10 @@ This does four things, in order:
    deliberately scoped to the local fixture only: the two real network collectors sit
    in the fleet.yaml for you to explore later, but never touch the network as part of
    the guaranteed-offline demo path.
-4. Starts the dashboard on `:4141`, serving the built React app (`app/dist/`) if the
-   build step has been run (it always is on the npm install), or the classic otherwise —
-   `demo` prints exactly which one it picked, and never crashes or serves a blank page
-   either way (see "Dashboard shows nothing" in Troubleshooting below).
+4. Starts the dashboard on `:4141`, serving the built React app (`app/dist/`). The
+   build step runs on `npm install`; if the app has not been built, the server says so
+   in plain HTML rather than crashing or serving a blank page (see "Dashboard shows
+   nothing" in Troubleshooting below).
 
 Open `http://127.0.0.1:4141` in a browser. With the React app built, you land on the
 landing page — click **Run the verification demo** (or go straight to
@@ -81,9 +81,6 @@ collectors sitting at "not checked"/"awaiting first run" (the cards are titled b
 collector's site name, so the terminal's `demo-store-products` is the "Fixture Catalog"
 card — nothing invented, they genuinely haven't run yet), plus
 a ledger stream on the right with a **Verify chain** button that runs a real chain walk.
-Without the React app built, the classic dashboard shows the same three cards in a
-single flat page — same underlying data, `GET /api/state`, just the older layout.
-
 Leave that terminal running. Everything below happens in a **second terminal**, in
 the same directory.
 
@@ -240,10 +237,9 @@ effect on the very next fetch with zero restart.
 
 - **Dashboard shows nothing:** `polygraph demo` must still be running in its own
   terminal — it's what's serving both the fixture site and the dashboard.
-- **Dashboard looks like the old flat page, not the new React UI:** the React app
-  hasn't been built on this machine — `demo`'s own startup output prints `polygraph:
-  app/dist not found — serving the classic dashboard. Run \`cd app && npm run build\`
-  for the new UI.` when this happens. Run that build command, then restart `demo`.
+- **Dashboard says "the web app hasn't been built yet":** exactly what it means — the
+  React app has not been built on this machine. Run `npm run build:app`, then restart
+  `demo`.
 - **`polygraph run` (no `--collector` filter) hangs or is slow:** you're touching the
   two real `books.toscrape.com` collectors, which need either a configured Web
   Unlocker zone or the `bdata` CLI on `PATH`. That's expected and outside the
