@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ArrowClockwise, CheckCircle, Clock, WarningCircle } from '@phosphor-icons/react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ArrowClockwise, CaretLeft, CaretRight, CheckCircle, Clock, WarningCircle } from '@phosphor-icons/react';
 import { Link } from 'react-router-dom';
 import {
   Table,
@@ -12,6 +12,7 @@ import {
 import { ApiError, fetchVisibleRepairReceipts, type RepairReceipt } from '@/lib/api';
 
 const POLL_INTERVAL_MS = 10_000;
+const PAGE_SIZE = 10;
 
 function compactHash(value: string) {
   return value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
@@ -41,6 +42,7 @@ export function ReceiptsPage() {
   const [receipts, setReceipts] = useState<RepairReceipt[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [page, setPage] = useState(1);
 
   const load = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
@@ -60,6 +62,16 @@ export function ReceiptsPage() {
     const id = window.setInterval(() => void load(), POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, [load]);
+
+  const orderedReceipts = useMemo(() => [...(receipts ?? [])].sort((left, right) => {
+    const leftTime = new Date(left.detected_at).valueOf();
+    const rightTime = new Date(right.detected_at).valueOf();
+    return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
+  }), [receipts]);
+  const totalPages = Math.max(1, Math.ceil(orderedReceipts.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const firstIndex = (currentPage - 1) * PAGE_SIZE;
+  const pageReceipts = orderedReceipts.slice(firstIndex, firstIndex + PAGE_SIZE);
 
   return (
     <main className="min-h-[calc(100svh-var(--poly-chrome-offset,0px))] bg-black/60 px-8 py-10 font-sans text-[#EDEDED] backdrop-blur-[2px]">
@@ -103,7 +115,7 @@ export function ReceiptsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {receipts.map((receipt) => (
+                {pageReceipts.map((receipt) => (
                   <TableRow key={`${receipt.source ?? 'customer'}:${receipt.id}`}>
                     <TableCell className="pl-5 font-mono text-xs text-[#A1A1AA]">{displayTime(receipt.detected_at)}</TableCell>
                     <TableCell>
@@ -141,6 +153,34 @@ export function ReceiptsPage() {
                 ))}
               </TableBody>
             </Table>
+          )}
+          {receipts !== null && orderedReceipts.length > 0 && (
+            <nav className="flex min-h-16 items-center justify-between border-t border-[#313131] bg-[#151515]/90 px-5" aria-label="Receipt pagination">
+              <p className="font-mono text-[11px] text-[#777] [font-variant-numeric:tabular-nums]">
+                {firstIndex + 1}–{Math.min(firstIndex + PAGE_SIZE, orderedReceipts.length)} of {orderedReceipts.length} receipts · {PAGE_SIZE} per page
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  aria-label="Previous receipts page"
+                  disabled={currentPage === 1}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  className="grid size-10 place-items-center rounded-lg border border-[#313131] bg-[#1B1B1B] text-[#D4D4D8] transition-[background-color,border-color,transform] duration-150 hover:border-[#4B4B4B] hover:bg-[#242424] active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-35 disabled:active:scale-100"
+                >
+                  <CaretLeft size={16} weight="bold" aria-hidden />
+                </button>
+                <span className="min-w-24 text-center font-mono text-[11px] text-[#A1A1AA] [font-variant-numeric:tabular-nums]">Page {currentPage} of {totalPages}</span>
+                <button
+                  type="button"
+                  aria-label="Next receipts page"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                  className="grid size-10 place-items-center rounded-lg border border-[#313131] bg-[#1B1B1B] text-[#D4D4D8] transition-[background-color,border-color,transform] duration-150 hover:border-[#4B4B4B] hover:bg-[#242424] active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-35 disabled:active:scale-100"
+                >
+                  <CaretRight size={16} weight="bold" aria-hidden />
+                </button>
+              </div>
+            </nav>
           )}
         </div>
       </section>
