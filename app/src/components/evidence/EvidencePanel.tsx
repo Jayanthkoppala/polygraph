@@ -17,6 +17,9 @@ import { translateEvidence, type EvidenceLine, type IdentityMismatch, type Canar
 import { VERDICT, toVerdictState } from '@/lib/verdict';
 import type { CollectorState } from '@/lib/api';
 
+/** The panel's section headings — one eyebrow treatment, said once. */
+const SECTION_HEADING = 'text-xs font-medium uppercase tracking-wide text-[#9B9B9B]';
+
 export function EvidencePanel({ collector }: { collector: CollectorState | null }) {
   if (!collector) {
     return (
@@ -61,7 +64,7 @@ export function EvidencePanel({ collector }: { collector: CollectorState | null 
       </header>
 
       <section aria-label="What we checked" className="flex flex-col gap-3">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-[#9B9B9B]">What we checked</h3>
+        <h3 className={SECTION_HEADING}>What we checked</h3>
         {lines.map((line) => (
           <EvidenceRow key={line.check} line={line} />
         ))}
@@ -69,7 +72,7 @@ export function EvidencePanel({ collector }: { collector: CollectorState | null 
 
       {identityMismatches.length > 0 && (
         <section aria-label="Requested vs received" className="flex flex-col gap-1">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-[#9B9B9B]">Requested vs received</h3>
+          <h3 className={SECTION_HEADING}>Requested vs received</h3>
           <table className="w-full border-collapse font-mono text-xs">
             <thead>
               <tr className="text-left text-[#9B9B9B]">
@@ -100,7 +103,7 @@ export function EvidencePanel({ collector }: { collector: CollectorState | null 
 
       {canaryOutcomes.length > 0 && (
         <section aria-label="Canary outcomes, per input" className="flex flex-col gap-1">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-[#9B9B9B]">Canary, per input</h3>
+          <h3 className={SECTION_HEADING}>Canary, per input</h3>
           <div className="flex items-center gap-1">
             {canaryOutcomes.map((o, i) => (
               <span
@@ -194,7 +197,7 @@ function HealCommand({ command }: { command: string }) {
 
   return (
     <section aria-label="Run it yourself" className="flex flex-col gap-1">
-      <h3 className="text-xs font-medium uppercase tracking-wide text-[#9B9B9B]">Run it yourself</h3>
+      <h3 className={SECTION_HEADING}>Run it yourself</h3>
       <button
         type="button"
         onClick={onCopy}

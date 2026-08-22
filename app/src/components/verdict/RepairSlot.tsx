@@ -15,6 +15,7 @@
  * it (`opacity-50` and friends drop it below AA); the sunken shadow alone
  * carries the disabled meaning.
  */
+import type { ReactNode } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { Wrench, Prohibit, Check, ArrowClockwise, SealCheck } from '@phosphor-icons/react';
 import { VERDICT, REFUSAL_WRONG_TARGET, type VerdictState } from '@/lib/verdict';
@@ -82,6 +83,46 @@ export interface RepairSlotProps {
   refusal?: string | null;
 }
 
+/**
+ * The two live controls in this slot — `Repair` (WRONG_SHAPE) and
+ * `Acknowledge` (UNEXPLAINED) — are one control with one accent swapped.
+ * The accent pairs stay written out as whole literal class names because
+ * Tailwind resolves arbitrary values by scanning source text: an
+ * interpolated `border-[${token}]` would never be emitted.
+ */
+const ACCENT_CLASS = {
+  WRONG_SHAPE: 'border-[var(--color-verdict-shape)] text-[var(--color-verdict-shape)]',
+  UNEXPLAINED: 'border-[var(--color-verdict-suspect)] text-[var(--color-verdict-suspect)]',
+} as const;
+
+const RAISED_ACTION =
+  'bg-[#272727] shadow-[var(--shadow-e2)] hover:bg-[#313131] active:translate-y-px active:shadow-[var(--shadow-e0)] ' +
+  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]';
+
+function RaisedAction({
+  state,
+  accentClass,
+  onClick,
+  children,
+}: {
+  state: VerdictState;
+  accentClass: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      data-verdict-state={state}
+      data-repair-elevation="raised"
+      onClick={onClick}
+      className={`${SLOT_BOX} ${accentClass} ${RAISED_ACTION}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function RepairSlot({
   state,
   collectorId,
@@ -115,18 +156,10 @@ export function RepairSlot({
 
   if (state === 'WRONG_SHAPE') {
     return (
-      <button
-        type="button"
-        data-verdict-state={state}
-        data-repair-elevation="raised"
-        onClick={() => onRepair(collectorId)}
-        className={`${SLOT_BOX} border-[var(--color-verdict-shape)] bg-[#272727] text-[var(--color-verdict-shape)]
-                    shadow-[var(--shadow-e2)] hover:bg-[#313131] active:translate-y-px active:shadow-[var(--shadow-e0)]
-                    focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]`}
-      >
+      <RaisedAction state={state} accentClass={ACCENT_CLASS.WRONG_SHAPE} onClick={() => onRepair(collectorId)}>
         <Wrench size={12} weight="regular" aria-hidden />
         Repair
-      </button>
+      </RaisedAction>
     );
   }
 
@@ -148,18 +181,10 @@ export function RepairSlot({
 
   if (state === 'UNEXPLAINED') {
     return (
-      <button
-        type="button"
-        data-verdict-state={state}
-        data-repair-elevation="raised"
-        onClick={() => onAcknowledge(collectorId)}
-        className={`${SLOT_BOX} border-[var(--color-verdict-suspect)] bg-[#272727] text-[var(--color-verdict-suspect)]
-                    shadow-[var(--shadow-e2)] hover:bg-[#313131] active:translate-y-px active:shadow-[var(--shadow-e0)]
-                    focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]`}
-      >
+      <RaisedAction state={state} accentClass={ACCENT_CLASS.UNEXPLAINED} onClick={() => onAcknowledge(collectorId)}>
         <Check size={12} weight="regular" aria-hidden />
         Acknowledge
-      </button>
+      </RaisedAction>
     );
   }
 

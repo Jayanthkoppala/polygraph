@@ -114,6 +114,18 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
     if (phase === 'idle') setPendingMode(null);
   }, [phase]);
 
+  // Both break buttons below (the plain one and the alert-dialog-wrapped
+  // one) are the same control — only the confirmation wrapper differs, so
+  // the shared attributes and the label state live in one place.
+  const breakButtonProps = (b: (typeof BUTTONS)[number]) => ({
+    type: 'button' as const,
+    disabled: busy,
+    'data-testid': `sandbox-break-${b.mode}`,
+    className: BREAK_BUTTON_CLASS,
+  });
+  const breakButtonLabel = (b: (typeof BUTTONS)[number]) =>
+    pendingMode === b.mode ? (phase === 'breaking' ? b.breakingLabel : 'Re-verifying…') : b.label;
+
   const proofLine = buildProofLine(fleet, targetId, sandbox.mode);
   const target = fleet.find((collector) => collector.id === targetId);
 
@@ -269,14 +281,7 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
                 b.mode === 'wrong_entity' ? (
                   <AlertDialog key={b.mode}>
                     <AlertDialogTrigger asChild>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        data-testid={`sandbox-break-${b.mode}`}
-                        className={BREAK_BUTTON_CLASS}
-                      >
-                        {pendingMode === b.mode ? (phase === 'breaking' ? b.breakingLabel : 'Re-verifying…') : b.label}
-                      </button>
+                      <button {...breakButtonProps(b)}>{breakButtonLabel(b)}</button>
                     </AlertDialogTrigger>
                     <AlertDialogContent>
                       <AlertDialogHeader>
@@ -295,15 +300,8 @@ export function SandboxPanel({ sandbox }: { sandbox: UseSandboxEngineResult }) {
                     </AlertDialogContent>
                   </AlertDialog>
                 ) : (
-                  <button
-                    key={b.mode}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => handleClick(b.mode)}
-                    data-testid={`sandbox-break-${b.mode}`}
-                    className={BREAK_BUTTON_CLASS}
-                  >
-                    {pendingMode === b.mode ? (phase === 'breaking' ? b.breakingLabel : 'Re-verifying…') : b.label}
+                  <button key={b.mode} onClick={() => handleClick(b.mode)} {...breakButtonProps(b)}>
+                    {breakButtonLabel(b)}
                   </button>
                 ),
               )}

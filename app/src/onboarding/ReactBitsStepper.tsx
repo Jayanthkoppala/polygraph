@@ -96,6 +96,11 @@ export default function Stepper({
     updateStep(totalSteps + 1);
   };
 
+  const handleStepClick = (clicked: number) => {
+    setDirection(clicked > currentStep ? 1 : -1);
+    updateStep(clicked);
+  };
+
   return (
     <div
       className="flex min-h-full flex-1 flex-col items-center justify-center p-4"
@@ -119,20 +124,14 @@ export default function Stepper({
                   renderStepIndicator({
                     step: stepNumber,
                     currentStep,
-                    onStepClick: clicked => {
-                      setDirection(clicked > currentStep ? 1 : -1);
-                      updateStep(clicked);
-                    }
+                    onStepClick: handleStepClick
                   })
                 ) : (
                   <StepIndicator
                     step={stepNumber}
                     disableStepIndicators={disableStepIndicators}
                     currentStep={currentStep}
-                    onClickStep={clicked => {
-                      setDirection(clicked > currentStep ? 1 : -1);
-                      updateStep(clicked);
-                    }}
+                    onClickStep={handleStepClick}
                   />
                 )}
                 {isNotLastStep && <StepConnector isComplete={currentStep > stepNumber} />}
@@ -156,11 +155,9 @@ export default function Stepper({
               {currentStep !== 1 && (
                 <button
                   onClick={handleBack}
-                  className={`duration-350 rounded-sm px-2 py-1 transition ${
-                    currentStep === 1
-                      ? 'pointer-events-none opacity-40 text-[#8B949E]'
-                      : 'text-[#8B949E] hover:text-[#EDEDED]'
-                  }`}
+                  // Only rendered when `currentStep !== 1`, so there is no
+                  // disabled variant to branch on here.
+                  className="duration-350 rounded-sm px-2 py-1 transition text-[#8B949E] hover:text-[#EDEDED]"
                   {...backButtonProps}
                 >
                   {backButtonText}
@@ -453,12 +450,12 @@ interface StepConnectorProps {
   isComplete: boolean;
 }
 
-function StepConnector({ isComplete }: StepConnectorProps) {
-  const lineVariants: Variants = {
-    incomplete: { width: 0, backgroundColor: 'transparent' },
-    complete: { width: '100%', backgroundColor: '#4ADE80' } // --color-verdict-pass, see note above
-  };
+const lineVariants: Variants = {
+  incomplete: { width: 0, backgroundColor: 'transparent' },
+  complete: { width: '100%', backgroundColor: '#4ADE80' } // --color-verdict-pass, see note above
+};
 
+function StepConnector({ isComplete }: StepConnectorProps) {
   return (
     <div className="relative mx-2 h-0.5 flex-1 overflow-hidden rounded bg-[var(--color-line)]">
       <motion.div
@@ -472,9 +469,7 @@ function StepConnector({ isComplete }: StepConnectorProps) {
   );
 }
 
-interface CheckIconProps extends React.SVGProps<SVGSVGElement> {}
-
-function CheckIcon(props: CheckIconProps) {
+function CheckIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg {...props} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
       <motion.path

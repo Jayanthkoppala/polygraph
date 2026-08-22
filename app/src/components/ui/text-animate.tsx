@@ -93,6 +93,23 @@ interface TextAnimateProps extends Omit<MotionProps, "children"> {
   accessible?: boolean
 }
 
+/** How `children` is broken into individually animated spans. `word` keeps
+ * the whitespace runs as their own segments so `whitespace-pre` preserves
+ * the original spacing. */
+function splitSegments(text: string, by: AnimationType): string[] {
+  switch (by) {
+    case "word":
+      return text.split(/(\s+)/)
+    case "character":
+      return text.split("")
+    case "line":
+      return text.split("\n")
+    case "text":
+    default:
+      return [text]
+  }
+}
+
 const staggerTimings: Record<AnimationType, number> = {
   text: 0.06,
   word: 0.05,
@@ -115,16 +132,6 @@ const defaultContainerVariants = {
       staggerChildren: 0.05,
       staggerDirection: -1,
     },
-  },
-}
-
-const defaultItemVariants: Variants = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-  },
-  exit: {
-    opacity: 0,
   },
 }
 
@@ -343,23 +350,12 @@ const TextAnimateBase = ({
 }: TextAnimateProps) => {
   const MotionComponent = motionElements[Component]
 
-  let segments: string[] = []
-  switch (by) {
-    case "word":
-      segments = children.split(/(\s+)/)
-      break
-    case "character":
-      segments = children.split("")
-      break
-    case "line":
-      segments = children.split("\n")
-      break
-    case "text":
-    default:
-      segments = [children]
-      break
-  }
+  const segments = splitSegments(children, by)
+  const staggerChildren = duration / segments.length
+  const exitTransition = { staggerChildren, staggerDirection: -1 }
 
+  // `animation` always has a value (destructuring default), so the preset
+  // branch is the fallback — a caller-supplied `variants` wins over it.
   const finalVariants = variants
     ? {
         container: {
@@ -369,41 +365,27 @@ const TextAnimateBase = ({
             transition: {
               opacity: { duration: 0.01, delay },
               delayChildren: delay,
-              staggerChildren: duration / segments.length,
+              staggerChildren,
             },
           },
-          exit: {
-            opacity: 0,
-            transition: {
-              staggerChildren: duration / segments.length,
-              staggerDirection: -1,
-            },
-          },
+          exit: { opacity: 0, transition: exitTransition },
         },
         item: variants,
       }
-    : animation
-      ? {
-          container: {
-            ...defaultItemAnimationVariants[animation].container,
-            show: {
-              ...defaultItemAnimationVariants[animation].container.show,
-              transition: {
-                delayChildren: delay,
-                staggerChildren: duration / segments.length,
-              },
-            },
-            exit: {
-              ...defaultItemAnimationVariants[animation].container.exit,
-              transition: {
-                staggerChildren: duration / segments.length,
-                staggerDirection: -1,
-              },
-            },
+    : {
+        container: {
+          ...defaultItemAnimationVariants[animation].container,
+          show: {
+            ...defaultItemAnimationVariants[animation].container.show,
+            transition: { delayChildren: delay, staggerChildren },
           },
-          item: defaultItemAnimationVariants[animation].item,
-        }
-      : { container: defaultContainerVariants, item: defaultItemVariants }
+          exit: {
+            ...defaultItemAnimationVariants[animation].container.exit,
+            transition: exitTransition,
+          },
+        },
+        item: defaultItemAnimationVariants[animation].item,
+      }
 
   return (
     <AnimatePresence mode="popLayout">
@@ -426,7 +408,6 @@ const TextAnimateBase = ({
             custom={i * staggerTimings[by]}
             className={cn(
               by === "line" ? "block" : "inline-block whitespace-pre",
-              by === "character" && "",
               segmentClassName
             )}
             aria-hidden={accessible ? true : undefined}
