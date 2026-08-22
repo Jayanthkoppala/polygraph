@@ -1,7 +1,7 @@
 {
   "name": "polygraph-data",
   "version": "0.1.0",
-  "description": "Evidence gate for scraper fleets — independently re-verifies a collector's output and only lets a repair through when it has live proof the repair is warranted",
+  "description": "Evidence gate for scraper fleets \u2014 independently re-verifies a collector's output and only lets a repair through when it has live proof the repair is warranted",
   "keywords": [
     "scraping",
     "web-scraping",
@@ -24,20 +24,17 @@
   },
   "type": "module",
   "bin": {
-    "polygraph": "./dist/index.js",
-    "polygraph-data": "./dist/index.js"
+    "polygraph": "./dist/index.js"
   },
   "files": [
     "dist/",
     "app/dist/",
-    "docs/AI-ASSISTANCE.md",
-    "docs/MCP.md",
-    "docs/demo.md",
+    "docs/",
     "README.md",
     "LICENSE"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc",
@@ -51,8 +48,8 @@
     "demo": "tsx src/index.ts demo",
     "mcp": "tsx src/index.ts mcp",
     "serve": "tsx src/index.ts serve",
-    "progress": "node scripts/progress.mjs",
-    "prepublishOnly": "npm run build:all"
+    "prepublishOnly": "npm run build:all",
+    "typecheck:all": "npm run typecheck && npm --prefix app run typecheck"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

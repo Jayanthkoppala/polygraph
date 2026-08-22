@@ -31,9 +31,7 @@ intended design. We are not claiming a bug, and every step below is reproducible
 ## What we ran
 
 ```
-bdata scraper heal c_mt1dsu9fdtdtx3uhf \
-  "Also capture each story's rank position on the page as a number field named rank." \
-  --auto-approve
+bdata scraper heal c_mt1dsu9fdtdtx3uhf "Also capture each story's rank position on the page as a number field named rank." --auto-approve
 ```
 
 The collector's production schema before the heal had five content fields — `title`,
@@ -262,19 +260,15 @@ Three deliberate limits in that design:
 
 ```
 # 1. Read the collector's production schema. Note the field names.
-curl -s -H "Authorization: Bearer $(cat ~/.brightdata_admin_key)" \
-  https://api.brightdata.com/dca/collectors_list
+curl -s -H "Authorization: Bearer $(cat ~/.brightdata_admin_key)" https://api.brightdata.com/dca/collectors_list
 
 # 2. Heal it, asking for a field that does not exist yet.
-bdata scraper heal c_mt1dsu9fdtdtx3uhf \
-  "Also capture each story's rank position on the page as a number field named rank." \
-  --auto-approve
+bdata scraper heal c_mt1dsu9fdtdtx3uhf "Also capture each story's rank position on the page as a number field named rank." --auto-approve
 
 # 3. Confirm the envelope reports success: status "done", user_approval completed.
 
 # 4. Read the production schema again. Compare against step 1.
-curl -s -H "Authorization: Bearer $(cat ~/.brightdata_admin_key)" \
-  https://api.brightdata.com/dca/collectors_list
+curl -s -H "Authorization: Bearer $(cat ~/.brightdata_admin_key)" https://api.brightdata.com/dca/collectors_list
 
 # 5. Run the collector and inspect the returned rows for the field.
 bdata scraper run c_mt1dsu9fdtdtx3uhf https://news.ycombinator.com

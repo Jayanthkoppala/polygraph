@@ -48,8 +48,7 @@ Every claim above comes from one endpoint. Re-read it before relying on the pin 
 collector can be deleted or renamed out from under this file:
 
 ```
-curl -s -H "Authorization: Bearer $(cat ~/.brightdata_admin_key)" \
-  https://api.brightdata.com/dca/collectors_list
+curl -s -H "Authorization: Bearer $(cat ~/.brightdata_admin_key)" https://api.brightdata.com/dca/collectors_list
 ```
 
 Last verified 2026-08-20: `total: 2`, both IDs above present, `c_mt1dsu9fdtdtx3uhf`

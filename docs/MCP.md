@@ -26,10 +26,7 @@ server independent of whichever project directory the coding agent currently has
 ## Codex CLI
 
 ```bash
-codex mcp add polygraph \
-  --env POLYGRAPH_CONFIG=/absolute/path/to/fleet.yaml \
-  --env POLYGRAPH_DB=/absolute/path/to/polygraph.sqlite \
-  -- node /absolute/path/to/polygraph/dist/index.js mcp
+codex mcp add polygraph --env POLYGRAPH_CONFIG=/absolute/path/to/fleet.yaml --env POLYGRAPH_DB=/absolute/path/to/polygraph.sqlite -- node /absolute/path/to/polygraph/dist/index.js mcp
 ```
 
 Then verify the registration with `codex mcp list` and restart any already-open Codex session so it discovers the
@@ -38,10 +35,7 @@ new tools.
 ## Claude Code
 
 ```bash
-claude mcp add --scope user \
-  -e POLYGRAPH_CONFIG=/absolute/path/to/fleet.yaml \
-  -e POLYGRAPH_DB=/absolute/path/to/polygraph.sqlite \
-  polygraph -- node /absolute/path/to/polygraph/dist/index.js mcp
+claude mcp add --scope user -e POLYGRAPH_CONFIG=/absolute/path/to/fleet.yaml -e POLYGRAPH_DB=/absolute/path/to/polygraph.sqlite polygraph -- node /absolute/path/to/polygraph/dist/index.js mcp
 ```
 
 ## Other local MCP clients
