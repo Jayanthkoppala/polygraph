@@ -22,10 +22,10 @@ export interface DemoMissionConfig {
   pollDeadlineMs?: number;
 }
 export interface DemoGithubClient { dispatch(version: 'v1' | 'v2', generation: string, missionId: string): Promise<void>; waitForMarker(version: 'v1' | 'v2', generation: string, missionId: string): Promise<void>; workflowUrl: string }
-export interface DemoMissionEvent { step: string; detail: string; at: string }
-export interface DemoMission { id: string; scene: Scene; status: Status; steps: readonly string[]; activeStep: number; events: DemoMissionEvent[]; evidence: { fixture_repo: string; v1_url: string; v2_url: string | null; workflow_url: string; live_fixture_url: string; marker_url: string | null; collector_url: string; collector_id: string; commit_sha: null; run_id: string | null; baseline_run_id: string | null; broken_run_id: string | null; proof_run_id: string | null; heal_run_id: string | null }; last_error: string | null }
+interface DemoMissionEvent { step: string; detail: string; at: string }
+interface DemoMission { id: string; scene: Scene; status: Status; steps: readonly string[]; activeStep: number; events: DemoMissionEvent[]; evidence: { fixture_repo: string; v1_url: string; v2_url: string | null; workflow_url: string; live_fixture_url: string; marker_url: string | null; collector_url: string; collector_id: string; commit_sha: null; run_id: string | null; baseline_run_id: string | null; broken_run_id: string | null; proof_run_id: string | null; heal_run_id: string | null }; last_error: string | null }
 export interface DemoBrightDataClient { trigger(collectorId: string, inputs: unknown[]): Promise<string>; pollDataset(jobId: string): Promise<DatasetPollResult>; refactorTemplate(collectorId: string, prompt: string, customInput?: unknown[]): Promise<unknown>; pollRefactorTemplateProgress(collectorId: string): Promise<RefactorProgress>; resumeAutomationJob(collectorId: string, opts: { message: boolean; autoSave: boolean }): Promise<void> }
-export interface DemoMissionDeps { config: DemoMissionConfig; github: DemoGithubClient; brightData: DemoBrightDataClient; now?: () => string; id?: () => string; nextGeneration?: () => string }
+interface DemoMissionDeps { config: DemoMissionConfig; github: DemoGithubClient; brightData: DemoBrightDataClient; now?: () => string; id?: () => string; nextGeneration?: () => string }
 interface Runtime { scrapes: number; heals: number; settled: Promise<void> }
 const fulfilled = Promise.resolve();
 function assertRows(result: DatasetPollResult, label: string): Record<string, unknown>[] { if (result.ambiguous || result.rows.length === 0) throw new Error(`${label} returned no decisive rows`); return result.rows; }

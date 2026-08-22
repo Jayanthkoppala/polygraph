@@ -7,7 +7,8 @@ import { runFleet, type RunnerContext } from '../loop/runner.js';
 import { createServer } from '../http/server.js';
 import { DEFAULT_WATCH_HOST, resolveWatchHost } from '../http/watch-host.js';
 import { extractorsForCollectors } from '../evidence/extractors.js';
-import { resolveDbPath, resolveConfigPath, formatRunLines } from './shared.js';
+import { resolveDbPath, resolveConfigPath, resolvePort, formatRunLines } from './shared.js';
+import { listenAsync } from '../http/listen.js';
 
 /** Registers `polygraph watch` on the root program. */
 export function register(program: Command): void {
@@ -43,7 +44,7 @@ export function register(program: Command): void {
         };
 
         const server = createServer({ config, ledger: store.ledger, governor: store.governor });
-        const port = Number.parseInt(opts.port ?? String(DEFAULT_WATCH_PORT), 10) || DEFAULT_WATCH_PORT;
+        const port = resolvePort(opts.port, DEFAULT_WATCH_PORT);
         const { host, warnNonLoopback } = resolveWatchHost(opts.host);
         if (warnNonLoopback) {
           process.stderr.write(
@@ -51,10 +52,7 @@ export function register(program: Command): void {
           );
         }
 
-        await new Promise<void>((resolve, reject) => {
-          server.once('error', reject);
-          server.listen(port, host, () => resolve());
-        });
+        await listenAsync(server, port, host);
         process.stdout.write(`polygraph watch: dashboard on http://${host}:${port}\n`);
 
         // One scheduled task per collector, each running a single-collector

@@ -8,7 +8,8 @@ import { DEFAULT_WATCH_HOST } from '../http/watch-host.js';
 import { createFixtureServer } from '../fixture/server.js';
 import { DEFAULT_FIXTURE_STATE_PATH, writeChaosMode } from '../fixture/state.js';
 import { extractorsForCollectors } from '../evidence/extractors.js';
-import { resolveDbPath, resolveConfigPath, formatRunLines } from './shared.js';
+import { resolveDbPath, resolveConfigPath, resolvePort, formatRunLines } from './shared.js';
+import { listenAsync } from '../http/listen.js';
 import { stringify } from 'yaml';
 import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { PRODUCTS as FIXTURE_PRODUCTS } from '../fixture/products.js';
@@ -117,9 +118,8 @@ export function register(program: Command): void {
     .action(async (opts: { config?: string; port?: string; fixturePort?: string }) => {
       try {
         const configPath = resolveConfigPath(opts.config);
-        const dashboardPort = Number.parseInt(opts.port ?? String(DEFAULT_WATCH_PORT), 10) || DEFAULT_WATCH_PORT;
-        const fixturePort =
-          Number.parseInt(opts.fixturePort ?? String(DEFAULT_DEMO_FIXTURE_PORT), 10) || DEFAULT_DEMO_FIXTURE_PORT;
+        const dashboardPort = resolvePort(opts.port, DEFAULT_WATCH_PORT);
+        const fixturePort = resolvePort(opts.fixturePort, DEFAULT_DEMO_FIXTURE_PORT);
         const dbPath = resolveDbPath();
 
         // A demo is a clean-slate reset by design: seed a fresh fleet.yaml,
@@ -135,10 +135,7 @@ export function register(program: Command): void {
         writeChaosMode(DEFAULT_FIXTURE_STATE_PATH, 'healthy');
 
         const fixtureServer = createFixtureServer({ statePath: DEFAULT_FIXTURE_STATE_PATH });
-        await new Promise<void>((resolve, reject) => {
-          fixtureServer.once('error', reject);
-          fixtureServer.listen(fixturePort, '127.0.0.1', () => resolve());
-        });
+        await listenAsync(fixtureServer, fixturePort, '127.0.0.1');
         process.stdout.write(`polygraph demo: chaos fixture on http://127.0.0.1:${fixturePort}\n`);
 
         const config = loadFleetConfig(configPath);
@@ -184,10 +181,7 @@ export function register(program: Command): void {
         process.stdout.write('\n');
 
         const dashboardServer = createServer({ config, ledger: store.ledger, governor: store.governor });
-        await new Promise<void>((resolve, reject) => {
-          dashboardServer.once('error', reject);
-          dashboardServer.listen(dashboardPort, DEFAULT_WATCH_HOST, () => resolve());
-        });
+        await listenAsync(dashboardServer, dashboardPort, DEFAULT_WATCH_HOST);
         process.stdout.write(`polygraph demo: dashboard on http://${DEFAULT_WATCH_HOST}:${dashboardPort}\n\n`);
         process.stdout.write('In another terminal, drive the chaos narrative — see docs/demo.md for the full script:\n');
         process.stdout.write(`  polygraph chaos price_dead && polygraph run --collector demo-store-products\n`);

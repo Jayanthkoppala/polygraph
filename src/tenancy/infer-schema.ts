@@ -115,7 +115,7 @@ export function fieldNamesFromOutputSchema(raw: unknown): string[] {
   return [];
 }
 
-export interface InferredSchema {
+interface InferredSchema {
   /** Field names recognised from `output_schema` — [] when absent, present
    * but empty, or an unrecognised shape. Types/required/default_value are
    * NEVER derivable here (§4: "Inference alone is therefore insufficient

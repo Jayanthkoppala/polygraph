@@ -59,7 +59,7 @@ export class TenantKeyVerificationUnavailableError extends Error {
   }
 }
 
-export interface VerifiedKeySave {
+interface VerifiedKeySave {
   status: TenantSecretStatus;
   /** The raw `GET /dca/collectors_list` body from the SAME call that
    * verified the key — pass straight to `infer-schema.ts`'s
@@ -71,7 +71,7 @@ export interface VerifiedKeySave {
   collectorsListResponse: unknown;
 }
 
-export interface SaveVerifiedTenantKeyOptions {
+interface SaveVerifiedTenantKeyOptions {
   /** Injectable fetch implementation, for tests — never hits the network. */
   fetchImpl?: typeof fetch;
   baseUrl?: string;

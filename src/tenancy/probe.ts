@@ -25,7 +25,7 @@ export class ConsentRequiredError extends Error {
   }
 }
 
-export interface ProbeConsent {
+interface ProbeConsent {
   /** Must be explicitly `true` — omission or `false` refuses to run. */
   granted: boolean;
 }
@@ -64,7 +64,7 @@ export async function probeCollector(
   return brightdataAdapter.run(asCollector, collector.canary_inputs, ctx);
 }
 
-export interface ProbedField {
+interface ProbedField {
   type: string;
   sample?: unknown;
   default_value?: unknown;

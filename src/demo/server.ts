@@ -6,7 +6,7 @@ import { readRequestBody, RequestBodyTooLargeError } from '../http/server.js';
 import { serveStaticOrSpa } from '../http/static.js';
 import { GithubFixtureClient } from './github.js';
 import { DemoMissionBudgetError, DemoMissionConflictError, DemoMissionLeaseError, DemoMissionNotFoundError, DemoMissionService, type DemoBrightDataClient, type DemoMissionConfig } from './mission.js';
-export interface DemoServerDeps { config?: DemoMissionConfig; service?: DemoMissionService; appDir?: string }
+interface DemoServerDeps { config?: DemoMissionConfig; service?: DemoMissionService; appDir?: string }
 export function readDemoMissionConfig(env: NodeJS.ProcessEnv = process.env): DemoMissionConfig | undefined {
   if (env.POLYGRAPH_DEMO_LIVE !== '1') return undefined;
   if (env.POLYGRAPH_HEAL_ENABLED !== '1' || env.POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE !== '1') return undefined;

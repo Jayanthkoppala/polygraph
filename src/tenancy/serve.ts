@@ -22,8 +22,9 @@ import { startScheduler, type Dispatcher } from './scheduler.js';
 import { createDemoMissionService, readDemoMissionConfig } from '../demo/server.js';
 import type { DemoMissionService } from '../demo/mission.js';
 import { createGoogleAuthVerifier, type GoogleAuthVerifier } from './google-auth.js';
+import { listenAsync } from '../http/listen.js';
 
-export interface StartServerOptions {
+interface StartServerOptions {
   dbPath?: string;
   port?: number;
   host?: string;
@@ -135,10 +136,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Runnin
     baseUrl: opts.baseUrl,
   });
 
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, host, () => resolve());
-  });
+  await listenAsync(server, port, host);
 
   // `port` may have been requested as 0 (ephemeral — "OS picks one", used by
   // tests). The actually-bound port only exists on `server.address()` AFTER

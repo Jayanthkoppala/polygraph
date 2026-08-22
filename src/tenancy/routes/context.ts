@@ -5,7 +5,7 @@ import { buildTenantContext } from '../../core/config.js';
 import { BrightDataClient } from '../../brightdata/client.js';
 import { resolveSession, checkCsrf, type Session } from '../auth.js';
 import { scopeFor, type TenantScope } from '../scope.js';
-import { ScopedSecrets } from '../secrets.js';
+import { ScopedSecrets, revealPlaintext } from '../secrets.js';
 import type { DemoMissionService } from '../../demo/mission.js';
 import { type GoogleAuthVerifier } from '../google-auth.js';
 /** Everything a route handler needs, resolved once per request. */
@@ -88,6 +88,33 @@ export function scopeWithSecrets(db: Database.Database, tenantId: string, genesi
   const scope = scopeFor(db, tenantId, genesisHash);
   scope.secrets = new ScopedSecrets(db, tenantId, deps.masterKey, deps.previousMasterKey);
   return scope;
+}
+
+/** A Bright Data client on THIS tenant's own revealed key — the shape every
+ * route that talks to Bright Data on the customer's behalf needs (key save,
+ * infer, probe, connect). Writes the 400 and returns null when the tenant
+ * has not saved a key yet, so the caller's next line is its real work. */
+export function tenantBrightDataClient(scope: TenantScope, deps: TenantServerDeps, res: ServerResponse): BrightDataClient | null {
+  const apiKey = revealPlaintext(scope.secrets!);
+  if (!apiKey) {
+    sendJson(res, 400, { error: 'no Bright Data key saved for this account yet' });
+    return null;
+  }
+  return new BrightDataClient({ apiKey, fetchImpl: deps.fetchImpl, baseUrl: deps.baseUrl });
+}
+
+/** The per-tenant collector cap. Connecting or re-drafting a collector that
+ * is already on the list never counts against it, so only genuinely new
+ * ones can be refused. Writes the 400 and returns false when over cap. */
+export function withinCollectorCap(scope: TenantScope, tenantRow: TenantRow, collectorId: string, res: ServerResponse): boolean {
+  const existing = scope.collectors.list();
+  const cap = tenantRow.max_collectors || MAX_COLLECTORS_DEFAULT;
+  const alreadyListed = existing.some((collector) => collector.collector_id === collectorId);
+  if (!alreadyListed && existing.length >= cap) {
+    sendJson(res, 400, { error: `collector limit (${cap}) reached for this account` });
+    return false;
+  }
+  return true;
 }
 
 export function loadPublicTenantRow(db: Database.Database): TenantRow | undefined {
@@ -182,5 +209,3 @@ export async function buildDashboardState(
   return buildFleetState(config, ctx.ledger, ctx.governor, nowIso);
 }
 
-// ---------------------------------------------------------------------------
-// The dispatcher

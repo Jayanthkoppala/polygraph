@@ -41,7 +41,7 @@ import type { Cause, Evidence } from '../core/types.js';
 import { bdataHealCommand } from '../loop/runner.js';
 import { serveStaticOrSpa, hasBuiltApp } from './static.js';
 
-export interface ServerDeps {
+interface ServerDeps {
   config: FleetConfig;
   ledger: Ledger;
   governor: Governor;
@@ -97,21 +97,22 @@ function deriveDisplayMetrics(evidence: unknown): {
   fillRates: Record<string, number> | null;
 } {
   const list = Array.isArray(evidence) ? (evidence as Evidence[]) : [];
-
-  let rows: number | null = null;
   const identityEvidence = list.find((e) => e.check === 'identity');
+  const contractEvidence = list.find((e) => e.check === 'contract');
+
+  // Identity's own compared-row count first; failing that, the row count the
+  // contract check happens to state in its human-readable detail string.
+  let rows: number | null = null;
   const comparedRaw = identityEvidence?.metrics?.compared;
   if (typeof comparedRaw === 'number') {
     rows = comparedRaw;
-  } else {
-    const contractEvidence = list.find((e) => e.check === 'contract');
-    const match = typeof contractEvidence?.detail === 'string' ? /across (\d+) row/.exec(contractEvidence.detail) : null;
+  } else if (typeof contractEvidence?.detail === 'string') {
+    const match = /across (\d+) row/.exec(contractEvidence.detail);
     if (match) rows = Number.parseInt(match[1], 10);
   }
 
   let fillPct: number | null = null;
   let fillRatesOut: Record<string, number> | null = null;
-  const contractEvidence = list.find((e) => e.check === 'contract');
   const fillRates = contractEvidence?.metrics?.fillRates;
   if (fillRates && typeof fillRates === 'object') {
     fillRatesOut = fillRates as Record<string, number>;

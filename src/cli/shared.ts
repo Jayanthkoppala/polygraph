@@ -39,6 +39,12 @@ export function formatRunLines(r: CollectorRunSummary): string[] {
   return lines;
 }
 
+/** A `--port`-style option value. Commander hands these through as raw
+ * strings; anything that is not a positive number falls back. */
+export function resolvePort(raw: string | undefined, fallback: number): number {
+  return Number.parseInt(raw ?? String(fallback), 10) || fallback;
+}
+
 export function stub(commandLabel: string) {
   return () => {
     process.stderr.write(`polygraph ${commandLabel}: not implemented\n`);

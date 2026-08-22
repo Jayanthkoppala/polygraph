@@ -31,12 +31,12 @@ export function hashToken(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
 }
 
-export interface CreateTenantInput {
+interface CreateTenantInput {
   displayName: string;
   recoveryEmail?: string;
 }
 
-export interface IssuedToken {
+interface IssuedToken {
   tenantId: string;
   token: string;
 }

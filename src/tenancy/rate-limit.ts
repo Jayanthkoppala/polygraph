@@ -11,7 +11,7 @@ import type Database from 'better-sqlite3';
  * DDTHH>` for an hourly window) — this module doesn't know or care what the
  * window boundary means, only how to count within it.
  */
-export interface RateLimitResult {
+interface RateLimitResult {
   allowed: boolean;
   count: number;
   limit: number;

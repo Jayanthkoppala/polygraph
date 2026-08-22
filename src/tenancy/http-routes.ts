@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type Database from 'better-sqlite3';
 import { sendJson, RequestBodyTooLargeError } from '../http/server.js';
 import { serveStaticOrSpa } from '../http/static.js';
 import { createSession } from './auth.js';
@@ -34,7 +33,11 @@ export async function handleTenantRequest(req: IncomingMessage, res: ServerRespo
         return;
       }
 
-      if (await handleSessionRoutes(ctx, session, tenantRowWriter)) return;
+      // The `/api/` prefix is terminal: `handleSessionRoutes` answers every
+      // path under it, 404-ing the ones it does not recognise, so an API
+      // request never falls through to the SPA below.
+      await handleSessionRoutes(ctx, session, tenantRowWriter);
+      return;
     }
 
     if (ctx.method === 'GET') {

@@ -277,7 +277,7 @@ export class TenantScope {
    * call site across Tasks 1-3. */
   secrets?: ScopedSecrets;
 
-  constructor(private readonly db: Database.Database, tenantId: string, genesisHash?: string) {
+  constructor(db: Database.Database, tenantId: string, genesisHash?: string) {
     this.tenantId = tenantId;
     // The migrated local tenant MUST keep GENESIS_HASH so its pre-existing
     // chain keeps verifying (R7/§8) — every other tenant gets the derived,

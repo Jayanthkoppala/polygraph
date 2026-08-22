@@ -7,7 +7,7 @@
 import type Database from 'better-sqlite3';
 import { ScopedSecrets, revealPlaintext } from './secrets.js';
 
-export interface RekeyResult {
+interface RekeyResult {
   rotated: number;
   unreadable: number;
 }

@@ -18,7 +18,7 @@ function tokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-export interface IssuedDeliveryToken {
+interface IssuedDeliveryToken {
   token: string;
   createdAt: string;
 }
@@ -46,7 +46,7 @@ export function issueDeliveryToken(
   return { token, createdAt: nowIso };
 }
 
-export interface DeliveryTarget {
+interface DeliveryTarget {
   tenantId: string;
   displayName: string;
   genesisHash: string;
@@ -86,7 +86,7 @@ export class DeliveryPayloadError extends Error {
   }
 }
 
-export type DeliveryPayload =
+type DeliveryPayload =
   | { kind: 'rows'; rows: Record<string, unknown>[] }
   | { kind: 'probe' };
 
@@ -140,7 +140,7 @@ export async function readDeliveryPayload(req: IncomingMessage): Promise<Deliver
   return { kind: 'rows', rows: parsed as Record<string, unknown>[] };
 }
 
-export interface DeliveryDecision {
+interface DeliveryDecision {
   collectorId: string;
   runId: string;
   rowCount: number;

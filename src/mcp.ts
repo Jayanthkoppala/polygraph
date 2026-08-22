@@ -16,7 +16,7 @@ import {
 type MaybePromise<T> = T | Promise<T>;
 type Structured = Record<string, unknown>;
 
-export type CollectorMode = 'local' | 'network';
+type CollectorMode = 'local' | 'network';
 
 export interface PolygraphMcpOperations {
   fleetStatus(): MaybePromise<Structured>;
@@ -29,7 +29,7 @@ export interface PolygraphMcpOperations {
   ): MaybePromise<Structured>;
 }
 
-export interface PolygraphMcpServerOptions {
+interface PolygraphMcpServerOptions {
   /**
    * Server-side kill switch for collectors whose adapter can use the network
    * or paid Bright Data credits. A tool argument alone can never open this
@@ -38,7 +38,7 @@ export interface PolygraphMcpServerOptions {
   allowNetworkRuns?: boolean;
 }
 
-export interface LocalPolygraphMcpOptions {
+interface LocalPolygraphMcpOptions {
   configPath?: string;
   dbPath?: string;
   /** Injectable transport for redirect-policy tests. Production defaults to
@@ -46,7 +46,7 @@ export interface LocalPolygraphMcpOptions {
   fetchImpl?: typeof fetch;
 }
 
-export interface LocalPolygraphMcpOperations extends PolygraphMcpOperations {
+interface LocalPolygraphMcpOperations extends PolygraphMcpOperations {
   runVerification(collectorId: string, authorization?: { networkApproved: boolean }): Promise<{
     version: 'verification-run/v1';
     automatic_healing: false;
@@ -61,16 +61,13 @@ export class PolygraphMcpUserError extends Error {
   }
 }
 
-function resolveConfigPath(explicit?: string): string {
-  if (explicit && explicit.trim() !== '') return explicit;
-  const configured = process.env.POLYGRAPH_CONFIG;
-  return configured && configured.trim() !== '' ? configured : './fleet.yaml';
-}
-
-function resolveDbPath(explicit?: string): string {
-  if (explicit && explicit.trim() !== '') return explicit;
-  const configured = process.env.POLYGRAPH_DB;
-  return configured && configured.trim() !== '' ? configured : './polygraph.sqlite';
+/** An explicit option wins, then the environment variable, then the default.
+ * A blank or whitespace-only value counts as absent at every step. */
+function resolvePath(explicit: string | undefined, envVar: string, fallback: string): string {
+  for (const candidate of [explicit, process.env[envVar]]) {
+    if (candidate && candidate.trim() !== '') return candidate;
+  }
+  return fallback;
 }
 
 function serializeDecision(row: LedgerEventRow | undefined): Structured | null {
@@ -89,6 +86,7 @@ function serializeDecision(row: LedgerEventRow | undefined): Structured | null {
 }
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 10;
 
 /** Parses and normalizes an HTTP(S) loopback URL without trusting DNS for
  * `localhost`. Any other scheme or host fails closed. */
@@ -116,13 +114,13 @@ function createLoopbackOnlyFetch(fetchImpl: typeof fetch): typeof fetch {
     const rawUrl = input instanceof Request ? input.url : input;
     let current = loopbackHttpUrl(rawUrl);
 
-    for (let redirects = 0; redirects <= 10; redirects++) {
+    for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
       const response = await fetchImpl(current.toString(), { ...init, redirect: 'manual' });
       if (!REDIRECT_STATUSES.has(response.status)) return response;
 
       const location = response.headers.get('location');
       if (!location) return response;
-      if (redirects === 10) {
+      if (redirects === MAX_REDIRECTS) {
         await response.body?.cancel();
         throw new PolygraphMcpUserError('Confirmation-free MCP run exceeded the redirect limit.');
       }
@@ -147,19 +145,26 @@ function createLoopbackOnlyFetch(fetchImpl: typeof fetch): typeof fetch {
 export function createLocalPolygraphMcpOperations(
   options: LocalPolygraphMcpOptions = {}
 ): LocalPolygraphMcpOperations {
-  const configPath = resolveConfigPath(options.configPath);
-  const dbPath = resolveDbPath(options.dbPath);
+  const configPath = resolvePath(options.configPath, 'POLYGRAPH_CONFIG', './fleet.yaml');
+  const dbPath = resolvePath(options.dbPath, 'POLYGRAPH_DB', './polygraph.sqlite');
 
   function config() {
     return loadFleetConfig(configPath);
   }
 
-  function collector(collectorId: string) {
-    const found = config().collectors.find((candidate) => candidate.id === collectorId);
+  /** Looks a collector up inside an ALREADY-LOADED config. Callers that must
+   * act on one immutable snapshot (`runVerification`) pass their own; the
+   * rest go through `collector` below, which loads a fresh one. */
+  function findCollector(fleet: FleetConfig, collectorId: string) {
+    const found = fleet.collectors.find((candidate) => candidate.id === collectorId);
     if (!found) {
       throw new PolygraphMcpUserError(`No collector with id "${collectorId}" exists in ${configPath}.`);
     }
     return found;
+  }
+
+  function collector(collectorId: string) {
+    return findCollector(config(), collectorId);
   }
 
   function isLoopbackCollectorConfig(selected: FleetConfig['collectors'][number]): boolean {
@@ -174,10 +179,6 @@ export function createLocalPolygraphMcpOperations(
         return false;
       }
     });
-  }
-
-  function isLoopbackCollector(collectorId: string): boolean {
-    return isLoopbackCollectorConfig(collector(collectorId));
   }
 
   async function withWriteStore<T>(operation: (store: ReturnType<typeof openLocalWriteStore>) => MaybePromise<T>): Promise<T> {
@@ -258,15 +259,14 @@ export function createLocalPolygraphMcpOperations(
     },
 
     collectorMode(collectorId) {
-      return isLoopbackCollector(collectorId) ? 'local' : 'network';
+      return isLoopbackCollectorConfig(collector(collectorId)) ? 'local' : 'network';
     },
 
     async runVerification(collectorId: string, authorization = { networkApproved: false }) {
       const fullConfig = config();
-      const selected = fullConfig.collectors.find((candidate) => candidate.id === collectorId);
-      if (!selected) {
-        throw new PolygraphMcpUserError(`No collector with id "${collectorId}" exists in ${configPath}.`);
-      }
+      // Resolved from THIS snapshot, never a second load — see the network
+      // re-check below.
+      const selected = findCollector(fullConfig, collectorId);
       const loopbackOnly = isLoopbackCollectorConfig(selected);
       if (!loopbackOnly && authorization.networkApproved !== true) {
         // Re-check against the exact immutable config snapshot that will run.
@@ -311,6 +311,14 @@ export function createLocalPolygraphMcpOperations(
   };
 }
 
+/** Shared by every read tool: no writes, no external calls, safe to repeat. */
+const READ_ONLY_TOOL = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+} as const;
+
 function success(value: Structured) {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(value) }],
@@ -353,12 +361,7 @@ export function createPolygraphMcpServer(
       title: 'Polygraph fleet status',
       description: 'Read the latest verification decision for each configured collector.',
       inputSchema: z.object({}),
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
+      annotations: READ_ONLY_TOOL,
     },
     async () => await expose(() => operations.fleetStatus())
   );
@@ -369,12 +372,7 @@ export function createPolygraphMcpServer(
       title: 'Verify Polygraph ledger',
       description: 'Walk the local tamper-evident ledger and report whether its hash chain is intact.',
       inputSchema: z.object({}),
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
+      annotations: READ_ONLY_TOOL,
     },
     async () => await expose(() => operations.ledgerVerify())
   );
@@ -387,12 +385,7 @@ export function createPolygraphMcpServer(
       inputSchema: z.object({
         collector_id: z.string().min(1).describe('Collector id from fleet.yaml'),
       }),
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
+      annotations: READ_ONLY_TOOL,
     },
     async ({ collector_id }) => await expose(() => operations.getSafeOutput(collector_id))
   );

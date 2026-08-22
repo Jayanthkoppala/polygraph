@@ -100,7 +100,7 @@ export interface DispatcherOptions {
   onTenantOverCap?: (tenantId: string) => void;
 }
 
-export interface TickResult {
+interface TickResult {
   dispatched: DueRow[];
 }
 
@@ -232,7 +232,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-export interface DefaultRunOneDeps {
+interface DefaultRunOneDeps {
   db: Database.Database;
   /** Every tenant authenticates to Bright Data with their OWN encrypted key
    * (tenant-architecture.md §2) — there is no shared client. `masterKey`/
@@ -426,7 +426,7 @@ export function runDueVerificationsForAllTenants(db: Database.Database, nowIso: 
   }
 }
 
-export interface StartSchedulerOptions {
+interface StartSchedulerOptions {
   db: Database.Database;
   masterKey: Buffer;
   previousMasterKey?: Buffer;

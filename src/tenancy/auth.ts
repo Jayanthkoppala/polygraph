@@ -24,7 +24,7 @@ export interface Session {
  * real `http.IncomingMessage` satisfies this (its `headers` is a superset),
  * and tests can pass a plain object with no live socket — no mocking
  * framework required. */
-export interface AuthableRequest {
+interface AuthableRequest {
   headers: {
     cookie?: string;
     origin?: string;
@@ -91,7 +91,7 @@ export function createSession(
   return { sessionId, expiresAt };
 }
 
-export interface TokenExchangeResult {
+interface TokenExchangeResult {
   tenantId: string;
   sessionId: string;
   setCookieHeader: string;

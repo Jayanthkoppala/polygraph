@@ -3,7 +3,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { createSession, buildSessionCookie } from './auth.js';
 import { createTenant } from './tenants.js';
 
-export interface GoogleIdentity {
+interface GoogleIdentity {
   sub: string;
   email: string;
   emailVerified: boolean;
@@ -43,7 +43,7 @@ export function createGoogleAuthVerifier(clientId: string): GoogleAuthVerifier {
   };
 }
 
-export interface GoogleLoginResult {
+interface GoogleLoginResult {
   tenantId: string;
   sessionId: string;
   setCookieHeader: string;

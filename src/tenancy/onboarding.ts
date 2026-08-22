@@ -75,7 +75,7 @@ export function persistConfirmedSetup(
   }, { enabled: options.scheduledByPolygraph ?? true });
 }
 
-export interface RunnerOverrides {
+interface RunnerOverrides {
   schema?: OutputSchema;
   entityExtractor?: KeyExtractor;
 }

@@ -12,7 +12,7 @@ import { createServer as createHttpServer, type Server } from 'node:http';
 import { renderIndex, renderProductPage } from './render.js';
 import { readChaosMode, DEFAULT_FIXTURE_STATE_PATH } from './state.js';
 
-export interface FixtureServerOptions {
+interface FixtureServerOptions {
   /** Path to the chaos state switch file this server re-reads on every
    * request. Defaults to DEFAULT_FIXTURE_STATE_PATH. */
   statePath?: string;

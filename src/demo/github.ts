@@ -1,5 +1,5 @@
 import type { DemoGithubClient, DemoMissionConfig } from './mission.js';
-export interface DemoGithubClientOptions { config: Pick<DemoMissionConfig, 'githubToken' | 'fixtureRepo' | 'fixtureWorkflow' | 'fixtureUrl' | 'githubRef' | 'pollIntervalMs' | 'pollDeadlineMs'>; fetchImpl?: typeof fetch; sleep?: (ms: number) => Promise<void> }
+interface DemoGithubClientOptions { config: Pick<DemoMissionConfig, 'githubToken' | 'fixtureRepo' | 'fixtureWorkflow' | 'fixtureUrl' | 'githubRef' | 'pollIntervalMs' | 'pollDeadlineMs'>; fetchImpl?: typeof fetch; sleep?: (ms: number) => Promise<void> }
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 /** Dispatch is not proof: the no-store marker poll requires exact version and generation JSON. */
 export class GithubFixtureClient implements DemoGithubClient {
