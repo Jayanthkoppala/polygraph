@@ -22,9 +22,11 @@ divergent hash chains. **Never run two.**
 | TLS | Caddy, hostname via [sslip.io](https://sslip.io) so the IP resolves |
 | Health | `GET /healthz` → `{"ok":true}` |
 
-> **TODO — fill in from the box.** The Caddyfile and the service unit that
-> supervises the node process are not in this repo yet. Copy them in so a
-> rebuild does not depend on one person's memory.
+> **TODO — fill in from the box.** Two things are not in this repo yet:
+> the Caddyfile, and whatever supervises the node process (systemd unit or
+> `docker run` invocation — the `Dockerfile` here is kept and builds, but has
+> not been verified against the live VM). Copy them in so a rebuild does not
+> depend on one person's memory.
 
 ## Build and run
 

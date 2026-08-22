@@ -42,8 +42,8 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/app/dist ./app/dist
 COPY package.json ./
 
-# The volume mount point, owned by the unprivileged `node` user BEFORE the
-# volume is mounted — otherwise Fly's volume mount creates it root-owned and
+# The data directory, owned by the unprivileged `node` user BEFORE the
+# volume is mounted — otherwise the mount creates it root-owned and
 # `polygraph serve` can't write polygraph.sqlite. `polygraph serve` runs
 # migrations on boot (src/tenancy/migrate.ts, via serve.ts's bootstrap) and
 # refuses to start if the master-key canary does not decrypt
