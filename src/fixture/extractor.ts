@@ -42,15 +42,6 @@ function extractField(html: string, name: string): string | undefined {
   return match ? match[1].trim() : undefined;
 }
 
-/** Pulls the requested-vs-served sku apart from the page's own
- * `data-requested-sku` attribute (set by render.ts on every page,
- * regardless of chaos mode) — used by extractors.ts's COLLECTOR_REGISTRY
- * entity-key function, not by this extractor itself. */
-export function extractRequestedSku(html: string): string | undefined {
-  const match = html.match(/data-requested-sku="([^"]*)"/);
-  return match?.[1];
-}
-
 /** Extracts one product row from a fixture product page's HTML. Every
  * field that isn't found comes back as its schema default (FIXTURE_DEFAULTS),
  * never omitted — matching the "extractor emits the default, doesn't drop
