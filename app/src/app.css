@@ -35,6 +35,11 @@
   --font-mono: 'Geist Mono', ui-monospace, monospace;
 }
 
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 /* ---------------------------------------------------------------------- */
 /* Page ground. Without this, `body` computes to browser-default          */
 /* transparent/white and any route that doesn't paint its own full-bleed  */

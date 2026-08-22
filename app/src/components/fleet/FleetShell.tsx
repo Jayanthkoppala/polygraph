@@ -54,7 +54,7 @@ export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: Fleet
   const gridCols = shellMode === 'docked' ? '280px 1fr 360px' : '1fr 360px';
 
   return (
-    <div className="flex h-screen flex-col bg-[var(--color-void)] font-sans text-[#EDEDED]">
+    <div className="flex h-[calc(100svh-var(--poly-chrome-offset,0px))] flex-col bg-black/65 font-sans text-[#EDEDED] backdrop-blur-[2px]">
       <ShellHeader fleet={fleet} ledgerRows={ledgerRows} />
 
       <div
@@ -120,7 +120,7 @@ function ShellHeader({ fleet, ledgerRows }: { fleet: FleetState; ledgerRows: Led
 
   return (
     <header className="flex h-16 shrink-0 items-center gap-4 border-b border-[#272727] px-4">
-      <span className="text-sm font-semibold tracking-wide">POLYGRAPH</span>
+      <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[#9B9B9B]">Collector fleet</span>
       <span className="font-mono text-xs text-[#9B9B9B]">{fleet.tenant}</span>
       {/* ui-system.md §3.2/§3.8: ReactBits `Counter` — an odometer can only
           roll upward, which is the one numeric display shape that states

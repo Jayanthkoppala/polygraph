@@ -85,7 +85,7 @@ export function FleetApp() {
 
   if (error && !fleet) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--color-void)] p-8 font-sans text-[#EDEDED]">
+      <main className="flex min-h-[calc(100svh-var(--poly-chrome-offset,0px))] flex-col items-center justify-center gap-4 bg-black/55 p-8 font-sans text-[#EDEDED]">
         <p className="max-w-md text-center text-sm" style={{ color: 'var(--color-verdict-shape)' }}>
           Could not reach the fleet: {error}
         </p>
@@ -95,7 +95,7 @@ export function FleetApp() {
 
   if (!fleet) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[var(--color-void)] font-sans text-[#EDEDED]">
+      <main className="flex min-h-[calc(100svh-var(--poly-chrome-offset,0px))] items-center justify-center bg-black/55 font-sans text-[#EDEDED]">
         <p className="font-mono text-sm text-[#9B9B9B]">loading /api/state…</p>
       </main>
     );

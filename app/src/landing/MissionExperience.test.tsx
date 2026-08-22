@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MissionEvent, MissionState } from './demoMissionApi';
 import { MissionExperience } from './MissionExperience';
+import { START_PROOF_EVENT } from '@/components/GlobalChrome';
 
 const missionApi = vi.hoisted(() => ({
   createMission: vi.fn(),
@@ -113,16 +114,27 @@ afterEach(() => {
 });
 
 describe('MissionExperience live mission story', () => {
-  it('keeps the cinematic landing and clearly identifies the mission-consuming action', () => {
+  it('keeps the launch surface empty until the global proof control is used', () => {
     render(<MissionExperience />);
 
-    expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Polygraph home' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /the scraper recovered/i })).toBeInTheDocument();
-    expect(screen.getByTestId('run-mission-btn')).toHaveTextContent(/start the live v1 → v2 proof/i);
-    expect(screen.getByText(/starting uses one approved demo mission/i)).toBeInTheDocument();
-    expect(screen.getByTestId('dither')).toBeInTheDocument();
+    expect(screen.getByTestId('landing-scene')).toBeEmptyDOMElement();
     expect(missionApi.createMission).not.toHaveBeenCalled();
+  });
+
+  it('coalesces rapid global proof commands into one mission request', async () => {
+    let resolveMission!: (mission: MissionState) => void;
+    missionApi.createMission.mockReturnValue(new Promise((resolve) => { resolveMission = resolve; }));
+    render(<MissionExperience />);
+
+    fireEvent(window, new Event(START_PROOF_EVENT));
+    fireEvent(window, new Event(START_PROOF_EVENT));
+    expect(missionApi.createMission).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      resolveMission(baselineMission);
+      await Promise.resolve();
+    });
+    expect(missionApi.createMission).toHaveBeenCalledOnce();
   });
 
   it('renders the complete cinematic story from mission API state and real evidence fields', async () => {
@@ -132,7 +144,7 @@ describe('MissionExperience live mission story', () => {
     missionApi.resetMission.mockResolvedValue({ ...recoveredMission, status: 'running', scene: 'landing' });
     render(<MissionExperience />);
 
-    fireEvent.click(screen.getByTestId('run-mission-btn'));
+    fireEvent(window, new Event(START_PROOF_EVENT));
     expect(await screen.findByRole('heading', { name: /v1 is telling the truth/i })).toBeInTheDocument();
     expect(missionApi.createMission).toHaveBeenCalledOnce();
     expect(screen.getByText(/job-a/i)).toBeInTheDocument();
@@ -190,7 +202,7 @@ describe('MissionExperience live mission story', () => {
       .mockResolvedValue(recoveredMission);
     render(<MissionExperience />);
 
-    fireEvent.click(screen.getByTestId('run-mission-btn'));
+    fireEvent(window, new Event(START_PROOF_EVENT));
 
     await waitFor(() => expect(missionApi.getMission).toHaveBeenCalledTimes(2), { timeout: 2_800 });
   });
@@ -199,20 +211,17 @@ describe('MissionExperience live mission story', () => {
     missionApi.createMission.mockRejectedValue(new Error('/api/demo/missions: 503 unavailable'));
     render(<MissionExperience />);
 
-    fireEvent.click(screen.getByTestId('run-mission-btn'));
-    expect(await screen.findByTestId('mission-fallback')).toHaveTextContent(/could not start/i);
+    fireEvent(window, new Event(START_PROOF_EVENT));
+    await waitFor(() => expect(missionApi.createMission).toHaveBeenCalledOnce());
+    expect(screen.getByTestId('landing-scene')).toBeEmptyDOMElement();
     expect(screen.queryByText('RECOVERY VERIFIED')).not.toBeInTheDocument();
     expect(missionApi.shiftMission).not.toHaveBeenCalled();
   });
 
-  it('hands customer connection to the real signed-in onboarding routes', async () => {
+  it('keeps connection controls out of the minimal launch surface', () => {
     render(<MissionExperience />);
 
-    fireEvent.click(screen.getByRole('button', { name: /connect my collectors/i }));
-    expect(await screen.findByRole('heading', { name: /connect bright data securely/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /start secure onboarding/i })).toHaveAttribute('href', '/signup');
-    expect(screen.getByRole('link', { name: /^sign in$/i })).toHaveAttribute('href', '/login');
-    expect(screen.getByText(/customer repairs require approval/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /connect my collectors/i })).not.toBeInTheDocument();
     expect(missionApi.createMission).not.toHaveBeenCalled();
   });
 });

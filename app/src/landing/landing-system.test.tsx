@@ -85,16 +85,21 @@ describe('landing viewport composition', () => {
     const page = readFileSync(path.join(LANDING_DIR, 'LandingPage.tsx'), 'utf8');
     const mission = readFileSync(path.join(LANDING_DIR, 'MissionExperience.tsx'), 'utf8');
     const missionCss = readFileSync(path.join(LANDING_DIR, 'MissionExperience.css'), 'utf8');
+    const chrome = readFileSync(path.join(LANDING_DIR, '../components/GlobalChrome.tsx'), 'utf8');
+    const chromeCss = readFileSync(path.join(LANDING_DIR, '../components/GlobalChrome.css'), 'utf8');
+    const dither = readFileSync(path.join(LANDING_DIR, '../components/Dither.tsx'), 'utf8');
 
     expect(page).toMatch(/<MissionExperience/);
-    expect(mission).toMatch(/Start the live V1 → V2 proof/);
+    expect(mission).toMatch(/function LandingScene\(\)/);
+    expect(mission).toMatch(/data-testid="landing-scene"/);
+    expect(mission).not.toMatch(/The scraper recovered/);
     expect(mission).toMatch(/Continue after V2 is observed/);
-    expect(missionCss).toMatch(/min-height: 100svh/);
-    expect(mission).toMatch(/<Dither/);
-    expect(mission).toMatch(/LIVE BACKEND MISSION/);
+    expect(missionCss).toMatch(/min-height: calc\(100svh - var\(--poly-chrome-offset/);
+    expect(chrome).toMatch(/<Dither/);
     expect(mission).toMatch(/createMission/);
     expect(mission).not.toMatch(/LOCAL PRODUCT WALKTHROUGH/);
-    expect(missionCss).toMatch(/\.poly-floating-nav/);
+    expect(chromeCss).toMatch(/\.poly-floating-nav/);
+    expect(dither).toMatch(/eventPrefix=\{eventSource \? 'client' : 'offset'\}/);
   });
 });
 

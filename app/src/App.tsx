@@ -34,6 +34,7 @@ import { AppGate } from '@/routes/AppGate';
 import { OnboardingEntry } from '@/routes/OnboardingEntry';
 import { IS_STATIC_DEPLOY, SelfHostedNotice } from '@/deploy/SelfHostedNotice';
 import { PrivacyPage, TermsPage } from '@/routes/legal';
+import { GlobalChrome } from '@/components/GlobalChrome';
 
 /** The route table on its own, unwrapped — exported so tests can mount it
  * inside a `MemoryRouter` at an arbitrary path instead of `BrowserRouter`,
@@ -50,16 +51,18 @@ export function AppRoutes() {
   const entry = IS_STATIC_DEPLOY ? <SelfHostedNotice surface="signup" /> : <OnboardingEntry />;
 
   return (
-    <Routes>
-      <Route path="/" element={<LandingPage />} />
-      <Route path="/signup" element={entry} />
-      <Route path="/login" element={entry} />
-      <Route path="/app" element={gated} />
-      <Route path="/fleet" element={gated} />
-      <Route path="/legal/privacy" element={<PrivacyPage />} />
-      <Route path="/legal/terms" element={<TermsPage />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <GlobalChrome>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/signup" element={entry} />
+        <Route path="/login" element={entry} />
+        <Route path="/app" element={gated} />
+        <Route path="/fleet" element={gated} />
+        <Route path="/legal/privacy" element={<PrivacyPage />} />
+        <Route path="/legal/terms" element={<TermsPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </GlobalChrome>
   );
 }
 

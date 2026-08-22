@@ -92,7 +92,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('heading', { name: /the scraper recovered/i })).toBeInTheDocument();
+    expect(screen.getByTestId('landing-scene')).toBeEmptyDOMElement();
   });
 
   it('an unknown path redirects to the landing page, never a raw 404 shell', () => {
@@ -101,7 +101,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('heading', { name: /the scraper recovered/i })).toBeInTheDocument();
+    expect(screen.getByTestId('landing-scene')).toBeEmptyDOMElement();
   });
 
   it('/legal/privacy renders a real privacy notice instead of redirecting to the landing page', () => {
@@ -132,7 +132,7 @@ describe('AppRoutes', () => {
       </MemoryRouter>,
     );
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: /the scraper recovered/i })).toBeInTheDocument(),
+      expect(screen.getByTestId('landing-scene')).toBeEmptyDOMElement(),
     );
   });
 
@@ -170,7 +170,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    await waitFor(() => expect(screen.getByText('POLYGRAPH')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/collector fleet/i)).toBeInTheDocument());
     expect(screen.getByText('demo-fleet')).toBeInTheDocument();
   });
 
@@ -206,7 +206,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    await waitFor(() => expect(screen.getByText('POLYGRAPH')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/collector fleet/i)).toBeInTheDocument());
   });
 
   it('/fleet under `polygraph demo` renders the seeded dashboard — the sentinel routes explicitly, not by being mistaken for a keyed tenant', async () => {
@@ -220,7 +220,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    await waitFor(() => expect(screen.getByText('POLYGRAPH')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/collector fleet/i)).toBeInTheDocument());
   });
 
   it('a session probe that cannot answer never ejects a live session to the landing page', async () => {

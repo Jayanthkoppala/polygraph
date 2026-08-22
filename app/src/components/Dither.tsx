@@ -1,6 +1,6 @@
 /* eslint-disable react/no-unknown-property */
 import { useRef, useEffect } from 'react';
-import type { ComponentType } from 'react';
+import type { ComponentType, RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { EffectComposer, wrapEffect } from '@react-three/postprocessing';
 import { Effect } from 'postprocessing';
@@ -280,6 +280,8 @@ export interface DitherProps {
   mouseRadius?: number;
   className?: string;
   waveColor?: [number, number, number];
+  /** Shared DOM event source for fixed canvases rendered behind page content. */
+  eventSource?: RefObject<HTMLElement>;
 }
 
 function supportsWebGL() {
@@ -303,6 +305,7 @@ export default function Dither({
   enableMouseInteraction = true,
   mouseRadius = 0.3,
   className,
+  eventSource,
 }: DitherProps) {
   // jsdom has no ResizeObserver/WebGL implementation. Keep route and
   // accessibility tests about the page shell rather than crashing in a
@@ -319,6 +322,8 @@ export default function Dither({
         className="dither-canvas"
         camera={{ position: [0, 0, 6] }}
         dpr={1}
+        eventSource={eventSource}
+        eventPrefix={eventSource ? 'client' : 'offset'}
         frameloop={disableAnimation ? 'demand' : 'always'}
         gl={{ antialias: true, preserveDrawingBuffer: true }}
       >

@@ -35,20 +35,11 @@ export function SelfHostedNotice({ surface }: { surface: SelfHostedSurface }) {
   const copy = COPY[surface];
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#000000] text-[#EDEDED]">
-      <nav
-        aria-label="Primary"
-        className="flex items-center gap-4 border-b border-[#272727] bg-[#000000] px-6 py-4"
-      >
-        <a href="/" className="font-mono text-sm font-semibold tracking-wide text-[#EDEDED]">
-          POLYGRAPH
-        </a>
-        <a href="/" className="ml-auto text-sm text-[#9B9B9B] hover:text-[#EDEDED]">
+    <div className="flex min-h-[calc(100svh-var(--poly-chrome-offset,0px))] flex-col bg-black/55 text-[#EDEDED]">
+      <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 px-6 py-16">
+        <a href="/" className="w-fit text-sm text-[#C7C7CF] underline decoration-white/25 underline-offset-4 hover:text-white">
           Back to the live sandbox
         </a>
-      </nav>
-
-      <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 px-6 py-16">
         <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#9B9B9B]">{copy.eyebrow}</p>
 
         <h1 className="text-3xl font-semibold leading-tight text-[#EDEDED]">{copy.heading}</h1>
