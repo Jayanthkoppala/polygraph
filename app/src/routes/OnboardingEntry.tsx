@@ -1,10 +1,9 @@
 /**
  * OnboardingEntry — mounted at `/signup` and `/login` (the landing nav's
- * two real links, `app/src/landing/LandingPage.tsx`). Polygraph has no
- * password login: the only way in is the one-time `/t/:token` link a
- * signup issues, so both routes resolve to the same real question — "does
- * this browser already have a session?" — and answer it honestly rather
- * than showing two different flows for an auth model that only has one.
+ * two real links, `app/src/landing/LandingPage.tsx`). Both routes resolve
+ * to the same question — "does this browser already have a session?" An
+ * anonymous visitor sees Google sign-in; a returning user resumes exactly
+ * where their Bright Data connection stopped.
  *
  * A returning, authenticated-but-keyless tenant (closed the tab mid-
  * onboarding, then clicked "Sign in" or revisited /signup) must resume at

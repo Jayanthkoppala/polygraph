@@ -62,12 +62,17 @@ export interface ConfirmedSetup {
  * `setup_state` to `'confirmed'` and `enabled` to `1`, the first time this
  * collector is ever scheduled (tenant-architecture.md §4's three-state UI:
  * a collector never burns credits on an ungradeable run before this). */
-export function persistConfirmedSetup(scope: TenantScope, collectorId: string, setup: ConfirmedSetup): TenantCollectorRow {
+export function persistConfirmedSetup(
+  scope: TenantScope,
+  collectorId: string,
+  setup: ConfirmedSetup,
+  options: { scheduledByPolygraph?: boolean } = {}
+): TenantCollectorRow {
   return scope.collectors.confirmSetup(collectorId, {
     outputSchemaJson: JSON.stringify(setup.outputSchema),
     entityKey: setup.entityKey,
     entityKeyRuleJson: setup.entityKeyRule ? JSON.stringify(setup.entityKeyRule) : null,
-  });
+  }, { enabled: options.scheduledByPolygraph ?? true });
 }
 
 export interface RunnerOverrides {

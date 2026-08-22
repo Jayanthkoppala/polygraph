@@ -130,12 +130,25 @@ export function onboardingReducer(state: OnboardingState, event: OnboardingEvent
       return { ...state, stage: 'key-paste', keyError: null };
 
     case 'COLLECTORS_SELECTED':
-      // From `collectors-found`: the user may have deselected some of the
-      // discovered candidates before continuing.
-      return { ...state, stage: 'schema-confirm', candidates: event.collectors, confirmIndex: 0 };
+      // The simplified customer flow connects from Bright Data's published
+      // output schema. No representative inputs or identity field are asked
+      // for, and Polygraph does not create a schedule.
+      return {
+        ...state,
+        stage: 'first-verdict',
+        candidates: event.collectors,
+        confirmIndex: event.collectors.length,
+        confirmedIds: event.collectors.map((collector) => collector.id),
+      };
 
     case 'MANUAL_COLLECTORS_ENTERED':
-      return { ...state, stage: 'schema-confirm', candidates: event.collectors, confirmIndex: 0 };
+      return {
+        ...state,
+        stage: 'first-verdict',
+        candidates: event.collectors,
+        confirmIndex: event.collectors.length,
+        confirmedIds: event.collectors.map((collector) => collector.id),
+      };
 
     case 'COLLECTOR_CONFIRMED':
       return advancePastCurrentCollector({

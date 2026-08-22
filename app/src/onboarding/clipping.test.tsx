@@ -243,7 +243,7 @@ const STEPS: Array<{ name: string; node: React.ReactNode }> = [
   {
     name: 'first-verdict',
     node: (
-      <FirstVerdictStep fleetName="acme-data" confirmedIds={['amazon-prices']} skippedIds={[]} onGoToFleet={noop} />
+      <FirstVerdictStep confirmedIds={['amazon-prices']} onGoToFleet={noop} />
     ),
   },
   { name: 'repairs consent panel', node: <RepairsConsentPanel /> },
@@ -264,10 +264,6 @@ describe('no onboarding control is ever clipped out of existence by an ancestor'
     const connect = await screen.findByTestId('connect-button');
 
     await waitFor(() => {
-      expect(
-        Number.parseFloat(contentBox().style.height || '0'),
-        'box has not settled to a measured height yet',
-      ).toBeGreaterThan(0);
       const clippers = clippingAncestorsOf(connect);
       expect(clippers, `Connect is inside a clipping box again: ${JSON.stringify(clippers)}`).toEqual([]);
     }, SETTLED);

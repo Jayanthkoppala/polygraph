@@ -174,14 +174,15 @@ describe('AppRoutes', () => {
     expect(screen.getByText('demo-fleet')).toBeInTheDocument();
   });
 
-  it('/signup for an anonymous visitor shows the real signup step', async () => {
+  it('/signup for an anonymous visitor shows the real Google authentication step', async () => {
     mockApi({ '/api/settings/key/status': { status: 401, body: { error: 'authentication required' } } });
     render(
       <MemoryRouter initialEntries={['/signup']}>
         <AppRoutes />
       </MemoryRouter>,
     );
-    await waitFor(() => expect(screen.getByLabelText(/fleet name/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('heading', { name: /continue with google/i })).toBeInTheDocument());
+    expect(screen.getByTestId('google-signin-host')).toBeInTheDocument();
   });
 
   it('/login for a returning keyless tenant resumes at key-paste, not signup', async () => {

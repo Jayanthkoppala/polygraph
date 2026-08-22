@@ -219,8 +219,10 @@ export class ScopedCollectors {
    */
   confirmSetup(
     collectorId: string,
-    input: { outputSchemaJson: string; entityKey: string | null; entityKeyRuleJson: string | null }
+    input: { outputSchemaJson: string; entityKey: string | null; entityKeyRuleJson: string | null },
+    options: { enabled?: boolean } = {}
   ): TenantCollectorRow {
+    const enabled = options.enabled ?? true;
     this.db
       .prepare(
         `UPDATE tenant_collectors
@@ -228,7 +230,7 @@ export class ScopedCollectors {
                 entity_key = @entity_key,
                 entity_key_rule_json = @entity_key_rule_json,
                 setup_state = 'confirmed',
-                enabled = 1
+                enabled = @enabled
           WHERE tenant_id = @tenant_id AND collector_id = @collector_id`
       )
       .run({
@@ -237,6 +239,7 @@ export class ScopedCollectors {
         output_schema_json: input.outputSchemaJson,
         entity_key: input.entityKey,
         entity_key_rule_json: input.entityKeyRuleJson,
+        enabled: enabled ? 1 : 0,
       });
 
     const row = this.get(collectorId);

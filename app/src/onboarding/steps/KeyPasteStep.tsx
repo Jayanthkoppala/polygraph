@@ -113,20 +113,19 @@ export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyP
           <ReassuranceBlock heading="What we call, and nothing else">
             <ul className="flex flex-col gap-0.5 pl-4">
               <li className="list-disc">list your collectors (once, now)</li>
-              <li className="list-disc">trigger a run + read its result (on your schedule)</li>
+              <li className="list-disc">read the published contract for the collector you choose</li>
             </ul>
           </ReassuranceBlock>
           <ReassuranceBlock heading="What we will never do">
             <ul className="flex flex-col gap-0.5 pl-4">
-              <li className="list-disc">spend a credit on a repair — hosted auto-repair is unavailable and stays OFF; Polygraph gives you the manual command instead</li>
-              <li className="list-disc">modify a collector</li>
+              <li className="list-disc">never start or schedule customer runs</li>
+              <li className="list-disc">modify or auto-heal a customer collector</li>
               <li className="list-disc">read anything outside the collectors you pick</li>
             </ul>
           </ReassuranceBlock>
           <p className="flex items-start gap-2 text-[#9B9B9B]">
             <Info size={14} weight="regular" className="mt-0.5 shrink-0" aria-hidden />
-            You can revoke this key in Settings, in one click, any time. Every request
-            we ever made with it is on your ledger.
+            The plaintext token is cleared immediately and is never returned to this browser after save.
           </p>
         </div>
 

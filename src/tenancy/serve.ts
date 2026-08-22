@@ -21,6 +21,7 @@ import { handleTenantRequest, type TenantServerDeps } from './http-routes.js';
 import { startScheduler, type Dispatcher } from './scheduler.js';
 import { createDemoMissionService, readDemoMissionConfig } from '../demo/server.js';
 import type { DemoMissionService } from '../demo/mission.js';
+import { createGoogleAuthVerifier, type GoogleAuthVerifier } from './google-auth.js';
 
 export interface StartServerOptions {
   dbPath?: string;
@@ -34,6 +35,8 @@ export interface StartServerOptions {
   now?: () => string;
   /** Injectable public demo service for in-process tests. */
   demoService?: DemoMissionService;
+  /** Injectable for tests. Production uses GOOGLE_OAUTH_CLIENT_ID. */
+  googleAuth?: GoogleAuthVerifier;
 }
 
 export interface RunningServer {
@@ -103,6 +106,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Runnin
   const reader = openReader(dbPath);
   const demoConfig = readDemoMissionConfig();
   const demoService = opts.demoService ?? (demoConfig ? createDemoMissionService(demoConfig) : undefined);
+  const googleClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
+  const googleAuth = opts.googleAuth ?? (googleClientId ? createGoogleAuthVerifier(googleClientId) : undefined);
 
   const deps: TenantServerDeps = {
     writer,
@@ -115,6 +120,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Runnin
     fetchImpl: opts.fetchImpl,
     baseUrl: opts.baseUrl,
     demoService,
+    googleAuth,
   };
 
   const server = createHttpServer((req, res) => {

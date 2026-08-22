@@ -369,6 +369,44 @@ function up008(db: Database.Database): void {
     ON safe_output_snapshots(tenant_id, collector_id, release_event_id DESC)`);
 }
 
+// ---------------------------------------------------------------------------
+// M009 — external login identities. Google `sub`, not email, is the stable
+// account key. Keeping identities in their own table avoids weakening the
+// existing capability-token column while the hosted UI migrates to Google.
+function up009(db: Database.Database): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS tenant_identities (
+    provider      TEXT NOT NULL,
+    subject       TEXT NOT NULL,
+    tenant_id     TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    email         TEXT NOT NULL,
+    display_name  TEXT NOT NULL,
+    picture_url   TEXT,
+    created_at    TEXT NOT NULL,
+    last_login_at TEXT NOT NULL,
+    PRIMARY KEY (provider, subject)
+  )`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_tenant_identities_tenant ON tenant_identities(tenant_id)`);
+}
+
+// ---------------------------------------------------------------------------
+// M010 — per-collector inbound delivery capabilities. Bright Data remains
+// the scheduler; it POSTs completed JSON results to a high-entropy URL.
+// Only the digest is retained, matching session/capability token handling.
+function up010(db: Database.Database): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS collector_ingest_tokens (
+    tenant_id    TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    collector_id TEXT NOT NULL,
+    token_sha256 TEXT NOT NULL UNIQUE,
+    created_at   TEXT NOT NULL,
+    last_seen_at TEXT,
+    PRIMARY KEY (tenant_id, collector_id),
+    FOREIGN KEY (tenant_id, collector_id)
+      REFERENCES tenant_collectors(tenant_id, collector_id) ON DELETE CASCADE
+  )`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_collector_ingest_token
+    ON collector_ingest_tokens(token_sha256)`);
+}
+
 const MIGRATIONS: Migration[] = [
   { version: 1, destructive: false, up: up001 },
   { version: 2, destructive: false, up: up002 },
@@ -378,6 +416,8 @@ const MIGRATIONS: Migration[] = [
   { version: 6, destructive: false, up: up006 },
   { version: 7, destructive: false, up: up007 },
   { version: 8, destructive: false, up: up008 },
+  { version: 9, destructive: false, up: up009 },
+  { version: 10, destructive: false, up: up010 },
 ];
 
 /** One consistent snapshot before the first destructive step. VACUUM INTO

@@ -1,35 +1,28 @@
 /**
  * The onboarding shell — owns the state machine (machine.ts) and switches
- * between steps on `state.stage`. ux-spec.md §2/§6: "Three steps, a
- * persistent 3-dot progress rail, no skipping, no side navigation." The
- * stepper collapses the machine's finer-grained stages into the three
- * user-facing steps ui-system.md §3.3 names: paste the key, point at a
- * collector, first verification pass.
+ * between steps on `state.stage`. The customer journey has four visible
+ * stages: Google identity, Bright Data token, collector, and delivery.
  *
- * Signup causes a real browser navigation (`window.location.assign`) once
- * the token exchange happens — see api.ts's `exchangeTokenUrl` doc — so
- * this component does not itself progress past `signup`; the page reloads
- * at whatever route the redirect lands on (currently hardcoded to `/app`
- * server-side). Whichever route mounts `OnboardingWizard` post-redirect
- * should pass `initialStage="key-paste"` (Task 10's routing concern, not
- * this component's) so a returning, authenticated-but-keyless tenant lands
- * on step 2, not back at signup.
+ * The pre-step is Google Identity Services. Its signed credential is
+ * verified server-side and exchanged for Polygraph's HttpOnly session,
+ * then the browser navigates to `/app`. Whichever route mounts this wizard
+ * after that redirect passes `initialStage="key-paste"` so a returning,
+ * authenticated-but-keyless tenant resumes at Bright Data connection.
  */
-import { useCallback, useEffect, useReducer, useRef } from 'react';
-import { onboardingReducer, initialOnboardingState, currentCandidate, type OnboardingStage } from './machine';
-import { exchangeTokenUrl } from './api';
-import ReactBitsStepper, { Step } from './ReactBitsStepper';
-import { SignupStep } from './steps/SignupStep';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { onboardingReducer, initialOnboardingState, type OnboardingStage } from './machine';
+import { connectCollector } from './api';
+import { ConnectionShell } from './ConnectionShell';
+import { GoogleAuthStep } from './steps/GoogleAuthStep';
 import { KeyPasteStep } from './steps/KeyPasteStep';
 import { CollectorsFoundStep, CollectorsFallbackStep } from './steps/CollectorsStep';
-import { SchemaConfirmStep } from './steps/SchemaConfirmStep';
 import { FirstVerdictStep } from './steps/FirstVerdictStep';
 
-/** Collapses the machine's finer stages into the 3-dot rail position. */
+/** Collapses the machine's finer stages into the three post-auth screens. */
 function stepperPosition(stage: OnboardingStage): number {
   switch (stage) {
     case 'signup':
-      return 0; // pre-stepper — signup has no dot of its own in the 3-step rail
+      return 0;
     case 'key-paste':
     case 'key-verifying':
     case 'key-rejected':
@@ -68,7 +61,7 @@ function screenKey(state: { stage: OnboardingStage; candidates: Array<{ id: stri
     case 'collectors-fallback':
       return 'collectors-fallback';
     case 'schema-confirm':
-      return `schema:${state.candidates[state.confirmIndex]?.id ?? 'done'}`;
+      return 'collector-connect-legacy';
     case 'first-verdict':
       return 'first-verdict';
     default: {
@@ -91,6 +84,7 @@ export function OnboardingWizard({ initialStage, onComplete }: OnboardingWizardP
     ...initialOnboardingState,
     stage: initialStage ?? initialOnboardingState.stage,
   });
+  const [deliveryUrl, setDeliveryUrl] = useState<string>();
 
   const goToFleet = useCallback(() => {
     if (onComplete) {
@@ -119,18 +113,10 @@ export function OnboardingWizard({ initialStage, onComplete }: OnboardingWizardP
   }, [state]);
 
   if (state.stage === 'signup') {
-    // ui-system.md §3.3 scopes the 3-dot rail to exactly the 3 steps it
-    // names (paste key / point at a collector / first pass) — signup
-    // itself isn't one of them, so it renders with no Stepper chrome.
+    // Google authentication creates the session and renders stage one of the
+    // same four-stage visual journey.
     return (
-      <SignupStep
-        onSignedUp={({ token, tenantId }) => {
-          dispatch({ type: 'SIGNUP_SUCCEEDED', tenantId });
-          // Real navigation — sets the session cookie via the 302 at
-          // GET /t/:token. See api.ts's `exchangeTokenUrl` doc.
-          window.location.assign(exchangeTokenUrl(token));
-        }}
-      />
+      <GoogleAuthStep onAuthenticated={() => window.location.assign('/app')} />
     );
   }
 
@@ -144,69 +130,48 @@ export function OnboardingWizard({ initialStage, onComplete }: OnboardingWizardP
   // antidote to paste anxiety", and never got to choose which collectors to
   // watch. Confirmed by driving the real browser: pasting a key that
   // verified with 3 collectors landed directly on the schema-confirm screen.
-  const candidate = currentCandidate(state);
   const collectorContent =
     state.stage === 'collectors-found' ? (
       <CollectorsFoundStep
         last4={state.keyLast4 ?? ''}
         discovered={state.candidates}
-        onContinue={(selected) => dispatch({ type: 'COLLECTORS_SELECTED', collectors: selected })}
+        onContinue={async (selected) => {
+          const connected = await connectCollector(selected[0].id);
+          setDeliveryUrl(connected.deliveryUrl);
+          dispatch({ type: 'COLLECTORS_SELECTED', collectors: selected });
+        }}
       />
     ) : state.stage === 'collectors-fallback' ? (
-      <CollectorsFallbackStep onContinue={(collectors) => dispatch({ type: 'MANUAL_COLLECTORS_ENTERED', collectors })} />
-    ) : candidate ? (
-      <SchemaConfirmStep
-        key={candidate.id}
-        collector={candidate}
-        position={{ index: state.confirmIndex, total: state.candidates.length }}
-        onConfirmed={(id) => dispatch({ type: 'COLLECTOR_CONFIRMED', id })}
-        onSkippedEmpty={(id) => dispatch({ type: 'COLLECTOR_SKIPPED_EMPTY', id })}
+      <CollectorsFallbackStep
+        onContinue={async (collectors) => {
+          const connected = await connectCollector(collectors[0].id);
+          setDeliveryUrl(connected.deliveryUrl);
+          dispatch({ type: 'MANUAL_COLLECTORS_ENTERED', collectors });
+        }}
       />
     ) : null;
 
+  const connectionPosition: 1 | 2 | 3 = position === 1 || position === 2 ? position : 3;
+
   return (
-    // `display: contents` — a focus anchor only, contributing no box of its
-    // own, so the Stepper's own layout is untouched.
     <div ref={rootRef} className="contents">
-      {/* The Stepper is remounted by `key={position}` on every macro-step
-        * change — the packaged Stepper owns its `currentStep` internally (no
-        * controlled prop exists), so a fresh mount with a new `initialStep`
-        * is how this async/branching flow drives it from the outside.
-        * `disableStepIndicators` (no clicking ahead/behind) and a hidden
-        * footer (`footerClassName`) remove ITS OWN Back/Continue chrome —
-        * ux-spec.md §2/§6: "no skipping, no side navigation," and every real
-        * advance here is gated by an async result (a key verifying, a probe
-        * completing), never a free "Continue" click, so each step component
-        * owns its own submit button. */}
-      <ReactBitsStepper
-        key={position}
-        initialStep={position}
-        disableStepIndicators
-        footerClassName="hidden"
-        stepCircleContainerClassName="!rounded-2xl !border-[var(--color-line)] bg-[var(--color-surface)] shadow-[var(--shadow-e3)]"
-        contentClassName="text-[#EDEDED]"
-      >
-        <Step>
-          {position === 1 && (
-            <KeyPasteStep
-              onVerified={(last4, collectors) => dispatch({ type: 'KEY_VERIFIED', last4, collectors })}
-              onRejected={(message) => dispatch({ type: 'KEY_REJECTED', message })}
-              onListUnavailable={() => dispatch({ type: 'KEY_LIST_UNAVAILABLE' })}
-            />
-          )}
-        </Step>
-        <Step>{position === 2 && collectorContent}</Step>
-        <Step>
-          {position === 3 && (
-            <FirstVerdictStep
-              fleetName={state.fleetName}
-              confirmedIds={state.confirmedIds}
-              skippedIds={state.skippedIds}
-              onGoToFleet={goToFleet}
-            />
-          )}
-        </Step>
-      </ReactBitsStepper>
+      <ConnectionShell position={connectionPosition}>
+        {position === 1 && (
+          <KeyPasteStep
+            onVerified={(last4, collectors) => dispatch({ type: 'KEY_VERIFIED', last4, collectors })}
+            onRejected={(message) => dispatch({ type: 'KEY_REJECTED', message })}
+            onListUnavailable={() => dispatch({ type: 'KEY_LIST_UNAVAILABLE' })}
+          />
+        )}
+        {position === 2 && collectorContent}
+        {position === 3 && (
+          <FirstVerdictStep
+            confirmedIds={state.confirmedIds}
+            deliveryUrl={deliveryUrl}
+            onGoToFleet={goToFleet}
+          />
+        )}
+      </ConnectionShell>
     </div>
   );
 }

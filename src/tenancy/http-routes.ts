@@ -51,7 +51,7 @@ import {
   TenantKeyRejectedError,
   TenantKeyVerificationUnavailableError,
 } from './key-verification.js';
-import { inferFieldsForCollector, summarizeCollectorsList } from './infer-schema.js';
+import { findCollectorListEntry, inferFieldsForCollector, summarizeCollectorsList } from './infer-schema.js';
 import { probeCollector, buildProbeDraft, ConsentRequiredError } from './probe.js';
 import { buildConfirmedSchema, persistConfirmedSetup, type ConfirmedFieldInput } from './onboarding.js';
 import type { EntityKeyRule } from './entity-key.js';
@@ -59,6 +59,14 @@ import { checkAndIncrementRateLimit, hourlyWindowKey, dailyWindowKey } from './r
 import { recordVerifyResult } from './scheduler.js';
 import { tryHandleDemoMissionRequest } from '../demo/server.js';
 import type { DemoMissionService } from '../demo/mission.js';
+import { loginWithGoogleIdentity, type GoogleAuthVerifier } from './google-auth.js';
+import {
+  DeliveryPayloadError,
+  issueDeliveryToken,
+  readDeliveredRows,
+  recordDeliveredRows,
+  resolveDeliveryTarget,
+} from './delivery.js';
 
 const SIGNUP_LIMIT_PER_HOUR = 3;
 const PROBE_LIMIT_PER_DAY = 10;
@@ -85,6 +93,9 @@ export interface TenantServerDeps {
   baseUrl?: string;
   /** Public demo service; omitted when its live configuration is incomplete. */
   demoService?: DemoMissionService;
+  /** Google Identity Services verifier. The browser receives only clientId;
+   * credential verification always happens server-side. */
+  googleAuth?: GoogleAuthVerifier;
 }
 
 interface TenantRow {
@@ -145,7 +156,11 @@ function applySecurityHeaders(res: ServerResponse): void {
   res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'");
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/client; " +
+      "style-src 'self' 'unsafe-inline'; frame-src https://accounts.google.com; connect-src 'self' https://accounts.google.com"
+  );
 }
 
 /** Resolves the caller's session, or writes a 401 and returns null. Every
@@ -230,6 +245,90 @@ export async function handleTenantRequest(req: IncomingMessage, res: ServerRespo
     }
 
     if (await tryHandleDemoMissionRequest(req, res, deps.demoService)) return;
+
+    // ---- Bright Data push delivery (public capability URL) ----------------
+
+    const deliveryMatch = /^\/api\/ingest\/([^/]+)$/.exec(path);
+    if (method === 'POST' && deliveryMatch) {
+      const token = decodeURIComponent(deliveryMatch[1]);
+      const target = resolveDeliveryTarget(deps.writer, token);
+      if (!target) {
+        sendJson(res, 404, { error: 'not found' });
+        return;
+      }
+      try {
+        const rows = await readDeliveredRows(req);
+        const candidateRunId = req.headers['x-brightdata-job-id'];
+        const externalRunId = typeof candidateRunId === 'string' && /^[A-Za-z0-9._:-]{1,200}$/.test(candidateRunId)
+          ? candidateRunId
+          : undefined;
+        const decision = await recordDeliveredRows(deps.writer, target, rows, nowFn(), externalRunId);
+        sendJson(res, 200, {
+          accepted: true,
+          collector_id: decision.collectorId,
+          run_id: decision.runId,
+          rows: decision.rowCount,
+          verdict: decision.verdict,
+          cause: decision.cause,
+          action: decision.action,
+          ledger_id: decision.ledgerId,
+          auto_heal: false,
+        });
+      } catch (error) {
+        if (error instanceof DeliveryPayloadError) {
+          sendJson(res, error.status, { error: error.message });
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+
+    // ---- Google sign-in (public) -------------------------------------------
+
+    if (method === 'GET' && path === '/api/auth/google/config') {
+      if (!deps.googleAuth) {
+        sendJson(res, 503, { error: 'Google sign-in is not configured' });
+        return;
+      }
+      sendJson(res, 200, { client_id: deps.googleAuth.clientId });
+      return;
+    }
+
+    if (method === 'POST' && path === '/api/auth/google') {
+      if (!deps.googleAuth) {
+        sendJson(res, 503, { error: 'Google sign-in is not configured' });
+        return;
+      }
+      if (!requireCsrf(req, res, deps.publicOrigin)) return;
+      const body = await readJsonBody<{ credential?: unknown }>(req, res);
+      if (body === undefined) return;
+      if (typeof body.credential !== 'string' || body.credential.trim() === '') {
+        sendJson(res, 400, { error: 'Google credential is required' });
+        return;
+      }
+
+      try {
+        const identity = await deps.googleAuth.verify(body.credential);
+        if (identity.emailVerified !== true) throw new Error('unverified email');
+        const login = loginWithGoogleIdentity(deps.writer, identity, req.headers['user-agent']);
+        res.writeHead(200, {
+          'set-cookie': login.setCookieHeader,
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+        });
+        res.end(
+          JSON.stringify({
+            ok: true,
+            is_new_account: login.isNewAccount,
+            user: login.user,
+          })
+        );
+      } catch {
+        sendJson(res, 401, { error: 'Google sign-in could not be verified' });
+      }
+      return;
+    }
 
     // ---- Signup + token exchange (public) ---------------------------------
 
@@ -463,6 +562,81 @@ export async function handleTenantRequest(req: IncomingMessage, res: ServerRespo
       if (method === 'GET' && path === '/api/settings/key/status') {
         const scope = scopeWithSecrets(deps.reader, session.tenantId, tenantRowWriter.genesis_hash, deps);
         sendJson(res, 200, { status: scope.secrets!.status() ?? null });
+        return;
+      }
+
+      if (method === 'POST' && path === '/api/collectors/connect') {
+        if (!requireCsrf(req, res, deps.publicOrigin)) return;
+        const body = await readJsonBody<{ collector_id?: unknown }>(req, res);
+        if (body === undefined) return;
+        if (typeof body.collector_id !== 'string' || body.collector_id.trim() === '') {
+          sendJson(res, 400, { error: 'collector_id is required' });
+          return;
+        }
+
+        const scope = scopeWithSecrets(deps.writer, session.tenantId, tenantRowWriter.genesis_hash, deps);
+        const apiKey = revealPlaintext(scope.secrets!);
+        if (!apiKey) {
+          sendJson(res, 400, { error: 'no Bright Data key saved for this account yet' });
+          return;
+        }
+
+        const client = new BrightDataClient({ apiKey, fetchImpl: deps.fetchImpl, baseUrl: deps.baseUrl });
+        try {
+          const collectorsListResponse = await client.collectorsList();
+          const collectorId = body.collector_id.trim();
+          const entry = findCollectorListEntry(collectorsListResponse, collectorId);
+          if (!entry) {
+            sendJson(res, 404, { error: 'collector not found in this Bright Data account' });
+            return;
+          }
+
+          const inferred = inferFieldsForCollector(collectorsListResponse, collectorId);
+          if (inferred.fieldNames.length === 0) {
+            sendJson(res, 409, {
+              error: 'Run this collector once and save its output schema to production in Bright Data, then retry',
+            });
+            return;
+          }
+
+          const existing = scope.collectors.list();
+          const cap = tenantRowWriter.max_collectors || MAX_COLLECTORS_DEFAULT;
+          const alreadyConnected = existing.some((collector) => collector.collector_id === collectorId);
+          if (!alreadyConnected && existing.length >= cap) {
+            sendJson(res, 400, { error: `collector limit (${cap}) reached for this account` });
+            return;
+          }
+
+          const listed = summarizeCollectorsList(collectorsListResponse).find((collector) => collector.id === collectorId);
+          scope.collectors.createDraft({ collectorId, name: listed?.name ?? collectorId, canaryInputs: [] });
+          const outputSchema = buildConfirmedSchema(
+            inferred.fieldNames.map((name) => ({ name, type: 'text', required: true }))
+          );
+          const collector = persistConfirmedSetup(
+            scope,
+            collectorId,
+            { outputSchema, entityKey: null, entityKeyRule: null },
+            { scheduledByPolygraph: false }
+          );
+          const issued = issueDeliveryToken(deps.writer, session.tenantId, collectorId, nowFn());
+          const origin = deps.publicOrigin.replace(/\/$/, '');
+          sendJson(res, 200, {
+            collector,
+            schedule_owner: 'brightdata',
+            auto_heal: false,
+            delivery: {
+              mode: 'webhook',
+              format: 'json',
+              url: `${origin}/api/ingest/${encodeURIComponent(issued.token)}`,
+            },
+          });
+        } catch (err) {
+          if (err instanceof BrightDataError) {
+            sendJson(res, 503, { error: 'Bright Data was unreachable while connecting this collector' });
+            return;
+          }
+          throw err;
+        }
         return;
       }
 

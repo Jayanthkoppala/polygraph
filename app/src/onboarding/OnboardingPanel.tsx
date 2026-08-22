@@ -1,19 +1,13 @@
 /**
- * The shared step content shell — ux-spec.md §6: "Three steps, a
- * persistent 3-dot progress rail." The bordered 480px card and page
- * centering ux-spec.md §3.3 describes now live on the real ReactBits
- * `Stepper`'s own `stepCircleContainerClassName` (see `OnboardingWizard.tsx`)
- * for steps 1-3, since nesting a second bordered box inside the Stepper's
- * own card would double the border. `bare` selects which shell this
- * component renders:
+ * Shared content for onboarding steps. The full-viewport journey and its
+ * progress rail live in `ConnectionShell`; `bare` keeps this component
+ * responsible only for the step heading and form contents.
  *
  *   - `bare = false` (default): the full standalone page — centered,
  *     bordered card, own background. Used only by `SignupStep`, which
  *     renders outside the Stepper entirely (ui-system.md §3.3 scopes the
  *     3-dot rail to the 3 named steps; signup isn't one of them).
- *   - `bare = true`: title/subtitle/children only, no outer wrapper — for
- *     every step mounted inside the Stepper's own `<Step>`, which already
- *     provides the page centering and the bordered card.
+ *   - `bare = true`: title/subtitle/children only, no outer wrapper.
  */
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';

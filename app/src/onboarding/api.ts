@@ -53,6 +53,35 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface GoogleAuthConfig {
+  clientId: string;
+}
+
+/** Public, cache-safe configuration for Google Identity Services. */
+export async function fetchGoogleAuthConfig(): Promise<GoogleAuthConfig> {
+  const res = await fetch('/api/auth/google/config', { headers: { accept: 'application/json' } });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const parsed = (await res.json()) as { error?: string };
+      if (parsed.error) detail = parsed.error;
+    } catch {
+      // Keep statusText.
+    }
+    throw new ApiError(detail, res.status);
+  }
+  const body = (await res.json()) as { client_id?: unknown };
+  if (typeof body.client_id !== 'string' || body.client_id.trim() === '') {
+    throw new ApiError('Google sign-in is not configured', 503);
+  }
+  return { clientId: body.client_id };
+}
+
+/** Exchanges the signed GIS credential for Polygraph's HttpOnly session. */
+export async function loginWithGoogleCredential(credential: string): Promise<void> {
+  await postJson('/api/auth/google', { credential });
+}
+
 /** POST /api/signup -> { token, tenant_id }. The token is a one-time
  * magic-link credential, never a session by itself — the caller must
  * navigate to `exchangeTokenUrl(token)` (a real browser navigation, not a
@@ -143,6 +172,35 @@ export async function saveApiKey(apiKey: string): Promise<SaveKeyOutcome> {
     }
     throw err;
   }
+}
+
+export interface ConnectedCollector {
+  id: string;
+  name: string;
+  scheduleOwner: 'brightdata';
+  autoHeal: false;
+  deliveryUrl: string;
+}
+
+/**
+ * Connects one collector using its published Bright Data output schema.
+ * Polygraph deliberately supplies no schedule or representative inputs:
+ * Bright Data remains the run source and customer auto-heal remains off.
+ */
+export async function connectCollector(collectorId: string): Promise<ConnectedCollector> {
+  const result = await postJson<{
+    collector: { collector_id: string; name: string };
+    schedule_owner: 'brightdata';
+    auto_heal: false;
+    delivery: { mode: 'webhook'; format: 'json'; url: string };
+  }>('/api/collectors/connect', { collector_id: collectorId });
+  return {
+    id: result.collector.collector_id,
+    name: result.collector.name,
+    scheduleOwner: result.schedule_owner,
+    autoHeal: result.auto_heal,
+    deliveryUrl: result.delivery.url,
+  };
 }
 
 /** POST /api/collectors — creates the draft row a collector's infer/probe/

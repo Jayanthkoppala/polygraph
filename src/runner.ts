@@ -209,6 +209,29 @@ export async function evaluateCollector(
   const adapter = getAdapter(collector.adapter);
   const result = await adapter.run(collector, collector.canary_inputs, ctx.adapterContext);
 
+  return evaluateRunResult(collector, result, ctx, { runCanary: true });
+}
+
+export interface EvaluateRunResultOptions {
+  /** Adapter-driven runs can re-run the canary when a structural failure is
+   * suspected. Push deliveries cannot: doing so would create a new paid
+   * Bright Data run, which the customer connection contract explicitly
+   * forbids. Those callers pass false and receive a quarantine decision
+   * from policy because no HealProof can be minted without canary evidence. */
+  runCanary: boolean;
+}
+
+/** Grades an already-delivered result through the same contract,
+ * coherence, identity, and cause pipeline as an adapter-driven run. This
+ * is the seam used by Bright Data webhook delivery: receiving a scheduled
+ * result must not trigger another scrape just to verify the rows. */
+export async function evaluateRunResult(
+  collector: Collector,
+  result: RunResult,
+  ctx: RunnerContext,
+  options: EvaluateRunResultOptions
+): Promise<{ result: RunResult; evidence: Evidence[]; cause: Cause }> {
+
   const evidence: Evidence[] = [];
   const registryEntry = COLLECTOR_REGISTRY[collector.name];
   const schema = ctx.schemas?.[collector.id] ?? registryEntry?.schema;
@@ -321,7 +344,7 @@ export async function evaluateCollector(
   // only with a failed canary confirmation alongside the failed structural
   // evidence (policy.ts's HealProof invariant) — so a live canary rerun is
   // only worth doing when cause is already STRUCTURAL.
-  if (cause === 'STRUCTURAL') {
+  if (cause === 'STRUCTURAL' && options.runCanary) {
     const requiredFields = schema
       ? Object.keys(schema.fields).filter((f) => schema.fields[f].required)
       : [];

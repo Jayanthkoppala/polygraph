@@ -86,7 +86,7 @@ describe('onboarding state machine', () => {
       expect(state.keyError).toBeNull();
     });
 
-    it('manual entry from the fallback moves straight into schema-confirm on the first candidate', () => {
+    it('manual entry from the fallback reaches the connected handoff without asking for schema or identity inputs', () => {
       const fallback = apply(initialOnboardingState, [
         { type: 'SIGNUP_SUCCEEDED', tenantId: 't_1' },
         { type: 'KEY_SUBMITTED' },
@@ -99,13 +99,13 @@ describe('onboarding state machine', () => {
           { id: 'shopify-skus', name: 'shopify-skus' },
         ],
       });
-      expect(entered.stage).toBe('schema-confirm');
-      expect(entered.confirmIndex).toBe(0);
-      expect(currentCandidate(entered)?.id).toBe('amazon-prices');
+      expect(entered.stage).toBe('first-verdict');
+      expect(entered.confirmedIds).toEqual(['amazon-prices', 'shopify-skus']);
+      expect(currentCandidate(entered)).toBeNull();
     });
   });
 
-  describe('schema-confirm loop', () => {
+  describe('direct collector connection', () => {
     const withCandidates = apply(initialOnboardingState, [
       { type: 'SIGNUP_SUCCEEDED', tenantId: 't_1' },
       { type: 'KEY_SUBMITTED' },
@@ -126,40 +126,10 @@ describe('onboarding state machine', () => {
       },
     ]);
 
-    it('confirming a collector advances to the next candidate, not to first-verdict early', () => {
-      const afterFirst = onboardingReducer(withCandidates, { type: 'COLLECTOR_CONFIRMED', id: 'a' });
-      expect(afterFirst.stage).toBe('schema-confirm');
-      expect(afterFirst.confirmIndex).toBe(1);
-      expect(afterFirst.confirmedIds).toEqual(['a']);
-      expect(currentCandidate(afterFirst)?.id).toBe('b');
-    });
-
-    it('a zero-row probe skips the collector (NOT VERIFIED) and continues rather than blocking', () => {
-      const afterFirst = onboardingReducer(withCandidates, { type: 'COLLECTOR_SKIPPED_EMPTY', id: 'a' });
-      expect(afterFirst.stage).toBe('schema-confirm');
-      expect(afterFirst.skippedIds).toEqual(['a']);
-      expect(afterFirst.confirmedIds).toEqual([]);
-      expect(currentCandidate(afterFirst)?.id).toBe('b');
-    });
-
-    it('resolving the last candidate (confirmed or skipped) reaches first-verdict', () => {
-      const afterFirst = onboardingReducer(withCandidates, { type: 'COLLECTOR_CONFIRMED', id: 'a' });
-      const afterSecond = onboardingReducer(afterFirst, { type: 'COLLECTOR_SKIPPED_EMPTY', id: 'b' });
-      expect(afterSecond.stage).toBe('first-verdict');
-      expect(afterSecond.confirmedIds).toEqual(['a']);
-      expect(afterSecond.skippedIds).toEqual(['b']);
-      expect(currentCandidate(afterSecond)).toBeNull();
-    });
-
-    it('a mix of every candidate skipped-empty still reaches first-verdict, never stuck', () => {
-      const single = apply(initialOnboardingState, [
-        { type: 'SIGNUP_SUCCEEDED', tenantId: 't_1' },
-        { type: 'KEY_SUBMITTED' },
-        { type: 'KEY_VERIFIED', last4: '3f2a', collectors: [{ id: 'only', name: 'only' }] },
-        { type: 'COLLECTORS_SELECTED', collectors: [{ id: 'only', name: 'only' }] },
-      ]);
-      const done = onboardingReducer(single, { type: 'COLLECTOR_SKIPPED_EMPTY', id: 'only' });
-      expect(done.stage).toBe('first-verdict');
+    it('records the selected collectors as connected immediately after the real connect call succeeds', () => {
+      expect(withCandidates.stage).toBe('first-verdict');
+      expect(withCandidates.confirmedIds).toEqual(['a', 'b']);
+      expect(currentCandidate(withCandidates)).toBeNull();
     });
   });
 });

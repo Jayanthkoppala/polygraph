@@ -18,6 +18,13 @@ vi.mock('./api', async () => {
   return {
     ...actual,
     saveApiKey: vi.fn(),
+    connectCollector: vi.fn().mockResolvedValue({
+      id: 'amazon-prices',
+      name: 'amazon-prices',
+      scheduleOwner: 'brightdata',
+      autoHeal: false,
+      deliveryUrl: 'https://polygraph.test/api/ingest/pgi_test',
+    }),
     createCollectorDraft: vi.fn().mockResolvedValue(undefined),
     inferCollectorSchema: vi.fn().mockResolvedValue({ fieldNames: [] }),
     probeCollectorLive: vi.fn(),
@@ -35,7 +42,7 @@ const noop = () => {};
 describe('every onboarding input carries a real, associated label', () => {
   it('the manual collector-ID textarea is labelled, not just placeheld', () => {
     render(<CollectorsFallbackStep onContinue={noop} />);
-    expect(screen.getByLabelText(/collector ids/i)).toBe(screen.getByTestId('manual-collector-ids'));
+    expect(screen.getByLabelText(/collector id/i)).toBe(screen.getByTestId('manual-collector-ids'));
   });
 
   it('the canary-input textarea is labelled', () => {
@@ -65,8 +72,8 @@ describe('the progress rail', () => {
   it('announces which step of how many, and marks the current one', () => {
     render(<OnboardingWizard initialStage="key-paste" />);
     const rail = screen.getByRole('list', { name: /onboarding progress/i });
-    expect(rail).toHaveAccessibleName(/step 1 of 3/i);
-    expect(screen.getByRole('listitem', { current: 'step' })).toHaveAccessibleName(/step 1/i);
+    expect(rail).toHaveAccessibleName(/step 2 of 4/i);
+    expect(screen.getByRole('listitem', { current: 'step' })).toHaveAccessibleName(/step 2/i);
   });
 
   it('is not dimmed to a disabled treatment just because its dots are not clickable', () => {
@@ -120,7 +127,7 @@ describe('keyboard', () => {
     expect(document.activeElement).toBe(heading);
   });
 
-  it('focus follows a screen change WITHIN one rail position (collectors-found -> schema-confirm)', async () => {
+  it('focus follows the collector connection into the honest waiting state', async () => {
     vi.mocked(api.saveApiKey).mockResolvedValue({
       kind: 'verified',
       last4: '3f2a',
@@ -133,12 +140,10 @@ describe('keyboard', () => {
     });
     await screen.findByTestId('discovered-collectors');
 
-    // Both of these screens sit at rail position 2, so keying focus off the
-    // position alone silently skipped this transition.
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /watch 1 collector/i }));
+      fireEvent.click(screen.getByRole('button', { name: /connect selected collector/i }));
     });
-    const heading = await screen.findByRole('heading', { name: /point at amazon-prices/i });
+    const heading = await screen.findByRole('heading', { name: /finish the connection/i });
     expect(document.activeElement).toBe(heading);
   });
 

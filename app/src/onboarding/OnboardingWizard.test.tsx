@@ -18,6 +18,13 @@ vi.mock('./api', async () => {
   return {
     ...actual,
     saveApiKey: vi.fn(),
+    connectCollector: vi.fn().mockResolvedValue({
+      id: 'amazon-prices',
+      name: 'amazon-prices',
+      scheduleOwner: 'brightdata',
+      autoHeal: false,
+      deliveryUrl: 'https://polygraph.test/api/ingest/pgi_test',
+    }),
     createCollectorDraft: vi.fn().mockResolvedValue(undefined),
     inferCollectorSchema: vi.fn().mockResolvedValue({ fieldNames: [] }),
     probeCollectorLive: vi.fn(),
@@ -32,13 +39,9 @@ afterEach(() => {
 
 const FAKE_KEY = 'brd_customer_hp_never_shown_again_998877';
 
-describe('OnboardingWizard — full 403 fallback path, key never re-rendered', () => {
-  it('walks key-paste -> fallback -> schema-confirm -> first-verdict without ever showing the pasted key again', async () => {
+describe('OnboardingWizard — full fallback path, key never re-rendered', () => {
+  it('walks key-paste -> fallback -> connected without representative inputs or schema questions', async () => {
     vi.mocked(api.saveApiKey).mockResolvedValue({ kind: 'list-unavailable' });
-    vi.mocked(api.probeCollectorLive).mockResolvedValue({
-      fields: [{ name: 'sku', type: 'string', sample: 'SKU-4471', everFilled: true }],
-      empty: false,
-    });
     const onComplete = vi.fn();
 
     render(<OnboardingWizard initialStage="key-paste" onComplete={onComplete} />);
@@ -56,31 +59,15 @@ describe('OnboardingWizard — full 403 fallback path, key never re-rendered', (
     expect(document.body.textContent).not.toMatch(/your account is broken/i);
 
     fireEvent.change(screen.getByTestId('manual-collector-ids'), { target: { value: 'amazon-prices' } });
-    // Scoped to this step's own panel: the packaged ReactBits Stepper also
-    // renders its own generic (hidden-in-production-CSS, but still present
-    // in jsdom without compiled Tailwind) "Continue" button in its footer —
-    // see OnboardingWizard.tsx's footerClassName="hidden" comment.
-    fireEvent.click(within(screen.getByTestId('onboarding-panel')).getByRole('button', { name: /continue/i }));
-
-    // Schema-confirm: point at the (only) collector, run the probe.
-    await screen.findByTestId('canary-inputs');
-    expect(document.body.textContent).not.toContain(FAKE_KEY);
-    fireEvent.change(screen.getByTestId('canary-inputs'), { target: { value: 'SKU-4471' } });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /run it once/i }));
+      fireEvent.click(within(screen.getByTestId('onboarding-panel')).getByRole('button', { name: /connect collector/i }));
     });
 
-    const table = await screen.findByTestId('schema-confirm-table');
-    expect(table).toBeInTheDocument();
-    expect(document.body.textContent).not.toContain(FAKE_KEY);
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /looks right/i }));
-    });
-
-    // Only one candidate — straight to first-verdict.
     const status = await screen.findByTestId('first-verdict-status');
     expect(status).toHaveAttribute('data-verdict-state', 'NOT_CHECKED');
+    expect(api.connectCollector).toHaveBeenCalledWith('amazon-prices');
+    expect(screen.queryByTestId('canary-inputs')).not.toBeInTheDocument();
+    expect(screen.getByTestId('delivery-url')).toHaveTextContent('https://polygraph.test/api/ingest/pgi_test');
     expect(document.body.textContent).not.toContain(FAKE_KEY);
 
     fireEvent.click(screen.getByTestId('go-to-fleet'));
@@ -111,15 +98,19 @@ describe('the verified-key path reaches ux-spec.md §6\'s payoff screen', () => 
     // branches on the candidate before the stage skips this screen
     // entirely. It did, for every tenant whose key verified.
     const list = await screen.findByTestId('discovered-collectors');
-    expect(within(list).getByText('amazon-prices')).toBeInTheDocument();
-    expect(within(list).getByText('shopify-skus')).toBeInTheDocument();
+    expect(within(list).getAllByText('amazon-prices').length).toBeGreaterThan(0);
+    expect(within(list).getAllByText('shopify-skus').length).toBeGreaterThan(0);
     expect(screen.getByText(/found 2 collectors on the key ending 3f2a/i)).toBeInTheDocument();
     expect(screen.queryByTestId('canary-inputs')).not.toBeInTheDocument();
 
-    // ...and only then does the schema-confirm step take over.
+    // ...and only then does the real connection call reach the honest
+    // awaiting-result handoff. No canary/identity/schema form appears.
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /watch 2 collectors/i }));
+      fireEvent.click(screen.getByRole('button', { name: /connect selected collector/i }));
     });
-    expect(await screen.findByTestId('canary-inputs')).toBeInTheDocument();
+    expect(api.connectCollector).toHaveBeenCalledWith('amazon-prices');
+    expect(await screen.findByTestId('first-verdict-status')).toBeInTheDocument();
+    expect(screen.getByTestId('delivery-url')).toHaveTextContent('https://polygraph.test/api/ingest/pgi_test');
+    expect(screen.queryByTestId('canary-inputs')).not.toBeInTheDocument();
   });
 });

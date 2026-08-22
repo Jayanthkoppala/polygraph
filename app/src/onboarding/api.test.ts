@@ -7,7 +7,16 @@
  * still moving under this client (see module doc).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { saveApiKey, probeCollectorLive, signup, exchangeTokenUrl, ApiError } from './api';
+import {
+  saveApiKey,
+  probeCollectorLive,
+  signup,
+  exchangeTokenUrl,
+  fetchGoogleAuthConfig,
+  loginWithGoogleCredential,
+  connectCollector,
+  ApiError,
+} from './api';
 
 function mockFetchOnce(status: number, body: unknown) {
   vi.stubGlobal(
@@ -89,5 +98,43 @@ describe('signup / exchangeTokenUrl', () => {
 
   it('exchangeTokenUrl encodes the token into the one-time link', () => {
     expect(exchangeTokenUrl('a b/c')).toBe('/t/a%20b%2Fc');
+  });
+});
+
+describe('Google authentication', () => {
+  it('reads the public GIS client id', async () => {
+    mockFetchOnce(200, { client_id: 'client.apps.googleusercontent.com' });
+    await expect(fetchGoogleAuthConfig()).resolves.toEqual({ clientId: 'client.apps.googleusercontent.com' });
+  });
+
+  it('posts the signed credential to the server session exchange', async () => {
+    mockFetchOnce(200, { ok: true });
+    await loginWithGoogleCredential('signed-id-token');
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/auth/google',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ credential: 'signed-id-token' }) }),
+    );
+  });
+});
+
+describe('connectCollector', () => {
+  it('sends only the selected collector id and maps the explicit customer policy', async () => {
+    mockFetchOnce(200, {
+      collector: { collector_id: 'c_products', name: 'Daily Products' },
+      schedule_owner: 'brightdata',
+      auto_heal: false,
+      delivery: { mode: 'webhook', format: 'json', url: 'https://polygraph.example/api/ingest/pgi_test' },
+    });
+    await expect(connectCollector('c_products')).resolves.toEqual({
+      id: 'c_products',
+      name: 'Daily Products',
+      scheduleOwner: 'brightdata',
+      autoHeal: false,
+      deliveryUrl: 'https://polygraph.example/api/ingest/pgi_test',
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/collectors/connect',
+      expect.objectContaining({ body: JSON.stringify({ collector_id: 'c_products' }) }),
+    );
   });
 });
