@@ -469,15 +469,20 @@ export class BrightDataClient {
    * Bright Data documents a heal as taking up to ~15 minutes; the default
    * deadlineMs (20min) leaves headroom above that.
    */
-  async pollRefactorTemplateProgress(collectorId: string, opts: PollOptions = {}): Promise<RefactorProgress> {
+  async pollRefactorTemplateProgress(
+    collectorId: string,
+    opts: PollOptions = {},
+    behavior: { stopAtApproval?: boolean } = {}
+  ): Promise<RefactorProgress> {
     const poll = resolvePoll(opts, REFACTOR_POLL_DEFAULTS);
+    const stopAtApproval = behavior.stopAtApproval ?? true;
     const start = Date.now();
 
     for (;;) {
       const progress = await this.refactorTemplateProgress(collectorId);
       const status = String(progress.status ?? '').toLowerCase();
 
-      if (REFACTOR_SUCCESS_STATES.has(status) || isAwaitingApproval(progress)) return progress;
+      if (REFACTOR_SUCCESS_STATES.has(status) || (stopAtApproval && isAwaitingApproval(progress))) return progress;
       if (REFACTOR_FAILURE_STATES.has(status)) {
         throw new BrightDataError(
           `refactor_template job for ${collectorId} ended with status "${progress.status}"`,

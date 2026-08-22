@@ -55,8 +55,12 @@ Secrets never belong in a config file — set them in the service environment.
 
 The live V1→V2 mission runs only with `POLYGRAPH_DEMO_LIVE=1` plus the full
 `POLYGRAPH_DEMO_*` set (`COLLECTOR_ID`, `FIXTURE_URL`, `FIXTURE_REPO`,
-`FIXTURE_WORKFLOW`, `EXPECTED_SKU`, `EXPECTED_PRICE`, `EXPECTED_CURRENCY`,
+`FIXTURE_WORKFLOW`, `EXPECTED_PRODUCT_CODE`, `EXPECTED_PRICE`, `EXPECTED_CURRENCY`,
 `EXPECTED_SYMBOL`, `MAX_MISSIONS`, `GITHUB_TOKEN`).
+
+`EXPECTED_SKU` remains a temporary fallback for an older VM environment, but the
+current fixture identity is a product code and new deployments must use
+`EXPECTED_PRODUCT_CODE`.
 
 `POLYGRAPH_HEAL_ENABLED=1` and `POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE=1`
 authorise Bright Data mutations **for the owned fixture collector only**. The

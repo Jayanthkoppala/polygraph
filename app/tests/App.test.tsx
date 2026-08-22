@@ -82,7 +82,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId('landing-scene')).toBeEmptyDOMElement();
+    expect(screen.getByTestId('landing-scene')).toHaveTextContent(/we built a version-shifting store for this test/i);
   });
 
   it('an unknown path redirects to the landing page, never a raw 404 shell', () => {
@@ -91,7 +91,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId('landing-scene')).toBeEmptyDOMElement();
+    expect(screen.getByTestId('landing-scene')).toHaveTextContent(/we built a version-shifting store for this test/i);
   });
 
   it('/legal/privacy renders a real privacy notice instead of redirecting to the landing page', () => {
@@ -122,7 +122,7 @@ describe('AppRoutes', () => {
       </MemoryRouter>,
     );
     await waitFor(() =>
-      expect(screen.getByTestId('landing-scene')).toBeEmptyDOMElement(),
+      expect(screen.getByTestId('landing-scene')).toHaveTextContent(/we built a version-shifting store for this test/i),
     );
   });
 
@@ -161,6 +161,29 @@ describe('AppRoutes', () => {
     );
     await waitFor(() => expect(screen.getByText(/collector fleet/i)).toBeInTheDocument());
     expect(screen.getByText('demo-fleet')).toBeInTheDocument();
+  });
+
+  it('/receipts renders the completed demo receipt without customer onboarding', async () => {
+    mockApi({
+      '/api/demo/receipts': { status: 200, body: { receipts: [{
+        id: 'mission-demo', source: 'demo', collector: 'c_demo', collector_name: 'Version-shift demo collector',
+        incident_run_id: 'job-b', heal_job_id: 'heal-1', detected_at: '2026-08-22T10:00:00.000Z',
+        repair_started_at: '2026-08-22T10:01:00.000Z', completed_at: '2026-08-22T10:03:00.000Z',
+        status: 'verified', cause: 'STRUCTURAL', incident_verdict: 'FAILED_STRUCTURAL',
+        changed_fields: ['product_code', 'title', 'price'], change_summary: 'Three extraction fields regressed.',
+        repair_prompt: 'Restore three fields.', proof_run_id: 'job-c', terminal_ledger_id: null, event_hash: null,
+      }] } },
+      '/api/receipts': { status: 401, body: { error: 'authentication required' } },
+    });
+    render(
+      <MemoryRouter initialEntries={['/receipts']}>
+        <AppRoutes />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('heading', { name: /repair receipts/i })).toBeInTheDocument();
+    expect(await screen.findByText(/version-shift demo collector/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('api-key-input')).not.toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalledWith('/api/settings/key/status', expect.anything());
   });
 
   it('/signup for an anonymous visitor shows the local workspace entry', async () => {

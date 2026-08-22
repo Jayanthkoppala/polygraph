@@ -141,7 +141,7 @@ export function applySecurityHeaders(res: ServerResponse): void {
   res.setHeader(
     'Content-Security-Policy',
     "default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/client; " +
-      "style-src 'self' 'unsafe-inline'; frame-src https://accounts.google.com; connect-src 'self' https://accounts.google.com"
+      "style-src 'self' 'unsafe-inline'; frame-src https://accounts.google.com https://polygraph-version-shift-store.vercel.app; connect-src 'self' https://accounts.google.com"
   );
 }
 
@@ -208,4 +208,3 @@ export async function buildDashboardState(
   });
   return buildFleetState(config, ctx.ledger, ctx.governor, nowIso);
 }
-

@@ -4,7 +4,7 @@
   isolation: isolate;
   min-height: 100svh;
   overflow-x: clip;
-  background: #0010ca;
+  background: var(--poly-graphite);
   color: #f4f4f1;
 }
 
@@ -16,8 +16,8 @@
 }
 
 .global-chrome__dither { z-index: 0; }
-.global-chrome__dither [data-dither-fallback='true'] { background: #0010ca; }
-.global-chrome__shade { z-index: 1; background: rgb(0 0 0 / 0.2); }
+.global-chrome__dither [data-dither-fallback='true'] { background: var(--poly-primary); }
+.global-chrome__shade { z-index: 1; background: rgb(0 0 0 / 0.46); }
 
 .global-chrome__content {
   position: relative;
@@ -33,7 +33,7 @@
   flex: 0 0 40px;
   overflow: hidden;
   border-radius: 12px;
-  background: #0010ca;
+  background: var(--poly-primary);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18), 0 8px 24px rgb(0 16 202 / 0.28);
 }
 
@@ -42,7 +42,7 @@
   inset: auto 7px 7px;
   height: 17px;
   border-radius: 5px;
-  background: #145fff;
+  background: var(--poly-primary-bright);
   content: '';
   opacity: 0.82;
 }
@@ -70,9 +70,10 @@
   min-height: 72px;
   margin: 18px auto 0;
   padding: 8px 12px;
-  border-radius: 28px;
-  background: #000;
-  box-shadow: 0 18px 44px rgb(0 0 0 / 0.28);
+  border: 1px solid var(--poly-border);
+  border-radius: 32px;
+  background: rgb(30 30 30 / 0.94);
+  box-shadow: 0 18px 44px rgb(0 0 0 / 0.38), inset 0 1px 0 rgb(255 255 255 / 0.04);
 }
 
 .poly-nav-brand,
@@ -83,6 +84,11 @@
   color: #f4f4f1;
   cursor: pointer;
   text-decoration: none;
+}
+
+.poly-nav-links [aria-current='page'] {
+  color: #fff;
+  box-shadow: inset 0 -2px 0 var(--poly-primary-bright);
 }
 
 .poly-nav-brand {
@@ -113,7 +119,7 @@
   min-height: 44px;
   align-items: center;
   padding: 0 13px;
-  color: #818181;
+  color: var(--poly-secondary);
   font-size: 13px;
   font-weight: 550;
   transition-property: color, transform;
@@ -121,28 +127,50 @@
   transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
+.poly-nav-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 8px;
+}
+
+.poly-nav-connect,
 .poly-nav-cta {
   display: inline-flex;
   min-height: 46px;
   align-items: center;
-  justify-self: end;
+  justify-content: center;
   gap: 8px;
-  padding: 0 15px 0 17px;
-  border: 0;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: none;
-  color: #050505;
+  color: #fff;
   cursor: pointer;
   font: 650 13px/1 Geist, ui-sans-serif, system-ui, sans-serif;
+  text-decoration: none;
   transition-property: background-color, color, transform;
   transition-duration: 150ms;
   transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
+.poly-nav-connect {
+  min-width: 86px;
+  padding: 0 16px;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 32px;
+  background: rgb(255 255 255 / 0.06);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+.poly-nav-cta {
+  padding: 0 15px 0 17px;
+  border: 0;
+  border-radius: 32px;
+  background: var(--poly-primary);
+  box-shadow: none;
+}
+
 .poly-nav-brand:focus-visible,
 .poly-nav-links button:focus-visible,
 .poly-nav-links a:focus-visible,
+.poly-nav-connect:focus-visible,
 .poly-nav-cta:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 3px;
@@ -151,6 +179,7 @@
 .poly-nav-brand:active,
 .poly-nav-links button:active,
 .poly-nav-links a:active,
+.poly-nav-connect:active,
 .poly-nav-cta:active { transform: scale(0.96); }
 
 .poly-nav-links button:disabled {
@@ -196,7 +225,8 @@
   .poly-nav-brand:hover { opacity: 0.84; }
   .poly-nav-links button:hover,
   .poly-nav-links a:hover { color: #fff; }
-  .poly-nav-cta:hover { background: #e8e8e8; color: #000; }
+  .poly-nav-connect:hover { background: rgb(255 255 255 / 0.12); }
+  .poly-nav-cta:hover { background: var(--poly-primary-bright); color: #fff; }
 }
 
 @media (max-width: 1080px) {
@@ -221,6 +251,8 @@
   .global-chrome { --poly-chrome-offset: 124px; }
   .poly-floating-nav { top: 10px; width: calc(100% - 20px); margin-top: 10px; padding: 7px 8px; }
   .poly-nav-brand .poly-brand-mark { width: 36px; height: 36px; flex-basis: 36px; }
+  .poly-nav-actions { gap: 6px; }
+  .poly-nav-connect { min-width: 76px; padding: 0 12px; }
   .poly-nav-cta { padding: 0 11px 0 13px; }
   .poly-nav-links button,
   .poly-nav-links a { padding: 0 4px; font-size: 11px; }

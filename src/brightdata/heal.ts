@@ -164,7 +164,11 @@ export async function healOwnedFixture(
     throw new BrightDataError(`owned fixture heal did not stop at the required approval gate (status "${progress.status}")`);
   }
   await options.client.resumeAutomationJob(collectorId, { message: true, autoSave: true });
-  progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts);
+  // Bright Data preserves step="user_approval" after resume, including on
+  // its terminal done envelope. Approval has already happened here, so this
+  // poll must wait for terminal success/failure instead of stopping on that
+  // stale step marker a second time.
+  progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts, { stopAtApproval: false });
   const status = String(progress.status ?? '').toLowerCase();
   if (!OWNED_FIXTURE_SUCCESS_STATES.has(status)) {
     throw new BrightDataError(`owned fixture heal did not finish successfully (status "${progress.status}")`);
@@ -522,6 +526,7 @@ export async function healCollector(
     // Structurally the only cause a REPAIR heal_prompt can come from — see
     // policy.ts's decideStructural/deriveHealProof; not re-derived here.
     cause: 'STRUCTURAL',
+    evidence: [{ check: 'repair_prompt', ok: true, detail: prompt }],
     action: 'REPAIR',
     heal_job_id: healJobId,
   }));
@@ -541,7 +546,7 @@ export async function healCollector(
         return { status: 'pending_approval', healJobId, progress };
       }
       await options.client.resumeAutomationJob(collectorId, { message: true, autoSave: true });
-      progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts);
+      progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts, { stopAtApproval: false });
     }
 
     // Do NOT trust `progress.status === "done"` as proof the fix reached

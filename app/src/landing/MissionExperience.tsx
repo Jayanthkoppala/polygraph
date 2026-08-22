@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { ArrowRight, Check } from '@phosphor-icons/react';
+import { ArrowRight, ArrowSquareOut, GithubLogo, GlobeHemisphereWest } from '@phosphor-icons/react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import CardSwap, { Card } from '@/components/CardSwap';
+import DecryptedText from '@/components/reactbits/DecryptedText';
+import FuzzyText from '@/components/reactbits/FuzzyText';
+import SplitFlapText from '@/components/reactbits/SplitFlapText';
+import TextType from '@/components/reactbits/TextType';
+import { Highlighter } from '@/components/magicui/Highlighter';
+import { Safari } from '@/components/magicui/Safari';
+import { ShinyButton } from '@/components/magicui/ShinyButton';
+import { JsonDifference, MissionProgressRail, PolygraphProcessGraphic, RecoverySuccess, type MissionProgressStage } from '@/components/story/MissionStoryVisuals';
 import { HOME_EVENT, PROOF_REQUEST_EVENT, RECEIPT_EVENT, RECEIPT_STATE_EVENT, START_PROOF_EVENT } from '@/components/GlobalChrome';
 import {
   createMission,
@@ -14,15 +24,14 @@ import './MissionExperience.css';
 
 type StoryScene = 'landing' | 'baseline' | 'deploy' | 'broken' | 'diagnosis' | 'heal' | 'proof' | 'replay' | 'connect';
 type RequestState = 'idle' | 'start' | 'shift' | 'reset';
+type ExperienceMode = 'landing' | 'proof';
 
-const BACKEND_STAGE = {
-  landing: 0,
-  v1_baseline: 1,
-  deploy_wait: 2,
-  broken_v2: 3,
-  diagnosis: 4,
-  self_healing: 5,
-  receipt: 6,
+const STORY_SCENE_PAUSE_MS = {
+  replayBaseline: 3_000,
+  deploy: 2_000,
+  broken: 4_000,
+  diagnosis: 4_000,
+  heal: 3_200,
 } as const;
 
 function errorDetail(error: unknown) {
@@ -31,10 +40,6 @@ function errorDetail(error: unknown) {
 
 function eventFor(mission: MissionState | null, step: string) {
   return mission?.events.find((event) => event.step === step);
-}
-
-function hasReached(mission: MissionState | null, stage: keyof typeof BACKEND_STAGE) {
-  return BACKEND_STAGE[mission?.scene ?? 'landing'] >= BACKEND_STAGE[stage];
 }
 
 function readableStep(step: string) {
@@ -50,20 +55,34 @@ function providerTime(value?: string) {
 }
 
 function missionFacts(mission: MissionState | null, step = 'baseline_a') {
+  const observation = step === 'receipt' ? mission?.evidence.proofResult : mission?.evidence.baselineResult;
   const detail = eventFor(mission, step)?.detail ?? '';
-  const match = detail.match(/SKU\s+([^\s,]+).*?\bat\s+([£$€₹]?[0-9][\d.,]*)/i);
+  const identity = detail.match(/(?:SKU|product code|fields for)\s+([^\s,]+).*?\bat\s+([£$€₹]?[0-9][\d.,]*)/i);
+  const value = observation?.price.value;
+  const price = value === null || value === undefined
+    ? identity?.[2] ?? '—'
+    : `${observation?.price.symbol ?? ''}${value.toFixed(2)}`;
   return {
-    sku: match?.[1] ?? 'awaiting provider proof',
-    price: match?.[2] ?? '—',
+    productCode: observation?.productCode ?? identity?.[1] ?? 'awaiting provider proof',
+    title: observation?.title ?? 'awaiting product title',
+    price,
+    availability: observation?.availability ?? 'awaiting availability',
   };
 }
 
-function evidenceHost(value: string | null) {
-  if (!value) return 'polygraph-version-shift-store.vercel.app';
+function readableFields(fields: string[]) {
+  const labels = fields.map((field) => field.replaceAll('_', ' '));
+  if (labels.length < 2) return labels[0] ?? 'collector output';
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+  return `${labels.slice(0, -1).join(', ')}, and ${labels.at(-1)}`;
+}
+
+function immutableSnapshotUrl(liveFixtureUrl: string | null, version: 'v1' | 'v2') {
+  if (!liveFixtureUrl) return null;
   try {
-    return new URL(value).host;
+    return new URL(`/versions/${version}`, liveFixtureUrl).toString();
   } catch {
-    return value;
+    return liveFixtureUrl;
   }
 }
 
@@ -71,157 +90,234 @@ function SceneButton({ children, onClick, variant = 'primary', disabled = false,
   return <Button type="button" data-testid={testId} disabled={disabled} onClick={onClick} variant={variant === 'primary' ? 'default' : 'ghost'} className={`pg-action pg-action-${variant}`}>{children}</Button>;
 }
 
-function EvidenceLink({ href, children }: { href: string | null | undefined; children: ReactNode }) {
-  if (!href) return null;
-  return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
+type VersionFocus = 'v1' | 'v2' | 'both';
+
+const FIXTURE_REPOSITORY_URL = 'https://github.com/Jayanthkoppala/polygraph-version-shift-store';
+const FIXTURE_LIVE_URL = 'https://polygraph-version-shift-store.vercel.app';
+
+function displayUrl(url: string) {
+  return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
 }
 
-function StoryTopbar({ mission, label, tone = 'neutral' }: { mission: MissionState; label: string; tone?: 'neutral' | 'pass' | 'warn' | 'fail' }) {
+function ProofSources({ liveUrl }: { liveUrl: string | null }) {
+  const verifiedLiveUrl = liveUrl ?? FIXTURE_LIVE_URL;
   return (
-    <header className="pg-topbar">
-      <span className="pg-story-context">LIVE PROOF · OWNED FIXTURE</span>
-      <div className="pg-top-meta"><span className="pg-chip pg-chip-muted">MISSION {mission.id} · {mission.status}</span><span className={`pg-chip pg-chip-${tone}`}>{label}</span></div>
-    </header>
+    <aside className="pg-proof-sources" aria-label="Verify this proof yourself">
+      <span className="pg-proof-sources__label">Verify it yourself</span>
+      <a href={FIXTURE_REPOSITORY_URL} target="_blank" rel="noreferrer">
+        <GithubLogo weight="fill" aria-hidden="true" />
+        <span><b>GitHub</b><small>{displayUrl(FIXTURE_REPOSITORY_URL)}</small></span>
+        <ArrowSquareOut aria-hidden="true" />
+      </a>
+      <a href={verifiedLiveUrl} target="_blank" rel="noreferrer">
+        <GlobeHemisphereWest weight="duotone" aria-hidden="true" />
+        <span><b>Live store</b><small>{displayUrl(verifiedLiveUrl)}</small></span>
+        <ArrowSquareOut aria-hidden="true" />
+      </a>
+    </aside>
   );
 }
 
-function VersionRail({ active }: { active: 1 | 2 | 3 | 4 }) {
-  const steps = ['V1 verified', 'V2 break', 'Recover', 'Prove'];
+function VersionFrame({ version, source, muted }: { version: 'v1' | 'v2'; source: string | null; muted: boolean }) {
+  const label = version === 'v1' ? 'Initial snapshot' : 'Switched version';
+  const detail = version === 'v1' ? 'reference page' : 'changed page';
+  const displayUrl = source ? source.replace(/^https?:\/\//, '') : 'connecting…';
   return (
-    <nav className="pg-version-rail" aria-label="V1 to V2 recovery sequence">
-      {steps.map((step, index) => {
-        const value = index + 1;
-        const failed = active > 2 && value === 2;
-        const done = value < active && !failed;
-        return <div key={step} className={`pg-version-step ${value === active ? 'active' : ''} ${done ? 'done' : ''} ${failed ? 'failed' : ''}`}><b>0{value}</b> {step}</div>;
-      })}
-    </nav>
+    <figure className={`pg-version-frame ${muted ? 'is-muted' : ''}`} data-version={version}>
+      <figcaption><span>{label}</span><span>{detail}</span></figcaption>
+      <Safari url={displayUrl} className="pg-version-safari">{source
+        ? <iframe className="pg-version-iframe" title={`Live product page — ${label.toLowerCase()}`} src={source} sandbox="allow-scripts allow-same-origin" loading="eager" />
+        : <div className="pg-version-empty">The live page is still connecting.</div>}</Safari>
+    </figure>
   );
 }
 
-// Every mission scene is the same four-part frame: topbar, rail, one stage
-// wrapper, command bar. Only `wrap` and the slots differ.
-function SceneShell({ state, mission, label, tone, rail, wrap, children, footer }: { state: string; mission: MissionState; label: string; tone?: 'neutral' | 'pass' | 'warn' | 'fail'; rail: 1 | 2 | 3 | 4; wrap: string; children: ReactNode; footer: ReactNode }) {
+function VersionPair({ mission, focus }: { mission: MissionState; focus: VersionFocus }) {
+  const liveFixtureUrl = mission.evidence.liveFixtureUrl;
   return (
-    <div className={`pg-app ${state}`}><StoryTopbar mission={mission} label={label} tone={tone} /><VersionRail active={rail} />
-      <main className="pg-stage"><div className={wrap}>{children}</div></main>
-      <footer className="pg-commandbar">{footer}</footer>
+    <section className="pg-version-pair" aria-label="Live product versions">
+      <VersionFrame version="v1" source={immutableSnapshotUrl(liveFixtureUrl, 'v1')} muted={focus === 'v2'} />
+      <VersionFrame version="v2" source={immutableSnapshotUrl(liveFixtureUrl, 'v2')} muted={focus === 'v1'} />
+    </section>
+  );
+}
+
+function ConversationScene({ state, activeStage, reducedMotion, visual, children }: { state: string; activeStage: MissionProgressStage; reducedMotion: boolean; visual: ReactNode; children: ReactNode }) {
+  return (
+    <div className={`pg-app pg-conversation-app ${state}`}>
+      <main className="pg-conversation-stage" data-testid="conversation-scene">
+        <MissionProgressRail active={activeStage} reducedMotion={reducedMotion} />
+        <section className="pg-conversation" aria-live="polite">{children}</section>
+        <div className="pg-conversation-visual">{visual}</div>
+      </main>
     </div>
   );
 }
 
-function BrowserDots() {
-  return <span className="pg-browser-dots" aria-hidden="true"><i /><i /><i /></span>;
+function StoryLine({ children, quiet = false }: { children: ReactNode; quiet?: boolean }) {
+  return <div className={`pg-conversation-line ${quiet ? 'is-quiet' : ''}`}><span aria-hidden="true" /><div>{children}</div></div>;
 }
 
-function Headphones() {
-  return <div className="pg-headphones" aria-hidden="true" />;
-}
-
-function ProductBrowser({ version, selector, price, sku, host }: { version: 'V1' | 'V2'; selector: string; price: string; sku: string; host: string }) {
+function VerdictStack({ reducedMotion }: { reducedMotion: boolean }) {
   return (
-    <div className="pg-window-inner">
-      <div className="pg-browserbar"><BrowserDots /><span className="pg-url">{host}</span><span className="pg-version-badge">{version} · LIVE FIXTURE</span></div>
-      <div className="pg-product">
-        <div className="pg-product-visual"><Headphones /><span className="pg-stamp">{selector}</span></div>
-        <div className="pg-product-info"><span className="pg-eyebrow">OWNED DEMO FIXTURE</span><h2>Aster Noise-Cancelling Headphones</h2><span className="pg-price">{price}</span><span className="pg-stock">In stock · {sku}</span><button type="button" disabled>Fixture preview</button></div>
+    <section className="verdict-stack" aria-label="Polygraph recovery method">
+      <div className="verdict-stack__labels" aria-hidden="true"><span>POLYGRAPH METHOD</span><b>BACKEND-GATED</b></div>
+      <ol className="verdict-stack__rail" aria-label="Recovery stages">
+        <li><b>01</b><span>COLLECT</span></li>
+        <li className="is-held"><b>02</b><span>VALIDATE</span></li>
+        <li><b>03</b><span>REPAIR</span></li>
+        <li className="is-proved"><b>04</b><span>PROVE</span></li>
+      </ol>
+      <div className="verdict-stack__deck">
+        <CardSwap width={480} height={315} cardDistance={30} verticalDistance={20} delay={6_800} pauseOnHover skewAmount={3} easing="smooth" disabled={reducedMotion}>
+          <Card customClass="verdict-card verdict-card--validate">
+            <div className="verdict-card__top"><span>POLYGRAPH · DIFF</span><b>HELD</b></div>
+            <div className="verdict-card__body"><h2>Compare the switch</h2><p>Three returned fields drift. One control field stays healthy.</p></div>
+            <div className="verdict-card__evidence"><span>REGRESSED <b>CODE · TITLE · PRICE</b></span><span>STABLE <b>AVAILABILITY</b></span></div>
+            <div className="verdict-card__foot"><span>VERDICT</span><b>MARKUP DRIFT</b></div>
+          </Card>
+          <Card customClass="verdict-card verdict-card--repair">
+            <div className="verdict-card__top"><span>BRIGHT DATA · HEAL</span><b>BOUNDED</b></div>
+            <div className="verdict-card__body"><h2>Repair the extractors</h2><p>Only the owned fixture and approved collector can proceed.</p></div>
+            <div className="verdict-card__evidence"><span>FIXTURE <b>ALLOWLISTED</b></span><span>COLLECTOR <b>APPROVED</b></span></div>
+            <div className="verdict-card__foot"><span>POLICY</span><b>PERMIT CHECKED</b></div>
+          </Card>
+          <Card customClass="verdict-card verdict-card--prove">
+            <div className="verdict-card__top"><span>POLYGRAPH · RUN C</span><b>FRESH</b></div>
+            <div className="verdict-card__body"><h2>Prove it in production</h2><p>A repaired selector is not evidence until a new run agrees.</p></div>
+            <div className="verdict-card__evidence"><span>CONTRACT <b>4 ACTIVE FIELDS</b></span><span>RESULT <b>4 / 4 MATCH</b></span></div>
+            <div className="verdict-card__foot"><span>COLLECTION C</span><b>VERIFIED</b></div>
+          </Card>
+          <Card customClass="verdict-card verdict-card--receipt">
+            <div className="verdict-card__top"><span>POLYGRAPH · RESULT</span><b>VERIFIED</b></div>
+            <div className="verdict-card__body"><h2>Keep the recovery as evidence</h2><p>The fresh post-repair run matches the healthy reference.</p></div>
+            <div className="verdict-card__evidence"><span>RUN A <b>BASELINE</b></span><span>RUN C <b>VERIFIED</b></span></div>
+            <div className="verdict-card__foot"><span>RESULT</span><b>4 / 4 MATCH</b></div>
+          </Card>
+        </CardSwap>
       </div>
-    </div>
+      <div className="verdict-stack__trace" aria-hidden="true"><i /><span>OBSERVE → DIAGNOSE → HEAL → PROVE</span></div>
+    </section>
   );
 }
 
-function LandingScene() {
-  return <div className="poly-landing" data-testid="landing-scene" aria-label="Polygraph live proof launch" />;
+function LandingScene({ onStart, onConnect, reducedMotion }: { onStart: () => void; onConnect: () => void; reducedMotion: boolean }) {
+  return (
+    <main className="poly-landing" data-testid="landing-scene" aria-label="Polygraph live proof launch">
+      <div className="poly-landing__frame">
+        <section className="poly-landing__copy">
+          <p className="poly-landing__eyebrow">Watch a real recovery happen</p>
+          <h1>See a scraper break, heal, and prove itself.</h1>
+          <p className="poly-landing__lede">We built a version-shifting store for this test. You will collect its healthy V1 result, move the live store to V2, watch the same Bright Data collector break, and see Polygraph guide the repair through a fresh production proof.</p>
+          <div className="poly-landing__actions">
+            <button type="button" className="poly-landing__primary" onClick={onStart}>Start proof <ArrowRight weight="bold" aria-hidden="true" /></button>
+            <button type="button" className="poly-landing__secondary" onClick={onConnect}>Connect collectors</button>
+          </div>
+          {import.meta.env.DEV && <p className="poly-landing__local-note">LOCAL UX REPLAY · NO PROVIDER CALLS</p>}
+        </section>
+        <section className="poly-landing__artifact" aria-label="Recovery evidence sequence"><VerdictStack reducedMotion={reducedMotion} /></section>
+      </div>
+    </main>
+  );
 }
 
-function BaselineScene({ mission, request, onShift, onHome }: { mission: MissionState; request: RequestState; onShift: () => void; onHome: () => void }) {
+
+function BaselineScene({ mission, request, reducedMotion, replaying, onShift }: { mission: MissionState; request: RequestState; reducedMotion: boolean; replaying: boolean; onShift: () => void }) {
   const baseline = eventFor(mission, 'baseline_a');
   const facts = missionFacts(mission);
-  const ready = mission.status === 'waiting' && Boolean(baseline);
+  const ready = (replaying || mission.status === 'waiting') && Boolean(baseline);
+  const lead = replaying
+    ? 'This proof already completed live. Polygraph is replaying its saved evidence from Collect to Prove without running Bright Data again.'
+    : ready ? `For this test, we built a live version-shifting store and connected it to a real Bright Data collector.` : 'For this test, we built a live version-shifting store. Now Bright Data is collecting its healthy V1 result.';
   return (
-    <SceneShell state="state-v1" mission={mission} label={ready ? 'V1 PRODUCTION VERIFIED' : 'V1 COLLECTION RUNNING'} tone={ready ? 'pass' : 'warn'} rail={1} wrap="pg-stage-inner pg-stage-v1"
-      footer={<><p><b>{ready ? 'Baseline verified' : 'Baseline pending'}</b> · {baseline?.detail ?? 'waiting for provider evidence'}</p><span className={`pg-chip ${ready ? 'pg-chip-pass' : 'pg-chip-muted'}`}>{ready ? 'READY FOR V2' : 'LIVE'}</span></>}>
-      <section className="pg-copy"><div className="pg-kicker">OBSERVED · LIVE BACKEND</div><h1 id="mission-title">{ready ? 'V1 is telling the truth.' : 'Establishing the V1 baseline.'}</h1><p className="pg-lede">{baseline?.detail ?? 'Polygraph is waiting for the GitHub marker and Bright Data baseline collection. No success state is inferred locally.'}</p><div className="pg-actions"><SceneButton onClick={onShift} disabled={!ready || request !== 'idle'} testId="shift-v2-btn">{request === 'shift' ? 'Publishing V2…' : 'Publish V2'} <ArrowRight aria-hidden="true" /></SceneButton><SceneButton onClick={onHome} variant="ghost">Back to landing</SceneButton></div><p className="pg-micro">Collection {mission.evidence.baselineRunId ?? 'pending'} · event {providerTime(baseline?.at)} · mission {mission.id}</p></section>
-      <section className="pg-window"><ProductBrowser version="V1" selector=".product-price" price={facts.price} sku={facts.sku} host={evidenceHost(mission.evidence.liveFixtureUrl)} /><aside className="pg-floating-output"><span>BRIGHT DATA OUTPUT</span><code>{'{'}<br />&nbsp; sku: "{facts.sku}",<br />&nbsp; price: <strong>{facts.price}</strong><br />{'}'}</code></aside></section>
-    </SceneShell>
+    <ConversationScene state="state-v1" activeStage={0} reducedMotion={reducedMotion} visual={<VersionPair mission={mission} focus="v1" />}>
+      <StoryLine>{reducedMotion ? lead : <span className="pg-type-guidance"><span className="pg-visually-hidden">{lead}</span><span aria-hidden="true"><TextType as="span" text={lead} loop={false} typingSpeed={18} /></span></span>}</StoryLine>
+      <StoryLine quiet>{ready ? `V1 returned ${facts.productCode}, its full product title, ${facts.price}, and ${facts.availability}. Polygraph saved all four fields as the healthy reference before anything changes.` : 'Once that real result arrives, Polygraph will remember the product code, title, price, and availability before anything changes.'}</StoryLine>
+      <ProofSources liveUrl={mission.evidence.liveFixtureUrl} />
+      {replaying
+        ? <StoryLine quiet><span className="pg-auto-status">Verified receipt replay · no GitHub deployment, Bright Data collection, or Self-Healing call.</span></StoryLine>
+        : <><ShinyButton className="pg-kickoff-action cursor-target" type="button" onClick={onShift} disabled={!ready || request !== 'idle'} data-testid="shift-v2-btn">{request === 'shift' ? 'Changing the live store…' : 'Change the store to V2'}<ArrowRight weight="bold" aria-hidden="true" /></ShinyButton><p className="pg-kickoff-note">When scraping breaks, Polygraph guides the self-healing loop: repair, re-run, then independently prove the fresh result.</p></>}
+    </ConversationScene>
   );
 }
 
-function DeployScene({ mission, onNext }: { mission: MissionState; onNext: () => void }) {
-  const steps = [
-    { key: 'dispatch_v2', name: 'GitHub V2 workflow dispatched' },
-    { key: 'marker_v2', name: 'Exact V2 version marker confirmed' },
-  ];
-  const canContinue = Boolean(eventFor(mission, 'marker_v2')) && hasReached(mission, 'broken_v2');
+function DeployScene({ mission, reducedMotion, replaying }: { mission: MissionState; reducedMotion: boolean; replaying: boolean }) {
+  const marker = eventFor(mission, 'marker_v2');
+  const switchMessage = replaying
+    ? 'Polygraph is replaying the verified V2 deployment marker that preceded the broken collection.'
+    : marker ? 'You moved the test store from V1 to V2, and that changed version is now live in production.' : 'You asked the test store to move from V1 to V2. GitHub is publishing that real change now.';
   return (
-    <SceneShell state="state-deploying" mission={mission} label="V2 DEPLOYMENT OBSERVED" tone="warn" rail={2} wrap="pg-release-wrap"
-      footer={<><p><b>Provider-driven progress.</b> The interface advances only after the mission reports the exact live marker and V2 collection state.</p><SceneButton onClick={onNext} disabled={!canContinue} testId="continue-after-deploy">Continue after V2 is observed</SceneButton></>}>
-      <section className="pg-fold"><article className="pg-fold-half"><span>V1 · VERIFIED BASELINE</span><div className="pg-mini-product"><Headphones /><div><small>MISSION {mission.id}</small><h2>Verified fixture</h2><strong>{mission.evidence.baselineRunId ?? 'baseline recorded'}</strong><code>.product-price</code></div></div></article><article className="pg-fold-half pg-fold-v2"><span>V2 · GITHUB → LIVE FIXTURE</span><div className="pg-mini-product"><Headphones /><div><small>EXACT VERSION MARKER</small><h2>Changed markup</h2><strong>{eventFor(mission, 'marker_v2') ? 'V2 CONFIRMED' : 'DEPLOYING'}</strong><code>.money-widget__value</code></div></div></article><div className="pg-publish-seam" aria-hidden="true" /></section>
-      <aside className="pg-event-card" aria-live="polite"><div className="pg-event-head"><span className="pg-event-signal" aria-hidden="true" /><div><strong>Deploying V2 from GitHub</strong><small>live mission events</small></div><time>{providerTime(mission.events.at(-1)?.at)}</time></div><ol>{steps.map(({ key, name }, index) => { const event = eventFor(mission, key); const current = !event && steps.slice(0, index).every((step) => eventFor(mission, step.key)); return <li key={key} className={event ? 'done' : current ? 'current' : ''}><b>{event ? <Check aria-hidden="true" /> : `0${index + 1}`}</b><span>{name}<small>{event?.detail ?? 'waiting for backend event'}</small></span></li>; })}</ol></aside>
-    </SceneShell>
+    <ConversationScene state="state-deploying" activeStage={0} reducedMotion={reducedMotion} visual={<VersionPair mission={mission} focus="both" />}>
+      <StoryLine>{marker || replaying ? switchMessage : <SplitFlapText words={['PUBLISHING V2', 'WAITING FOR PRODUCTION', 'VERIFYING LIVE MARKER']} loop cycleDelay={1_150} flipDuration={0.09} stagger={0.025} flipsPerChar={4} padTo={22} fontSize={15} gap={2} tileRadius={3} />}</StoryLine>
+      <StoryLine quiet>{replaying ? 'The saved mission proves GitHub published V2 before the same collector produced its changed result.' : reducedMotion ? (marker ? 'Polygraph left the collector untouched and automatically started the same collector against V2.' : 'Polygraph is waiting for the production marker instead of pretending the new page is already live.') : <DecryptedText text={marker ? 'Polygraph left the collector untouched and automatically started the same collector against V2.' : 'Polygraph is waiting for the production marker instead of pretending the new page is already live.'} animateOn="view" sequential speed={24} />}</StoryLine>
+      <StoryLine quiet><span className="pg-auto-status">{replaying ? 'Replaying saved evidence only. No provider action is running.' : 'No more clicks. The proof continues automatically.'}</span></StoryLine>
+    </ConversationScene>
   );
 }
 
-function BrokenScene({ mission, onNext }: { mission: MissionState; onNext: () => void }) {
+function BrokenScene({ mission, reducedMotion }: { mission: MissionState; reducedMotion: boolean }) {
   const difference = eventFor(mission, 'difference');
-  const facts = missionFacts(mission);
-  const canDiagnose = Boolean(eventFor(mission, 'incident_memory'));
+  const changedFields = mission.evidence.changedFields.length > 0 ? mission.evidence.changedFields : difference ? ['price'] : [];
+  const breakMessage = difference ? `The same collector just ran against V2. ${readableFields(changedFields)} no longer match the healthy V1 result.` : 'The changed store is live. Polygraph is watching the same collector run against V2 now.';
   return (
-    <SceneShell state="state-broken" mission={mission} label={difference ? 'V2 BREAK CONFIRMED' : 'V2 COLLECTION RUNNING'} tone="fail" rail={3} wrap="pg-break-wrap"
-      footer={<><p><b>Backend evidence</b> · {difference?.detail ?? 'waiting for the V2 collection result'}</p><SceneButton onClick={onNext} disabled={!canDiagnose} testId="open-diagnosis">Open diagnosis <ArrowRight aria-hidden="true" /></SceneButton></>}>
-      <section className="pg-window pg-broken-browser"><ProductBrowser version="V2" selector=".money-widget__value" price={facts.price} sku={facts.sku} host={evidenceHost(mission.evidence.liveFixtureUrl)} /><div className="pg-fracture-line" aria-hidden="true" /></section><aside className="pg-output-drawer"><div className="pg-drawer-kicker">{difference ? 'BREAK CONFIRMED' : 'TESTING OLD COLLECTOR'}</div><h1 id="mission-title">{difference ? 'The product stayed the same. The extracted price collapsed.' : 'V2 is live. The existing collector is running.'}</h1><div className="pg-null"><code>price.value</code><strong>{difference ? '0' : '…'}</strong></div><div className="pg-evidence-list"><div>Contract <b className={difference ? 'fail' : ''}>{difference ? 'FAIL' : 'PENDING'}</b></div><div>Identity · {facts.sku} <b>{difference ? 'PASS' : 'PENDING'}</b></div><div>Broken collection <b>{mission.evidence.brokenRunId ?? 'PENDING'}</b></div><div>V1 expected value <b>{facts.price}</b></div></div><div className="pg-dom-seam"><span>OBSERVED MARKUP CHANGE</span><code><del>.product-price</del> → <ins>.money-widget__value</ins></code></div></aside>
-    </SceneShell>
+    <ConversationScene state="state-broken" activeStage={1} reducedMotion={reducedMotion} visual={difference ? <JsonDifference before={mission.evidence.baselineResult} after={mission.evidence.brokenResult} changedFields={changedFields} /> : <div className="pg-visual-wait">Waiting for the changed collector result.</div>}>
+      <StoryLine>{difference && !reducedMotion ? <span className="pg-fuzzy-message"><span className="pg-visually-hidden">{breakMessage}</span><FuzzyText fontSize={27} fontWeight={650} color="#8f252d" baseIntensity={0.14} hoverIntensity={0.3} enableHover>{`${changedFields.length} EXTRACTION FIELDS BROKE`}</FuzzyText></span> : breakMessage}</StoryLine>
+      <StoryLine quiet>{difference ? <Highlighter action="underline" color="#8f252d" strokeWidth={2}>Polygraph holds the incomplete V2 result instead of sending it downstream. The comparison shows exactly which fields regressed and which evidence remained healthy.</Highlighter> : 'Polygraph will wait for the returned data before deciding whether the version change actually broke anything.'}</StoryLine>
+      <StoryLine quiet><span className="pg-auto-status">Polygraph is investigating this regression automatically.</span></StoryLine>
+    </ConversationScene>
   );
 }
 
-function DiagnosisScene({ mission, onNext }: { mission: MissionState; onNext: () => void }) {
-  const stages = [
-    ['Observation', eventFor(mission, 'difference')?.detail],
-    ['Reasoning', eventFor(mission, 'incident_memory')?.detail],
-    ['Action', eventFor(mission, 'healing_prompt')?.detail],
-  ];
-  const handoffReady = Boolean(eventFor(mission, 'healing_prompt')) && hasReached(mission, 'self_healing');
+function DiagnosisScene({ mission, reducedMotion }: { mission: MissionState; reducedMotion: boolean }) {
+  const memory = eventFor(mission, 'incident_memory');
+  const prompt = eventFor(mission, 'healing_prompt');
+  const changedFields = mission.evidence.changedFields;
+  const diagnosis = `Here is what Polygraph found: V2 moved ${readableFields(changedFields)}, while availability still agrees with the healthy V1 result.`;
   return (
-    <SceneShell state="state-diagnosis" mission={mission} label={`MISSION ${mission.id}`} tone="warn" rail={3} wrap="pg-diagnosis-wrap"
-      footer={<><p><b>Boundary</b> · the owned fixture may use its allowlisted permit; customer repairs still require approval</p><SceneButton onClick={onNext} disabled={!handoffReady} testId="advance-to-healing">View Self-Healing handoff</SceneButton></>}>
-      <section className="pg-copy pg-diagnosis-copy"><div className="pg-kicker">POLYGRAPH DIAGNOSIS</div><h1 id="mission-title">Separate what we saw, why it failed, and what may change.</h1><p className="pg-lede">Every statement below comes from the mission event stream. The interface does not manufacture diagnosis progress.</p></section><section className="pg-reasoning-path">{stages.map(([title, body], index) => <article key={title}><span>{body ? <Check aria-hidden="true" /> : `0${index + 1}`}</span><div><h2>{title}</h2><p>{body ?? 'Waiting for mission evidence.'}</p></div>{index < 2 && <i aria-hidden="true" />}</article>)}</section><aside className="pg-repair-draft"><span>BOUNDED SELF-HEALING HANDOFF</span><p>{eventFor(mission, 'healing_prompt')?.detail ?? 'No repair prompt has been issued.'}</p></aside>
-    </SceneShell>
+    <ConversationScene state="state-diagnosis" activeStage={1} reducedMotion={reducedMotion} visual={<PolygraphProcessGraphic phase="diagnosis" proofReady={false} reducedMotion={reducedMotion} changedFields={changedFields} />}>
+      <StoryLine>{reducedMotion ? diagnosis : <span className="pg-type-guidance"><span className="pg-visually-hidden">{diagnosis}</span><span aria-hidden="true"><TextType as="span" text={diagnosis} typingSpeed={12} loop={false} /></span></span>}</StoryLine>
+      <StoryLine quiet>{memory ? 'By comparing the two runs with its incident memory, it recognized a moved selector rather than a legitimate product change.' : 'It is comparing both runs with the failures it already knows, looking for the exact cause.'}</StoryLine>
+      <StoryLine quiet>{prompt ? 'Polygraph turned that evidence into precise repair instructions for Bright Data, so Self-Healing knows what broke and what must remain unchanged.' : 'Next, Polygraph will translate the evidence into a focused Self-Healing request.'}</StoryLine>
+      <StoryLine quiet><span className="pg-auto-status">{prompt ? 'The bounded repair request has been sent automatically.' : 'Polygraph is preparing the bounded repair request.'}</span></StoryLine>
+    </ConversationScene>
   );
 }
 
-function HealScene({ mission, onNext }: { mission: MissionState; onNext: () => void }) {
-  const stages = [
-    ['Prompt prepared', eventFor(mission, 'healing_prompt')],
-    ['Approval boundary observed', eventFor(mission, 'heal_approved')],
-    ['Bright Data repair completed', eventFor(mission, 'heal_complete')],
-  ] as const;
-  const completed = stages.filter(([, event]) => event).length;
+function HealScene({ mission, reducedMotion, replaying }: { mission: MissionState; reducedMotion: boolean; replaying: boolean }) {
+  const healing = eventFor(mission, 'heal_complete');
   const receipt = eventFor(mission, 'receipt');
   const proofReady = mission.status === 'healed' && Boolean(receipt && mission.evidence.recoveryRunId);
+  const changedFields = mission.evidence.changedFields;
   return (
-    <SceneShell state="state-healing" mission={mission} label={proofReady ? 'FRESH RUN VERIFIED' : 'RECOVERY CONTROL ACTIVE'} tone={proofReady ? 'pass' : 'warn'} rail={3} wrap="pg-heal-wrap"
-      footer={<><p><b>Verification boundary</b> · recovery is withheld until collection C returns the expected identity and value</p><SceneButton onClick={onNext} disabled={!proofReady} testId="verify-fresh-run">View fresh production proof</SceneButton></>}>
-      <section className="pg-repair-copy"><div className="pg-kicker">POLYGRAPH PREPARES · BRIGHT DATA REPAIRS</div><h1 id="mission-title">Recovery has one controlled object.</h1><p className="pg-lede">The backend owns the provider calls. This interface only renders events that the live mission has actually reported.</p><div className="pg-process">{stages.map(([title, event], index) => <div key={title} className={event ? 'done' : index === completed ? 'current' : ''}><span>{event ? <Check aria-hidden="true" /> : `0${index + 1}`}</span><p><strong>{title}</strong><small>{event?.detail ?? 'waiting for backend event'}</small></p></div>)}</div></section><section className="pg-heal-console"><div className="pg-heal-top"><span className="pg-provider-mark">BD</span><div><strong>Bright Data Self-Healing</strong><small>owned fixture · {mission.evidence.collectorId ?? 'collector pending'}</small></div><div><strong>{proofReady ? 'RECOVERY PROVED' : completed === stages.length ? 'FRESH RUN PENDING' : 'HANDOFF IN PROGRESS'}</strong><small>{providerTime(mission.events.at(-1)?.at)}</small></div></div><div className="pg-heal-track"><span style={{ transform: `scaleX(${completed / stages.length})` }} /></div><div className="pg-candidate"><div><span>PROVIDER REPAIR · NOT PRODUCTION PROOF</span><h2>{eventFor(mission, 'heal_complete') ? 'Repair completed by Bright Data' : 'Waiting for the repair result'}</h2><p>heal job {mission.evidence.healRunId ?? 'pending'}</p></div><strong>{eventFor(mission, 'heal_complete') ? 'DONE' : '…'}</strong></div><div className="pg-permit"><b>OWNED-FIXTURE PERMIT</b><span>server-gated to the approved collector and fixture URL</span></div></section>
-    </SceneShell>
+    <ConversationScene state="state-healing" activeStage={replaying ? 2 : proofReady ? 3 : 2} reducedMotion={reducedMotion} visual={<PolygraphProcessGraphic phase="healing" proofReady={proofReady} reducedMotion={reducedMotion} changedFields={changedFields} />}>
+      <StoryLine>{healing ? `Polygraph sent one evidence-backed request for ${readableFields(changedFields)}, and Bright Data returned an autosaved repair candidate for the same collector.` : `Polygraph has handed Bright Data the exact ${changedFields.length}-field diff. Self-Healing is preparing a candidate for the same collector now.`}</StoryLine>
+      <StoryLine quiet>{healing ? 'But a “repair completed” message is not proof. Polygraph keeps the old result held and runs the repaired collector against live V2 again.' : 'While Bright Data works, Polygraph keeps the broken result safely held.'}</StoryLine>
+      <StoryLine quiet>{proofReady ? 'That separate V2 run has arrived. Polygraph checked product code, title, price, and availability before unlocking the final proof.' : reducedMotion ? 'Now Polygraph is waiting for a completely fresh V2 collection.' : <DecryptedText text="Now Polygraph is waiting for a completely fresh V2 collection." animateOn="view" sequential speed={24} />}</StoryLine>
+      <StoryLine quiet><span className="pg-auto-status">{proofReady ? 'The fresh proof passed. Opening the verified result automatically.' : 'Polygraph will open the result only after the fresh proof passes.'}</span></StoryLine>
+    </ConversationScene>
   );
 }
 
-function ProofScene({ mission, request, onConnect, onReplay, onReset }: { mission: MissionState; request: RequestState; onConnect: () => void; onReplay: () => void; onReset: () => void }) {
+function ProofScene({ mission, reducedMotion }: { mission: MissionState; reducedMotion: boolean }) {
   const facts = missionFacts(mission, 'receipt');
   return (
-    <SceneShell state="state-proof" mission={mission} label="FRESH PRODUCTION VERIFIED" tone="pass" rail={4} wrap="pg-proof-wrap"
-      footer={<><p><b>Mission healed</b> · the backend accepted a fresh collection only after checking the expected identity and price</p><SceneButton onClick={onReset} disabled={request !== 'idle'} variant="ghost" testId="reset-v1-btn">{request === 'reset' ? 'Resetting V1…' : 'Reset fixture to V1'}</SceneButton><SceneButton onClick={onReplay}>Open recovery receipt</SceneButton></>}>
-      <section className="pg-proof-copy"><div className="pg-kicker">OBSERVED · FRESH PRODUCTION</div><h1 id="mission-title">The loop closes with new evidence.</h1><p className="pg-lede">{eventFor(mission, 'receipt')?.detail ?? 'The backend has not issued a recovery receipt.'}</p><div className="pg-memory"><strong>MISSION {mission.id}</strong><span>{mission.events.length} server-recorded events in the current mission receipt.</span></div><div className="pg-actions"><SceneButton onClick={onConnect} testId="connect-collectors">Connect my collectors</SceneButton><SceneButton onClick={onReplay} variant="ghost">Inspect receipt</SceneButton></div></section><section className="pg-proof-object"><div className="pg-proof-ghost pg-proof-ghost-one" aria-hidden="true" /><div className="pg-proof-ghost pg-proof-ghost-two" aria-hidden="true" /><article className="pg-production-card"><div className="pg-product-visual"><Headphones /></div><div><span>VERIFIED IN PRODUCTION</span><h2>Aster Noise-Cancelling Headphones</h2><div className="pg-production-data"><div><small>SKU</small><strong>{facts.sku}</strong></div><div><small>Expected price</small><strong>{facts.price}</strong></div><div><small>Collection C</small><strong>{mission.evidence.recoveryRunId ?? 'not recorded'}</strong></div></div></div></article><div className="pg-receipt-strip"><b>RECOVERY VERIFIED</b><span>mission {mission.id}</span><span>heal {mission.evidence.healRunId ?? 'recorded'}</span><span>run {mission.evidence.recoveryRunId ?? 'recorded'}</span></div></section>
-    </SceneShell>
+    <ConversationScene state="state-proof" activeStage={3} reducedMotion={reducedMotion} visual={<RecoverySuccess productCode={facts.productCode} price={facts.price} />}>
+      <StoryLine>The third production run is back. Product code, title, price, and availability all match the healthy V1 reference again.</StoryLine>
+      <StoryLine quiet>Polygraph now has fresh evidence that Bright Data repaired every regressed field, not merely a “repair completed” message.</StoryLine>
+      <StoryLine><Highlighter action="highlight" color="#245b3d" iterations={1}>{`${facts.productCode} is back at ${facts.price} with 4 of 4 fields verified.`}</Highlighter></StoryLine>
+      <div className="pg-proof-actions" aria-label="Next steps">
+        <Link className="pg-proof-cta pg-proof-cta--primary" to="/signup">Connect your collector <ArrowRight weight="bold" aria-hidden="true" /></Link>
+        <Link className="pg-proof-cta pg-proof-cta--secondary" to="/receipts">See the receipt <ArrowRight weight="bold" aria-hidden="true" /></Link>
+      </div>
+    </ConversationScene>
   );
 }
 
-function ReplayScene({ mission, onHome, onProof }: { mission: MissionState; onHome: () => void; onProof: () => void }) {
+function ReplayScene({ mission, reducedMotion }: { mission: MissionState; reducedMotion: boolean }) {
   return (
-    <SceneShell state="state-replay" mission={mission} label="MISSION RECEIPT" tone="pass" rail={4} wrap="pg-replay-wrap"
-      footer={<><p><b>Receipt scope</b> · live mission evidence from the current backend process</p><SceneButton onClick={onHome}>Return to launch</SceneButton></>}>
-      <section className="pg-replay-copy"><div className="pg-kicker">LIVE MISSION EVIDENCE</div><h1 id="mission-title">Same flow. Server-recorded evidence.</h1><p className="pg-lede">This receipt renders the mission ID, provider events, timestamps and collection IDs returned by the backend. It does not add a fabricated hash or persistence claim.</p><div className="pg-actions"><SceneButton onClick={onHome}>Return to landing</SceneButton><SceneButton onClick={onProof} variant="ghost">Back to recovered state</SceneButton></div><div className="pg-receipt-links"><EvidenceLink href={mission.evidence.fixtureRepo}>Fixture repository</EvidenceLink><EvidenceLink href={mission.evidence.workflowUrl}>GitHub workflow</EvidenceLink><EvidenceLink href={mission.evidence.markerUrl}>Version marker</EvidenceLink><EvidenceLink href={mission.evidence.collectorUrl}>Bright Data collector</EvidenceLink><EvidenceLink href={mission.evidence.baselineRunUrl}>Collection A proof</EvidenceLink><EvidenceLink href={mission.evidence.brokenRunUrl}>Collection B proof</EvidenceLink><EvidenceLink href={mission.evidence.healRunUrl}>Healing proof</EvidenceLink><EvidenceLink href={mission.evidence.recoveryRunUrl}>Collection C proof</EvidenceLink></div></section><section className="pg-receipt"><div className="pg-receipt-head"><span><Check aria-hidden="true" /></span><div><strong>Mission {mission.id}</strong><small>fixture V1 → V2 · collector {mission.evidence.collectorId ?? 'not recorded'}</small></div><span className="pg-chip pg-chip-muted">{mission.status}</span></div><div className="pg-replay-events">{mission.events.map((event) => <div key={`${event.step}-${event.at}`} className={event.step === 'difference' ? 'fail' : 'done'}><time>{providerTime(event.at)}</time><i>{event.step === 'difference' ? '!' : '✓'}</i><strong>{readableStep(event.step)}</strong><small>{event.detail}</small></div>)}</div><div className="pg-receipt-foot"><span>{mission.events.length} mission events</span><span>A {mission.evidence.baselineRunId ?? '—'} · B {mission.evidence.brokenRunId ?? '—'}</span><span>C {mission.evidence.recoveryRunId ?? '—'}</span></div></section>
-    </SceneShell>
+    <ConversationScene state="state-replay" activeStage={3} reducedMotion={reducedMotion} visual={<div className="pg-conversation-events">{mission.events.map((event) => <div key={`${event.step}-${event.at}`}><time>{providerTime(event.at)}</time><span>{readableStep(event.step)}</span><span>{event.detail}</span></div>)}</div>}>
+      <StoryLine>Here is the evidence trail behind the story. Every line came from this live mission, from the first V1 collection to the final V2 proof.</StoryLine>
+    </ConversationScene>
   );
 }
 
@@ -247,22 +343,94 @@ function sceneForMission(mission: MissionState): StoryScene {
   }
 }
 
-export function MissionExperience() {
+function routeStageForScene(scene: StoryScene) {
+  if (scene === 'broken' || scene === 'diagnosis') return 'compare';
+  if (scene === 'heal') return 'repair';
+  if (scene === 'proof' || scene === 'replay') return 'prove';
+  return 'collect';
+}
+
+function ProofBootScene({ reducedMotion }: { reducedMotion: boolean }) {
+  return (
+    <ConversationScene state="state-v1" activeStage={0} reducedMotion={reducedMotion} visual={<div className="pg-visual-wait">Opening the live version-shift mission.</div>}>
+      <StoryLine>We’re preparing the version-shifting store and its real Bright Data collector.</StoryLine>
+      <StoryLine quiet>The Collect chapter will begin when the backend returns the live V1 mission.</StoryLine>
+    </ConversationScene>
+  );
+}
+
+export function MissionExperience({ mode = 'landing' }: { mode?: ExperienceMode }) {
   const reducedMotion = useReducedMotion();
-  const [scene, setScene] = useState<StoryScene>('landing');
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [scene, setScene] = useState<StoryScene>(mode === 'proof' ? 'baseline' : 'landing');
   const [mission, setMission] = useState<MissionState | null>(null);
+  const [replaying, setReplaying] = useState(false);
   const [request, setRequest] = useState<RequestState>('idle');
   const [apiError, setApiError] = useState<string | null>(null);
   const pollSequence = useRef(0);
   const startRequest = useRef(false);
+  const routeBootstrapped = useRef(false);
+  const bootPromise = useRef<Promise<void> | null>(null);
+  const mounted = useRef(true);
   const resetConfirmed = Boolean(mission?.status === 'idle' && eventFor(mission, 'reset_v1'));
   const receiptReady = Boolean(mission?.status === 'healed' && eventFor(mission, 'receipt'));
+  const differenceReady = Boolean(eventFor(mission, 'difference'));
   const terminal = Boolean(mission && (receiptReady || mission.status === 'error' || resetConfirmed));
   const transition = reducedMotion ? { duration: 0.12 } : { duration: 0.34, ease: [0.23, 1, 0.32, 1] as const };
   const missionFailure = mission?.status === 'error'
     ? `Mission stopped without a receipt. ${mission.lastError ?? 'The backend reported an unspecified failure.'}`
     : null;
   const visibleError = apiError ?? missionFailure;
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (mode !== 'proof' || routeBootstrapped.current || bootPromise.current) return;
+    const missionId = searchParams.get('mission');
+    const boot = async () => {
+      startRequest.current = true;
+      setRequest('start');
+      try {
+        const next = missionId ? await getMission(missionId) : await createMission();
+        if (!mounted.current) return;
+        const replayReceipt = next.status === 'healed' && (next.replay === true || searchParams.get('stage') === 'collect');
+        setMission(next);
+        setReplaying(replayReceipt);
+        setScene(replayReceipt ? 'baseline' : sceneForMission(next));
+        setApiError(null);
+      } catch (error) {
+        if (mounted.current) setApiError(`The live proof could not start.${errorDetail(error)} No receipt was created.`);
+      } finally {
+        routeBootstrapped.current = true;
+        if (mounted.current) setRequest('idle');
+        startRequest.current = false;
+        bootPromise.current = null;
+      }
+    };
+    bootPromise.current = boot();
+  }, [mode, searchParams]);
+
+  useEffect(() => {
+    if (mode !== 'proof') return;
+    const next = new URLSearchParams(searchParams);
+    next.set('stage', routeStageForScene(scene));
+    if (mission?.id) next.set('mission', mission.id);
+    if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
+  }, [mission?.id, mode, scene, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const locked = mode === 'landing';
+    document.documentElement.classList.toggle('polygraph-landing-lock', locked);
+    document.body.classList.toggle('polygraph-landing-lock', locked);
+    return () => {
+      document.documentElement.classList.remove('polygraph-landing-lock');
+      document.body.classList.remove('polygraph-landing-lock');
+    };
+  }, [mode]);
 
   useEffect(() => {
     if (!mission?.id || terminal) return;
@@ -292,14 +460,36 @@ export function MissionExperience() {
     };
   }, [mission?.id, terminal]);
 
+  useEffect(() => {
+    if (!mission) return;
+    const memoryReady = Boolean(eventFor(mission, 'incident_memory'));
+    const promptReady = Boolean(eventFor(mission, 'healing_prompt'));
+    const advance: { scene: StoryScene; delay: number } | null =
+      replaying && scene === 'baseline' && receiptReady ? { scene: 'deploy', delay: STORY_SCENE_PAUSE_MS.replayBaseline }
+        : scene === 'deploy' && differenceReady ? { scene: 'broken', delay: STORY_SCENE_PAUSE_MS.deploy }
+        : scene === 'broken' && memoryReady ? { scene: 'diagnosis', delay: STORY_SCENE_PAUSE_MS.broken }
+          : scene === 'diagnosis' && promptReady ? { scene: 'heal', delay: STORY_SCENE_PAUSE_MS.diagnosis }
+            : scene === 'heal' && receiptReady ? { scene: 'proof', delay: STORY_SCENE_PAUSE_MS.heal }
+              : null;
+    if (!advance) return;
+    const timeout = window.setTimeout(() => setScene(advance.scene), reducedMotion ? 0 : advance.delay);
+    return () => window.clearTimeout(timeout);
+  }, [differenceReady, mission, receiptReady, reducedMotion, replaying, scene]);
+
   function home() {
-    setScene('landing');
+    navigate('/');
   }
 
   async function startOrResume() {
     if (startRequest.current) return;
     if (mission && !resetConfirmed) {
-      setScene(sceneForMission(mission));
+      if (receiptReady) {
+        setReplaying(true);
+        setScene('baseline');
+      } else {
+        setReplaying(false);
+        setScene(sceneForMission(mission));
+      }
       return;
     }
     startRequest.current = true;
@@ -309,6 +499,7 @@ export function MissionExperience() {
     try {
       const next = await createMission();
       setMission(next);
+      setReplaying(next.replay === true && next.status === 'healed');
       setScene('baseline');
     } catch (error) {
       setApiError(`The live proof could not start.${errorDetail(error)} No receipt was created.`);
@@ -328,7 +519,7 @@ export function MissionExperience() {
       if (sequence === pollSequence.current) setMission(next);
       setScene('deploy');
     } catch (error) {
-      setApiError(`The V2 shift could not start.${errorDetail(error)} Mission evidence has not been advanced.`);
+      setApiError(`The version switch could not start.${errorDetail(error)} Mission evidence has not been advanced.`);
     } finally {
       setRequest('idle');
     }
@@ -342,9 +533,9 @@ export function MissionExperience() {
     try {
       const next = await resetMission(mission.id);
       setMission(next);
-      setScene('landing');
+      navigate('/');
     } catch (error) {
-      setApiError(`The fixture could not reset to V1.${errorDetail(error)}`);
+      setApiError(`The fixture could not reset.${errorDetail(error)}`);
     } finally {
       setRequest('idle');
     }
@@ -360,7 +551,7 @@ export function MissionExperience() {
 
   useEffect(() => {
     const goHome = () => home();
-    const startProof = () => void startOrResume();
+    const startProof = () => mode === 'proof' ? void startOrResume() : navigate('/live-proof?stage=collect');
     const showReceipt = () => receiptReady && setScene('replay');
     window.addEventListener(HOME_EVENT, goHome);
     window.addEventListener(START_PROOF_EVENT, startProof);
@@ -373,23 +564,24 @@ export function MissionExperience() {
   });
 
   function renderScene(): ReactNode {
+    if (mode === 'landing') return <LandingScene onStart={() => navigate('/live-proof?stage=collect')} onConnect={() => navigate('/signup')} reducedMotion={Boolean(reducedMotion)} />;
+    if (!mission) return <ProofBootScene reducedMotion={Boolean(reducedMotion)} />;
     if (scene === 'connect') return <ConnectScene onHome={home} />;
-    if (scene === 'landing' || !mission) return <LandingScene />;
     switch (scene) {
-      case 'baseline': return <BaselineScene mission={mission} request={request} onShift={() => void publishV2()} onHome={home} />;
-      case 'deploy': return <DeployScene mission={mission} onNext={() => setScene('broken')} />;
-      case 'broken': return <BrokenScene mission={mission} onNext={() => setScene('diagnosis')} />;
-      case 'diagnosis': return <DiagnosisScene mission={mission} onNext={() => setScene('heal')} />;
-      case 'heal': return <HealScene mission={mission} onNext={() => setScene('proof')} />;
-      case 'proof': return <ProofScene mission={mission} request={request} onConnect={() => setScene('connect')} onReplay={() => setScene('replay')} onReset={() => void resetV1()} />;
-      default: return <ReplayScene mission={mission} onHome={home} onProof={() => setScene('proof')} />;
+      case 'baseline': return <BaselineScene mission={mission} request={request} reducedMotion={Boolean(reducedMotion)} replaying={replaying} onShift={() => void publishV2()} />;
+      case 'deploy': return <DeployScene mission={mission} reducedMotion={Boolean(reducedMotion)} replaying={replaying} />;
+      case 'broken': return <BrokenScene mission={mission} reducedMotion={Boolean(reducedMotion)} />;
+      case 'diagnosis': return <DiagnosisScene mission={mission} reducedMotion={Boolean(reducedMotion)} />;
+      case 'heal': return <HealScene mission={mission} reducedMotion={Boolean(reducedMotion)} replaying={replaying} />;
+      case 'proof': return <ProofScene mission={mission} reducedMotion={Boolean(reducedMotion)} />;
+      default: return <ReplayScene mission={mission} reducedMotion={Boolean(reducedMotion)} />;
     }
   }
   const content = renderScene();
 
   return (
-    <section className="mission-experience" aria-labelledby="mission-title">
-      {visibleError && scene !== 'landing' && <div className="pg-api-error" role="alert" data-testid="mission-fallback"><span>{visibleError}</span>{mission && mission.status !== 'running' && <button type="button" onClick={() => void resetV1()}>Reset V1</button>}</div>}
+    <section className="mission-experience" aria-label="Polygraph mission">
+      {visibleError && scene !== 'landing' && <div className="pg-api-error" role="alert" data-testid="mission-fallback"><span>{visibleError}</span>{mission && mission.status !== 'running' && <button type="button" onClick={() => void resetV1()}>Reset fixture</button>}</div>}
       <AnimatePresence mode="wait" initial={false}>
         <motion.div key={scene} className="mission-scene" initial={reducedMotion ? { opacity: 0 } : { opacity: 0, transform: 'translateY(14px)', filter: 'blur(4px)' }} animate={{ opacity: 1, transform: 'translateY(0px)', filter: 'blur(0px)' }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, transform: 'translateY(-8px)', filter: 'blur(3px)' }} transition={transition}>{content}</motion.div>
       </AnimatePresence>

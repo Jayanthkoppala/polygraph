@@ -11,11 +11,6 @@ export const PROOF_REQUEST_EVENT = 'polygraph:proof-request';
 export const RECEIPT_STATE_EVENT = 'polygraph:receipt-state';
 
 type ProofRequestDetail = { pending: boolean };
-type ReceiptStateDetail = { available: boolean };
-type ChromeLocationState = { polygraphIntent?: string };
-
-const LANDING_EVENTS = new Set([START_PROOF_EVENT, HOME_EVENT, RECEIPT_EVENT]);
-
 function useReducedMotion() {
   const [reduced, setReduced] = useState(() => (
     typeof window !== 'undefined' && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
@@ -37,7 +32,6 @@ export function GlobalChrome({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const reducedMotion = useReducedMotion();
   const [proofPending, setProofPending] = useState(false);
-  const [receiptAvailable, setReceiptAvailable] = useState(false);
 
   useEffect(() => {
     const updateProofState = (event: Event) => {
@@ -46,22 +40,6 @@ export function GlobalChrome({ children }: { children: ReactNode }) {
     window.addEventListener(PROOF_REQUEST_EVENT, updateProofState);
     return () => window.removeEventListener(PROOF_REQUEST_EVENT, updateProofState);
   }, []);
-
-  useEffect(() => {
-    const updateReceiptState = (event: Event) => {
-      setReceiptAvailable(Boolean((event as CustomEvent<ReceiptStateDetail>).detail?.available));
-    };
-    window.addEventListener(RECEIPT_STATE_EVENT, updateReceiptState);
-    return () => window.removeEventListener(RECEIPT_STATE_EVENT, updateReceiptState);
-  }, []);
-
-  useEffect(() => {
-    if (location.pathname !== '/') return;
-    const intent = (location.state as ChromeLocationState | null)?.polygraphIntent;
-    if (!intent || !LANDING_EVENTS.has(intent)) return;
-    window.dispatchEvent(new Event(intent));
-    navigate(`${location.pathname}${location.hash}`, { replace: true, state: null });
-  }, [location.hash, location.pathname, location.state, navigate]);
 
   useEffect(() => {
     if (location.pathname !== '/' || location.hash !== '#mission-summary') return;
@@ -73,12 +51,12 @@ export function GlobalChrome({ children }: { children: ReactNode }) {
     return () => window.cancelAnimationFrame(frame);
   }, [location.hash, location.pathname, reducedMotion]);
 
-  function sendToLanding(eventName: string) {
-    if (location.pathname === '/') {
-      window.dispatchEvent(new Event(eventName));
+  function openProof() {
+    if (location.pathname === '/live-proof') {
+      window.dispatchEvent(new Event(START_PROOF_EVENT));
       return;
     }
-    navigate('/', { state: { polygraphIntent: eventName } satisfies ChromeLocationState });
+    navigate('/live-proof?stage=collect');
   }
 
   function showOverview() {
@@ -113,33 +91,28 @@ export function GlobalChrome({ children }: { children: ReactNode }) {
         <button
           type="button"
           className="poly-nav-brand"
-          onClick={() => sendToLanding(HOME_EVENT)}
+          onClick={() => navigate('/')}
           aria-label="Polygraph home"
         >
           <BrandMark />
           <span>Polygraph</span>
         </button>
         <nav className="poly-nav-links" aria-label="Primary">
-          <button type="button" data-proof-action disabled={proofPending} onClick={() => sendToLanding(START_PROOF_EVENT)}>Live proof</button>
+          <button type="button" data-proof-action aria-current={location.pathname === '/live-proof' ? 'page' : undefined} disabled={proofPending} onClick={openProof}>Live proof</button>
           <button type="button" onClick={showOverview}>How it works</button>
+          <Link to="/receipts" aria-current={location.pathname === '/receipts' ? 'page' : undefined}>Receipts</Link>
+        </nav>
+        <div className="poly-nav-actions">
+          <Link className="poly-nav-connect" to="/signup">Connect</Link>
           <button
             type="button"
-            disabled={location.pathname !== '/' || !receiptAvailable}
-            title={location.pathname === '/' && receiptAvailable ? 'Open recovery receipt' : 'Available after verified recovery'}
-            onClick={() => sendToLanding(RECEIPT_EVENT)}
+            className="poly-nav-cta"
+            disabled={proofPending}
+            onClick={openProof}
           >
-            Receipt
+            {proofPending ? 'Starting proof…' : 'Start proof'} <ArrowRight weight="bold" aria-hidden="true" />
           </button>
-          <Link to="/signup">Connect</Link>
-        </nav>
-        <button
-          type="button"
-          className="poly-nav-cta"
-          disabled={proofPending}
-          onClick={() => sendToLanding(START_PROOF_EVENT)}
-        >
-          {proofPending ? 'Starting proof…' : 'Start proof'} <ArrowRight weight="bold" aria-hidden="true" />
-        </button>
+        </div>
       </header>
       <div className="global-chrome__content">{children}</div>
     </div>

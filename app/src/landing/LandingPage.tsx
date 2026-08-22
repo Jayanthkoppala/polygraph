@@ -1,6 +1,6 @@
 import { MissionExperience } from './MissionExperience';
 
-export function LandingPage() {
+export function LandingPage({ mode = 'landing' }: { mode?: 'landing' | 'proof' }) {
   return (
     <div>
       <a
@@ -11,7 +11,7 @@ export function LandingPage() {
         Skip to content
       </a>
       <div id="main">
-        <MissionExperience />
+        <MissionExperience mode={mode} />
       </div>
     </div>
   );

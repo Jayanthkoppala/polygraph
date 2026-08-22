@@ -9,7 +9,7 @@ const config: DemoMissionConfig = {
   fixtureUrl: 'https://fixture.example/',
   collectorId: 'c_owned',
   brightDataApiKey: 'bdata-test',
-  expectedSku: 'SKU-ASTER-001',
+  expectedProductCode: 'Product/Code-123',
   expectedPrice: '51.77',
   expectedCurrency: 'GBP',
   expectedSymbol: '£',
@@ -24,7 +24,7 @@ describe('GithubFixtureClient', () => {
     await client.dispatch('v2', '42', 'mission-7');
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string | URL, RequestInit];
     expect(String(url)).toContain('/owner/fixture/actions/workflows/switch-version.yml/dispatches');
-    expect(JSON.parse(String(init?.body))).toEqual({ ref: 'main', inputs: { version: 'v2', generation: '42', mission_id: 'mission-7' } });
+    expect(JSON.parse(String(init?.body))).toEqual({ ref: 'main', inputs: { version: 'v2', mutation: 'none', generation: '42', mission_id: 'mission-7' } });
   });
 
   it('accepts numeric marker generations only when version and mission also match', async () => {

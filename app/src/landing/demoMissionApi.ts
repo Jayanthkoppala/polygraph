@@ -1,3 +1,10 @@
+export interface ProductObservation {
+  productCode: string | null;
+  title: string | null;
+  price: { value: number | null; currency: string | null; symbol: string | null };
+  availability: string | null;
+}
+
 export interface MissionEvidenceRef {
   fixtureRepo: string | null;
   v1Url: string | null;
@@ -17,6 +24,10 @@ export interface MissionEvidenceRef {
   runId: string | null;
   healRunId: string | null;
   healRunUrl: string | null;
+  baselineResult: ProductObservation | null;
+  brokenResult: ProductObservation | null;
+  proofResult: ProductObservation | null;
+  changedFields: string[];
 }
 
 export interface MissionEvent {
@@ -45,10 +56,14 @@ export interface MissionState {
   events: MissionEvent[];
   evidence: MissionEvidenceRef;
   lastError?: string | null;
+  /** Client-only marker: the POST reused a completed proof rather than
+   * scheduling a new live mission. */
+  replay?: boolean;
 }
 
 interface MissionCreateResponse {
   id: string;
+  reused?: boolean;
 }
 
 function stringValue(raw: Record<string, unknown>, ...keys: string[]): string | null {
@@ -58,9 +73,26 @@ function stringValue(raw: Record<string, unknown>, ...keys: string[]): string | 
   return null;
 }
 
+function productObservation(value: unknown): ProductObservation | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const money = raw.price && typeof raw.price === 'object' && !Array.isArray(raw.price) ? raw.price as Record<string, unknown> : {};
+  return {
+    productCode: stringValue(raw, 'product_code', 'productCode', 'sku'),
+    title: stringValue(raw, 'title'),
+    price: {
+      value: typeof money.value === 'number' && Number.isFinite(money.value) ? money.value : null,
+      currency: stringValue(money, 'currency'),
+      symbol: stringValue(money, 'symbol'),
+    },
+    availability: stringValue(raw, 'availability'),
+  };
+}
+
 function coalesceEvidence(raw: Record<string, unknown>): MissionEvidenceRef {
   const runId = stringValue(raw, 'run_id');
   const baselineRunId = stringValue(raw, 'baseline_run_id', 'a_run_id') ?? runId;
+  const changedFields = raw.changed_fields ?? raw.changedFields;
   return {
     fixtureRepo: stringValue(raw, 'fixture_repo'),
     v1Url: stringValue(raw, 'v1_url'),
@@ -80,6 +112,12 @@ function coalesceEvidence(raw: Record<string, unknown>): MissionEvidenceRef {
     runId,
     healRunId: stringValue(raw, 'heal_run_id'),
     healRunUrl: stringValue(raw, 'heal_run_url'),
+    baselineResult: productObservation(raw.baseline_result ?? raw.baselineResult),
+    brokenResult: productObservation(raw.broken_result ?? raw.brokenResult),
+    proofResult: productObservation(raw.proof_result ?? raw.proofResult),
+    changedFields: Array.isArray(changedFields)
+      ? changedFields.filter((field): field is string => typeof field === 'string')
+      : [],
   };
 }
 
@@ -136,6 +174,7 @@ function normalizeState(raw: MissionState): MissionState {
         : typeof (raw as { last_error?: unknown }).last_error === 'string'
           ? String((raw as { last_error?: unknown }).last_error)
           : null,
+    replay: (raw as { replay?: unknown }).replay === true,
   };
 }
 
@@ -154,22 +193,26 @@ async function parseJson<T>(response: Response, path: string): Promise<T> {
 }
 
 export async function createMission(): Promise<MissionState> {
+  if (import.meta.env.DEV) return (await import('./localMissionPreview')).createLocalMission();
   const response = await fetch('/api/demo/missions', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({}),
   });
   const created = await parseJson<MissionCreateResponse>(response, '/api/demo/missions');
-  return getMission(created.id);
+  const mission = await getMission(created.id);
+  return { ...mission, replay: created.reused === true };
 }
 
 export async function getMission(id: string): Promise<MissionState> {
+  if (import.meta.env.DEV) return (await import('./localMissionPreview')).getLocalMission();
   const response = await fetch(`/api/demo/missions/${encodeURIComponent(id)}`);
   const raw = await parseJson<Partial<MissionState>>(response, `/api/demo/missions/${id}`);
   return normalizeState(raw as MissionState);
 }
 
 export async function shiftMission(id: string): Promise<MissionState> {
+  if (import.meta.env.DEV) return (await import('./localMissionPreview')).shiftLocalMission();
   const response = await fetch(`/api/demo/missions/${encodeURIComponent(id)}/shift`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -180,6 +223,7 @@ export async function shiftMission(id: string): Promise<MissionState> {
 }
 
 export async function resetMission(id: string): Promise<MissionState> {
+  if (import.meta.env.DEV) return (await import('./localMissionPreview')).resetLocalMission();
   const response = await fetch(`/api/demo/missions/${encodeURIComponent(id)}/reset`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

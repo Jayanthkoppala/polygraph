@@ -50,14 +50,14 @@ async function sessionCookieFor(base: string, token: string): Promise<string> {
   return setCookie!.split(';')[0];
 }
 
-const DEMO_ENV_KEYS = ['POLYGRAPH_DEMO_LIVE', 'POLYGRAPH_HEAL_ENABLED', 'POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE', 'POLYGRAPH_DEMO_GITHUB_TOKEN', 'POLYGRAPH_DEMO_FIXTURE_REPO', 'POLYGRAPH_DEMO_FIXTURE_WORKFLOW', 'POLYGRAPH_DEMO_FIXTURE_URL', 'POLYGRAPH_DEMO_COLLECTOR_ID', 'POLYGRAPH_DEMO_EXPECTED_SKU', 'POLYGRAPH_DEMO_EXPECTED_PRICE', 'POLYGRAPH_DEMO_EXPECTED_CURRENCY', 'POLYGRAPH_DEMO_EXPECTED_SYMBOL', 'BRIGHTDATA_API_KEY'] as const;
-const DEMO_CONFIG: DemoMissionConfig = { githubToken: 'test-token', fixtureRepo: 'owner/fixture', fixtureWorkflow: 'flip.yml', fixtureUrl: 'https://fixture.test/', collectorId: 'c_demo', brightDataApiKey: 'bdata-test', expectedSku: 'SKU-ASTER-001', expectedPrice: '51.77', expectedCurrency: 'GBP', expectedSymbol: '£' };
+const DEMO_ENV_KEYS = ['POLYGRAPH_DEMO_LIVE', 'POLYGRAPH_HEAL_ENABLED', 'POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE', 'POLYGRAPH_DEMO_GITHUB_TOKEN', 'POLYGRAPH_DEMO_FIXTURE_REPO', 'POLYGRAPH_DEMO_FIXTURE_WORKFLOW', 'POLYGRAPH_DEMO_FIXTURE_URL', 'POLYGRAPH_DEMO_COLLECTOR_ID', 'POLYGRAPH_DEMO_EXPECTED_PRODUCT_CODE', 'POLYGRAPH_DEMO_EXPECTED_SKU', 'POLYGRAPH_DEMO_EXPECTED_PRICE', 'POLYGRAPH_DEMO_EXPECTED_CURRENCY', 'POLYGRAPH_DEMO_EXPECTED_SYMBOL', 'BRIGHTDATA_API_KEY'] as const;
+const DEMO_CONFIG: DemoMissionConfig = { githubToken: 'test-token', fixtureRepo: 'owner/fixture', fixtureWorkflow: 'flip.yml', fixtureUrl: 'https://fixture.test/', collectorId: 'c_demo', brightDataApiKey: 'bdata-test', expectedProductCode: 'Product/Code-123', expectedPrice: '51.77', expectedCurrency: 'GBP', expectedSymbol: '£' };
 
 function createFakeDemoService(): DemoMissionService {
   const github: DemoGithubClient = { workflowUrl: 'https://github.test/workflow', async dispatch() {}, async waitForMarker() {} };
   const brightData: DemoBrightDataClient = {
     async trigger() { return 'job-1'; },
-    async pollDataset() { return { rows: [{ sku: 'SKU-ASTER-001', price: { value: 51.77, currency: 'GBP', symbol: '£' } }], ambiguous: false }; },
+    async pollDataset() { return { rows: [{ product_code: 'Product/Code-123', title: 'Aster QuietWave Wireless Noise-Cancelling Headphones, 40-hour Battery, Midnight Blue', price: { value: 51.77, currency: 'GBP', symbol: '£' }, availability: 'In stock' }], ambiguous: false }; },
     async refactorTemplate() { return {}; },
     async pollRefactorTemplateProgress() { return { status: 'completed', id: 'heal-1' }; },
     async resumeAutomationJob() {},
@@ -88,6 +88,9 @@ describe('tenancy/serve — public demo integration', () => {
       const disabled = await fetch(`${disabledBase}/api/demo/missions`, { method: 'POST', headers: jsonHeaders(), body: '{}' });
       expect(disabled.status).toBe(503);
       expect(disabled.headers.get('strict-transport-security')).toBe('max-age=31536000');
+      expect(disabled.headers.get('content-security-policy')).toContain(
+        'frame-src https://accounts.google.com https://polygraph-version-shift-store.vercel.app'
+      );
       await running.stop();
 
       running = await startServer({ dbPath: join(dir, 'polygraph.sqlite'), port: 0, host: '127.0.0.1', publicOrigin: ORIGIN, webDir: join(dir, 'nope'), demoService: createFakeDemoService() });
@@ -168,6 +171,11 @@ describe('tenancy/serve — auth required', () => {
 
   it('GET /api/ledger without a session cookie returns 401', async () => {
     const res = await fetch(`${base}/api/ledger`);
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /api/receipts without a session cookie returns 401', async () => {
+    const res = await fetch(`${base}/api/receipts`);
     expect(res.status).toBe(401);
   });
 
@@ -266,6 +274,31 @@ describe('tenancy/serve — tenant isolation over HTTP', () => {
     // And tenant A's own cookie must never resolve tenant B's session id —
     // sanity check that the two sessions are genuinely distinct.
     expect(cookieA).not.toBe(cookieB);
+  });
+
+  it('returns only this tenant\'s broken repair receipts with collector names', async () => {
+    const a = await signup(base, 'Tenant A');
+    const b = await signup(base, 'Tenant B');
+    const cookieA = await sessionCookieFor(base, a.token);
+    const cookieB = await sessionCookieFor(base, b.token);
+
+    for (const [cookie, id, name] of [[cookieA, 'a-collector', 'A Products'], [cookieB, 'b-collector', 'B Products']] as const) {
+      await fetch(`${base}/api/collectors`, {
+        method: 'POST', headers: jsonHeaders({ cookie }),
+        body: JSON.stringify({ collector_id: id, name, canary_inputs: ['SKU-1'] }),
+      });
+    }
+    const tenantB = running.writer.prepare('SELECT genesis_hash FROM tenants WHERE id = ?').get(b.tenantId) as { genesis_hash: string };
+    const scopeB = scopeFor(running.writer, b.tenantId, tenantB.genesis_hash);
+    scopeB.ledger.append({ ts: '2026-08-22T00:00:00.000Z', tenant: 'Tenant B', collector: 'b-collector', run_id: 'broken-b', verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL', evidence: [{ check: 'contract', ok: false, detail: 'price disappeared', metrics: { fillRates: { price: 0, title: 1 } } }], action: 'REPAIR' });
+    scopeB.ledger.append({ ts: '2026-08-22T00:01:00.000Z', tenant: 'Tenant B', collector: 'b-collector', run_id: 'heal-b', verdict: 'RECOVERY_PENDING', cause: 'STRUCTURAL', evidence: [{ check: 'repair_prompt', ok: true, detail: 'Restore price.' }], action: 'REPAIR', heal_job_id: 'heal-b' });
+    scopeB.ledger.append({ ts: '2026-08-22T00:02:00.000Z', tenant: 'Tenant B', collector: 'b-collector', run_id: 'proof-b', verdict: 'RECOVERY_VERIFIED', cause: null, evidence: [], action: 'RELEASE', heal_job_id: 'heal-b' });
+
+    const responseB = await fetch(`${base}/api/receipts`, { headers: { cookie: cookieB } });
+    expect(responseB.status).toBe(200);
+    expect(await responseB.json()).toEqual({ receipts: [expect.objectContaining({ collector: 'b-collector', collector_name: 'B Products', status: 'verified', changed_fields: ['price'] })] });
+    const responseA = await fetch(`${base}/api/receipts`, { headers: { cookie: cookieA } });
+    expect(await responseA.json()).toEqual({ receipts: [] });
   });
 
   it('GET /api/collectors/:id for a collector owned by another tenant returns 404, never another tenant\'s row', async () => {

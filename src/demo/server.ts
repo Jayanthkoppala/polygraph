@@ -6,16 +6,17 @@ import { readRequestBody, RequestBodyTooLargeError } from '../http/server.js';
 import { serveStaticOrSpa } from '../http/static.js';
 import { GithubFixtureClient } from './github.js';
 import { DemoMissionBudgetError, DemoMissionConflictError, DemoMissionLeaseError, DemoMissionNotFoundError, DemoMissionService, type DemoBrightDataClient, type DemoMissionConfig } from './mission.js';
+import type { DemoMissionStore } from './mission.js';
 interface DemoServerDeps { config?: DemoMissionConfig; service?: DemoMissionService; appDir?: string }
 export function readDemoMissionConfig(env: NodeJS.ProcessEnv = process.env): DemoMissionConfig | undefined {
   if (env.POLYGRAPH_DEMO_LIVE !== '1') return undefined;
   if (env.POLYGRAPH_HEAL_ENABLED !== '1' || env.POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE !== '1') return undefined;
-  const values = { githubToken: env.POLYGRAPH_DEMO_GITHUB_TOKEN, fixtureRepo: env.POLYGRAPH_DEMO_FIXTURE_REPO, fixtureWorkflow: env.POLYGRAPH_DEMO_FIXTURE_WORKFLOW, fixtureUrl: env.POLYGRAPH_DEMO_FIXTURE_URL, collectorId: env.POLYGRAPH_DEMO_COLLECTOR_ID, brightDataApiKey: env.BRIGHTDATA_API_KEY, expectedSku: env.POLYGRAPH_DEMO_EXPECTED_SKU, expectedPrice: env.POLYGRAPH_DEMO_EXPECTED_PRICE, expectedCurrency: env.POLYGRAPH_DEMO_EXPECTED_CURRENCY, expectedSymbol: env.POLYGRAPH_DEMO_EXPECTED_SYMBOL };
+  const values = { githubToken: env.POLYGRAPH_DEMO_GITHUB_TOKEN, fixtureRepo: env.POLYGRAPH_DEMO_FIXTURE_REPO, fixtureWorkflow: env.POLYGRAPH_DEMO_FIXTURE_WORKFLOW, fixtureUrl: env.POLYGRAPH_DEMO_FIXTURE_URL, collectorId: env.POLYGRAPH_DEMO_COLLECTOR_ID, brightDataApiKey: env.BRIGHTDATA_API_KEY, expectedProductCode: env.POLYGRAPH_DEMO_EXPECTED_PRODUCT_CODE ?? env.POLYGRAPH_DEMO_EXPECTED_SKU, expectedPrice: env.POLYGRAPH_DEMO_EXPECTED_PRICE, expectedCurrency: env.POLYGRAPH_DEMO_EXPECTED_CURRENCY, expectedSymbol: env.POLYGRAPH_DEMO_EXPECTED_SYMBOL };
   if (Object.values(values).some((value) => !value || value.trim() === '')) return undefined;
   const requestedMax = Number(env.POLYGRAPH_DEMO_MAX_MISSIONS ?? '2');
   return { ...values as Omit<DemoMissionConfig, 'maxMissions'>, maxMissions: Number.isInteger(requestedMax) && requestedMax > 0 ? Math.min(requestedMax, 3) : 2 };
 }
-export function createDemoMissionService(config: DemoMissionConfig): DemoMissionService { const github = new GithubFixtureClient({ config }); const brightData: DemoBrightDataClient = new BrightDataClient({ apiKey: config.brightDataApiKey }); return new DemoMissionService({ config, github, brightData }); }
+export function createDemoMissionService(config: DemoMissionConfig, store?: DemoMissionStore): DemoMissionService { const github = new GithubFixtureClient({ config }); const brightData: DemoBrightDataClient = new BrightDataClient({ apiKey: config.brightDataApiKey }); return new DemoMissionService({ config, github, brightData, store }); }
 function sendJson(res: ServerResponse, status: number, body: unknown): void { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); }
 async function jsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> { const raw = await readRequestBody(req); if (!raw) return {}; try { const parsed: unknown = JSON.parse(raw); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; } catch { return null; } }
 function trustedJsonMutation(req: IncomingMessage): boolean {
@@ -27,11 +28,17 @@ function defaultAppDir(): string { return join(fileURLToPath(new URL('../..', im
 /** Handles only public demo API routes, returning false for all other paths. */
 export async function tryHandleDemoMissionRequest(req: IncomingMessage, res: ServerResponse, service?: DemoMissionService): Promise<boolean> {
   const url = new URL(req.url ?? '/', 'http://localhost');
-  if (url.pathname !== '/api/demo/missions' && !url.pathname.startsWith('/api/demo/missions/')) return false;
+  if (url.pathname !== '/api/demo/receipts' && url.pathname !== '/api/demo/missions' && !url.pathname.startsWith('/api/demo/missions/')) return false;
 
   try {
     const method = req.method ?? 'GET';
     if (!service) { sendJson(res, 503, { error: 'demo mission configuration is incomplete or POLYGRAPH_DEMO_LIVE is not 1' }); return true; }
+    if (method === 'GET' && url.pathname === '/api/demo/receipts') {
+      const requested = Number(url.searchParams.get('n') ?? '100');
+      const limit = Number.isFinite(requested) ? Math.min(100, Math.max(1, Math.floor(requested))) : 100;
+      sendJson(res, 200, { receipts: service.repairReceipts(limit) });
+      return true;
+    }
     if (method === 'POST' && !trustedJsonMutation(req)) { sendJson(res, 415, { error: 'demo mutations require same-site application/json requests' }); return true; }
     if (method === 'POST' && url.pathname === '/api/demo/missions') { if (!(await jsonBody(req))) { sendJson(res, 400, { error: 'invalid JSON body' }); return true; } const acquired = service.acquire(); sendJson(res, acquired.reused ? 200 : 201, { id: acquired.mission.id, reused: acquired.reused }); return true; }
     const match = url.pathname.match(/^\/api\/demo\/missions\/([^/]+)(?:\/(shift|reset))?$/);

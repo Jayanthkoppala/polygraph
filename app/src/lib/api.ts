@@ -68,6 +68,28 @@ export interface LedgerEventRow {
   [key: string]: unknown;
 }
 
+export interface RepairReceipt {
+  id: number | string;
+  source?: 'demo' | 'customer';
+  mission_id?: string;
+  collector: string;
+  collector_name: string;
+  incident_run_id: string | null;
+  heal_job_id: string;
+  detected_at: string;
+  repair_started_at: string;
+  completed_at: string | null;
+  status: 'pending' | 'verified' | 'failed';
+  cause: string | null;
+  incident_verdict: string | null;
+  changed_fields: string[];
+  change_summary: string;
+  repair_prompt: string | null;
+  proof_run_id: string | null;
+  terminal_ledger_id: number | null;
+  event_hash: string | null;
+}
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -103,6 +125,43 @@ export function fetchFleetState(): Promise<FleetState> {
 export function fetchLedger(n = 50): Promise<{ events: LedgerEventRow[] }> {
   const clamped = Math.max(1, Math.floor(n));
   return getJson<{ events: LedgerEventRow[] }>(`/api/ledger?n=${clamped}`);
+}
+
+/** GET /api/receipts?n= — broken collector incidents that entered a repair lifecycle. */
+export function fetchRepairReceipts(n = 100): Promise<{ receipts: RepairReceipt[] }> {
+  const clamped = Math.max(1, Math.floor(n));
+  return getJson<{ receipts: RepairReceipt[] }>(`/api/receipts?n=${clamped}`);
+}
+
+/** GET /api/demo/receipts?n= — public receipts from the owned fixture only. */
+export function fetchDemoRepairReceipts(n = 100): Promise<{ receipts: RepairReceipt[] }> {
+  const clamped = Math.max(1, Math.floor(n));
+  return getJson<{ receipts: RepairReceipt[] }>(`/api/demo/receipts?n=${clamped}`);
+}
+
+/** Public demo receipts are always visible. A signed-in workspace also sees
+ * its tenant-scoped receipts; anonymous 401s and disabled-demo 503s are
+ * expected source absences, not page failures. */
+export async function fetchVisibleRepairReceipts(n = 100): Promise<{ receipts: RepairReceipt[] }> {
+  const [demo, customer] = await Promise.allSettled([
+    fetchDemoRepairReceipts(n),
+    fetchRepairReceipts(n),
+  ]);
+  const demoExpectedAbsent = demo.status === 'rejected' && demo.reason instanceof ApiError && [404, 503].includes(demo.reason.status);
+  const customerExpectedAbsent = customer.status === 'rejected' && customer.reason instanceof ApiError && customer.reason.status === 401;
+  if (demo.status === 'rejected' && !demoExpectedAbsent && customer.status === 'rejected') throw demo.reason;
+  if (customer.status === 'rejected' && !customerExpectedAbsent && demo.status === 'rejected') throw customer.reason;
+  const rows = [
+    ...(demo.status === 'fulfilled' ? demo.value.receipts.map((receipt) => ({ ...receipt, source: 'demo' as const })) : []),
+    ...(customer.status === 'fulfilled' ? customer.value.receipts.map((receipt) => ({ ...receipt, source: receipt.source ?? 'customer' as const })) : []),
+  ];
+  const seen = new Set<string>();
+  return { receipts: rows.filter((receipt) => {
+    const key = `${receipt.source}:${receipt.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }) };
 }
 
 /** POST /api/ack — acknowledge a SUSPECT_* verdict by its ledger row id. */

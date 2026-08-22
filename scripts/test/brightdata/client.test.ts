@@ -162,6 +162,32 @@ describe('pollDataset', () => {
   });
 });
 
+describe('pollRefactorTemplateProgress', () => {
+  it('ignores a stale user_approval step after resume and waits for terminal success', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'heal-1', status: 'running', step: 'user_approval' }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          id: 'heal-1',
+          status: 'done',
+          step: 'user_approval',
+          completed_steps: ['user_approval', 'save_new_template'],
+        })
+      );
+    const client = makeClient(fetchImpl);
+
+    const progress = await client.pollRefactorTemplateProgress(
+      'c_owned_fixture',
+      { intervalMs: 1, deadlineMs: 10 },
+      { stopAtApproval: false }
+    );
+
+    expect(progress).toMatchObject({ status: 'done', id: 'heal-1' });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('retry policy', () => {
   it('retries a 5xx response up to 3 times, then succeeds on the 4th attempt', async () => {
     const fetchImpl = vi

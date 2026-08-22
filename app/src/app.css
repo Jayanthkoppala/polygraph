@@ -27,11 +27,20 @@ html {
   -moz-osx-font-smoothing: grayscale;
 }
 
+:root {
+  --poly-primary: #0010ca;
+  --poly-primary-bright: #0100ff;
+  --poly-graphite: #1e1e1e;
+  --poly-surface: #24262a;
+  --poly-secondary: #a9b7c6;
+  --poly-border: #2b2d30;
+}
+
 /* Page ground: without it, routes that don't paint their own full-bleed
  * background show a dark panel floating on browser-default white. */
 
 body {
-  background-color: var(--color-void);
+  background-color: var(--poly-graphite);
   color: #ededed;
 }
 

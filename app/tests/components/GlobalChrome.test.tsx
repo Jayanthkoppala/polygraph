@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
-import { GlobalChrome, PROOF_REQUEST_EVENT, RECEIPT_STATE_EVENT, START_PROOF_EVENT } from '@/components/GlobalChrome';
+import { GlobalChrome, PROOF_REQUEST_EVENT, START_PROOF_EVENT } from '@/components/GlobalChrome';
 
 vi.mock('@/components/Dither', () => ({
   default: (props: Record<string, unknown>) => (
@@ -23,7 +23,8 @@ vi.mock('@/components/Dither', () => ({
 }));
 
 function LocationProbe() {
-  return <span data-testid="location">{useLocation().pathname}</span>;
+  const location = useLocation();
+  return <span data-testid="location">{`${location.pathname}${location.search}`}</span>;
 }
 
 function ProofIntentProbe({ onStart }: { onStart: () => void }) {
@@ -53,8 +54,10 @@ describe('GlobalChrome', () => {
     expect(screen.getByRole('button', { name: 'Polygraph home' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Live proof' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'How it works' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Receipt' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Receipt' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Receipts' })).toHaveAttribute('href', '/receipts');
     expect(screen.getByRole('link', { name: 'Connect' })).toHaveAttribute('href', '/signup');
+    expect(screen.getByRole('link', { name: 'Connect' })).toHaveClass('poly-nav-connect');
 
     const dither = screen.getByTestId('global-dither');
     expect(dither).toHaveAttribute('data-wave-color', '[0,0.06274509803921569,0.792156862745098]');
@@ -86,7 +89,7 @@ describe('GlobalChrome', () => {
     expect(dither).toHaveAttribute('data-disable-animation', 'true');
   });
 
-  it('dispatches the proof command on the landing and carries it across routes', async () => {
+  it('routes proof actions into the dedicated live-proof URL and resumes there', async () => {
     const onStart = vi.fn();
 
     render(
@@ -97,22 +100,25 @@ describe('GlobalChrome', () => {
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole('button', { name: /start proof/i }));
-    expect(onStart).toHaveBeenCalledOnce();
+    expect(screen.getByTestId('location')).toHaveTextContent('/live-proof?stage=collect');
+    expect(screen.getByRole('button', { name: 'Live proof' })).toHaveAttribute('aria-current', 'page');
+    expect(onStart).not.toHaveBeenCalled();
 
     cleanup();
     render(
       <MemoryRouter initialEntries={['/legal/privacy']}>
         <GlobalChrome>
           <Routes>
-            <Route path="/" element={<ProofIntentProbe onStart={onStart} />} />
+            <Route path="/live-proof" element={<ProofIntentProbe onStart={onStart} />} />
             <Route path="*" element={<LocationProbe />} />
           </Routes>
         </GlobalChrome>
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole('button', { name: /start proof/i }));
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/'));
-    await waitFor(() => expect(onStart).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/live-proof?stage=collect'));
+    fireEvent.click(screen.getByRole('button', { name: /start proof/i }));
+    await waitFor(() => expect(onStart).toHaveBeenCalledOnce());
 
   });
 
@@ -126,18 +132,5 @@ describe('GlobalChrome', () => {
     fireEvent(window, new CustomEvent(PROOF_REQUEST_EVENT, { detail: { pending: true } }));
     expect(screen.getByRole('button', { name: /starting proof/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /live proof/i })).toBeDisabled();
-  });
-
-  it('offers the receipt only while verified receipt state is available', () => {
-    render(
-      <MemoryRouter>
-        <GlobalChrome><main>Recovered proof</main></GlobalChrome>
-      </MemoryRouter>,
-    );
-
-    const receipt = screen.getByRole('button', { name: 'Receipt' });
-    expect(receipt).toBeDisabled();
-    fireEvent(window, new CustomEvent(RECEIPT_STATE_EVENT, { detail: { available: true } }));
-    expect(receipt).toBeEnabled();
   });
 });

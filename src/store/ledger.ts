@@ -89,6 +89,25 @@ export interface RecentOptions {
   limit?: number;
 }
 
+export interface RepairReceiptRow {
+  id: number;
+  collector: string;
+  incident_run_id: string | null;
+  heal_job_id: string;
+  detected_at: string;
+  repair_started_at: string;
+  completed_at: string | null;
+  status: 'pending' | 'verified' | 'failed';
+  cause: string | null;
+  incident_verdict: string | null;
+  changed_fields: string[];
+  change_summary: string;
+  repair_prompt: string | null;
+  proof_run_id: string | null;
+  terminal_ledger_id: number | null;
+  event_hash: string;
+}
+
 /**
  * Canonical JSON: object keys sorted recursively, no whitespace. Used as the
  * hashing input for the ledger's hash chain, so its output must be stable
@@ -121,6 +140,41 @@ interface RawRow {
   prev_hash: string;
   event_hash: string;
   tenant_id: string;
+}
+
+function evidenceList(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
+    : [];
+}
+
+function changedFieldsFromEvidence(value: unknown): string[] {
+  const fields = new Set<string>();
+  for (const entry of evidenceList(value)) {
+    const metrics = entry.metrics;
+    if (!metrics || typeof metrics !== 'object' || Array.isArray(metrics)) continue;
+    const record = metrics as Record<string, unknown>;
+    const fillRates = record.fillRates;
+    if (fillRates && typeof fillRates === 'object' && !Array.isArray(fillRates)) {
+      for (const [field, rate] of Object.entries(fillRates)) {
+        if (typeof rate === 'number' && rate < 1) fields.add(field);
+      }
+    }
+    const collapsed = record.collapsedFields;
+    if (Array.isArray(collapsed)) {
+      for (const field of collapsed) if (typeof field === 'string') fields.add(field);
+    }
+  }
+  return [...fields].sort();
+}
+
+function evidenceDetail(value: unknown, check?: string, failedOnly = false): string | null {
+  const entry = evidenceList(value).find((candidate) => (
+    (check === undefined || candidate.check === check) &&
+    (!failedOnly || candidate.ok === false) &&
+    typeof candidate.detail === 'string'
+  ));
+  return typeof entry?.detail === 'string' ? entry.detail : null;
 }
 
 function deserializeRow(row: RawRow): LedgerEventRow {
@@ -506,6 +560,65 @@ export class Ledger {
 
     const rows = this.db.prepare(query).all(...params) as RawRow[];
     return rows.map(deserializeRow);
+  }
+
+  /** Projects the append-only repair lifecycle into one row per heal job.
+   * Healthy runs never enter this query; the receipt remains reconstructable
+   * from the hash-chained source events instead of drifting into a second log. */
+  repairReceipts(limit = 100): RepairReceiptRow[] {
+    const bounded = Math.max(1, Math.min(Math.floor(limit), 200));
+    const rows = this.db.prepare(
+      `SELECT * FROM events
+        WHERE tenant_id = ? AND (action = 'REPAIR' OR heal_job_id IS NOT NULL)
+        ORDER BY id DESC LIMIT ?`
+    ).all(this.tenantId, bounded * 8) as RawRow[];
+    const events = rows.reverse().map(deserializeRow);
+    const incidents = new Map<string, LedgerEventRow>();
+    const receipts = new Map<string, { pending: LedgerEventRow; incident?: LedgerEventRow; terminal?: LedgerEventRow }>();
+
+    for (const row of events) {
+      if (row.action === 'REPAIR' && row.heal_job_id === null) incidents.set(row.collector, row);
+      if (!row.heal_job_id) continue;
+      if (row.verdict === 'RECOVERY_PENDING') {
+        receipts.set(row.heal_job_id, { pending: row, incident: incidents.get(row.collector) });
+        continue;
+      }
+      if (row.verdict !== 'RECOVERY_VERIFIED' && row.verdict !== 'RECOVERY_FAILED') continue;
+      const existing = receipts.get(row.heal_job_id);
+      receipts.set(row.heal_job_id, {
+        pending: existing?.pending ?? row,
+        incident: existing?.incident ?? incidents.get(row.collector),
+        terminal: row,
+      });
+    }
+
+    return [...receipts.values()]
+      .sort((a, b) => (b.terminal?.id ?? b.pending.id) - (a.terminal?.id ?? a.pending.id))
+      .slice(0, bounded)
+      .map(({ pending, incident, terminal }) => {
+        const source = incident ?? pending;
+        const status = terminal?.verdict === 'RECOVERY_VERIFIED'
+          ? 'verified'
+          : terminal?.verdict === 'RECOVERY_FAILED' ? 'failed' : 'pending';
+        return {
+          id: terminal?.id ?? pending.id,
+          collector: pending.collector,
+          incident_run_id: incident?.run_id ?? null,
+          heal_job_id: pending.heal_job_id!,
+          detected_at: incident?.ts ?? pending.ts,
+          repair_started_at: pending.ts,
+          completed_at: terminal?.ts ?? null,
+          status,
+          cause: source.cause,
+          incident_verdict: incident?.verdict ?? null,
+          changed_fields: changedFieldsFromEvidence(source.evidence),
+          change_summary: evidenceDetail(source.evidence, undefined, true) ?? source.verdict,
+          repair_prompt: evidenceDetail(pending.evidence, 'repair_prompt'),
+          proof_run_id: terminal && terminal.run_id !== pending.heal_job_id ? terminal.run_id : null,
+          terminal_ledger_id: terminal?.id ?? null,
+          event_hash: (terminal ?? pending).event_hash,
+        };
+      });
   }
 
   /** Writes every event as one JSON object per line, oldest first. */

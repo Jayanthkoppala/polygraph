@@ -407,6 +407,19 @@ function up010(db: Database.Database): void {
     ON collector_ingest_tokens(token_sha256)`);
 }
 
+// ---------------------------------------------------------------------------
+// M011 — durable public demo receipts. These rows contain only the owned
+// fixture mission evidence and never tenant/customer data.
+function up011(db: Database.Database): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS demo_mission_receipts (
+    id           TEXT PRIMARY KEY,
+    completed_at TEXT NOT NULL,
+    mission_json TEXT NOT NULL
+  )`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_demo_mission_receipts_completed
+    ON demo_mission_receipts(completed_at DESC)`);
+}
+
 const MIGRATIONS: Migration[] = [
   { version: 1, destructive: false, up: up001 },
   { version: 2, destructive: false, up: up002 },
@@ -418,6 +431,7 @@ const MIGRATIONS: Migration[] = [
   { version: 8, destructive: false, up: up008 },
   { version: 9, destructive: false, up: up009 },
   { version: 10, destructive: false, up: up010 },
+  { version: 11, destructive: false, up: up011 },
 ];
 
 /** One consistent snapshot before the first destructive step. VACUUM INTO

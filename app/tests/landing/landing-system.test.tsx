@@ -62,10 +62,10 @@ describe('landing viewport composition', () => {
     const dither = readFileSync(path.resolve(LANDING_DIR, '../components/Dither.tsx'), 'utf8');
 
     expect(page).toMatch(/<MissionExperience/);
-    expect(mission).toMatch(/function LandingScene\(\)/);
+    expect(mission).toMatch(/function LandingScene/);
     expect(mission).toMatch(/data-testid="landing-scene"/);
-    expect(mission).not.toMatch(/The scraper recovered/);
-    expect(mission).toMatch(/Continue after V2 is observed/);
+    expect(mission).toMatch(/We built a version-shifting store for this test/);
+    expect(mission).toMatch(/Change the store to V2/);
     expect(missionCss).toMatch(/min-height: calc\(100svh - var\(--poly-chrome-offset/);
     expect(chrome).toMatch(/<Dither/);
     expect(mission).toMatch(/createMission/);

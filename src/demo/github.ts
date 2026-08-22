@@ -9,7 +9,7 @@ export class GithubFixtureClient implements DemoGithubClient {
   async dispatch(version: 'v1' | 'v2', generation: string, missionId: string): Promise<void> {
     const { fixtureRepo, fixtureWorkflow, githubToken, githubRef = 'main' } = this.options.config;
     const repoPath = fixtureRepo.split('/').map(encodeURIComponent).join('/');
-    const response = await this.fetchImpl(`https://api.github.com/repos/${repoPath}/actions/workflows/${encodeURIComponent(fixtureWorkflow)}/dispatches`, { method: 'POST', headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${githubToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ ref: githubRef, inputs: { version, generation, mission_id: missionId } }) });
+    const response = await this.fetchImpl(`https://api.github.com/repos/${repoPath}/actions/workflows/${encodeURIComponent(fixtureWorkflow)}/dispatches`, { method: 'POST', headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${githubToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ ref: githubRef, inputs: { version, mutation: 'none', generation, mission_id: missionId } }) });
     if (!response.ok) throw new Error(`GitHub workflow dispatch failed: HTTP ${response.status}`);
   }
   async waitForMarker(version: 'v1' | 'v2', generation: string, missionId: string): Promise<void> {

@@ -2,11 +2,12 @@
  * signup, so a keyed-less tenant here must land on key-paste, not the dashboard. */
 import { Navigate } from 'react-router-dom';
 import { FleetApp } from '@/fleet/FleetApp';
+import { ReceiptsPage } from '@/receipts/ReceiptsPage';
 import { OnboardingWizard } from '@/onboarding/OnboardingWizard';
 import { SessionLoading, SessionUnavailable } from './SessionLoading';
 import { useSessionStatus } from './useSessionStatus';
 
-export function AppGate() {
+export function AppGate({ surface = 'fleet' }: { surface?: 'fleet' | 'receipts' }) {
   const { status, retry } = useSessionStatus();
 
   if (status === 'loading') return <SessionLoading />;
@@ -17,5 +18,5 @@ export function AppGate() {
   // `keyless` uses the wizard's default onComplete (navigate to /fleet, re-running this
   // gate). `demo` falls through to FleetApp: its seeded /api/state is real, like 'ready'.
   if (status === 'keyless') return <OnboardingWizard initialStage="key-paste" />;
-  return <FleetApp />;
+  return surface === 'receipts' ? <ReceiptsPage /> : <FleetApp />;
 }

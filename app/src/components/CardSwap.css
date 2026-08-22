@@ -1,0 +1,30 @@
+.card-swap-container {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  overflow: visible;
+  perspective: 900px;
+  transform: translate(5%, 20%);
+  transform-origin: right bottom;
+}
+
+.card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  box-sizing: border-box;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  background: #05050d;
+  backface-visibility: hidden;
+  transform-style: preserve-3d;
+  -webkit-backface-visibility: hidden;
+  will-change: transform;
+}
+
+@media (max-width: 768px) {
+  .card-swap-container { transform: scale(0.75) translate(25%, 25%); }
+}
+
+@media (max-width: 480px) {
+  .card-swap-container { transform: scale(0.55) translate(25%, 25%); }
+}

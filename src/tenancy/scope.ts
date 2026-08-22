@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { Ledger, GENESIS_HASH, type LedgerEventInput, type LedgerEventRow, type RecentOptions, type VerifyResult } from '../store/ledger.js';
+import { Ledger, GENESIS_HASH, type LedgerEventInput, type LedgerEventRow, type RecentOptions, type RepairReceiptRow, type VerifyResult } from '../store/ledger.js';
 import { Governor, type GovernorGate, type GovernorSnapshot } from '../loop/policy.js';
 import type { Policy } from '../core/config.js';
 import { LOCAL_TENANT_ID, tenantGenesis } from './genesis.js';
@@ -94,6 +94,10 @@ export class ScopedLedger {
 
   recent(opts?: RecentOptions): LedgerEventRow[] {
     return assertOwned(this.ledger.recent(opts), this.tenantId);
+  }
+
+  repairReceipts(limit?: number): RepairReceiptRow[] {
+    return this.ledger.repairReceipts(limit);
   }
 
   /** Runs entirely against this tenant's own chain (own genesis, own rows) —

@@ -436,6 +436,43 @@ describe('Ledger — tenant scoping (Task 1: polygraph-v2-hosted-plan)', () => {
     db.close();
   });
 
+  it('projects only broken repair lifecycles into tenant-scoped receipts', () => {
+    const db = new Database(':memory:');
+    const ledgerA = new Ledger(db, { tenantId: 'tenant-a' });
+    const ledgerB = new Ledger(db, { tenantId: 'tenant-b' });
+
+    ledgerA.append(baseEvent({ collector: 'c1', run_id: 'healthy', verdict: 'PASS', action: 'RELEASE' }));
+    ledgerA.append(baseEvent({
+      collector: 'c1', run_id: 'broken-1', verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL', action: 'REPAIR',
+      evidence: [{ check: 'contract', ok: false, detail: 'required fields collapsed', metrics: { fillRates: { title: 0, price: 0, availability: 1 } } }],
+    }));
+    ledgerA.append(baseEvent({
+      collector: 'c1', run_id: 'heal-1', verdict: 'RECOVERY_PENDING', cause: 'STRUCTURAL', action: 'REPAIR', heal_job_id: 'heal-1',
+      evidence: [{ check: 'repair_prompt', ok: true, detail: 'Restore title and price extraction.' }],
+    }));
+    const terminal = ledgerA.append(baseEvent({
+      collector: 'c1', run_id: 'proof-1', verdict: 'RECOVERY_VERIFIED', cause: null, action: 'RELEASE', heal_job_id: 'heal-1',
+    }));
+    ledgerB.append(baseEvent({ collector: 'c1', run_id: 'other', verdict: 'RECOVERY_PENDING', cause: 'STRUCTURAL', action: 'REPAIR', heal_job_id: 'heal-other' }));
+
+    expect(ledgerA.repairReceipts()).toEqual([expect.objectContaining({
+      id: terminal.id,
+      collector: 'c1',
+      incident_run_id: 'broken-1',
+      heal_job_id: 'heal-1',
+      status: 'verified',
+      changed_fields: ['price', 'title'],
+      change_summary: 'required fields collapsed',
+      repair_prompt: 'Restore title and price extraction.',
+      proof_run_id: 'proof-1',
+      terminal_ledger_id: terminal.id,
+    })]);
+    expect(ledgerB.repairReceipts()).toHaveLength(1);
+    expect(ledgerB.repairReceipts()[0].heal_job_id).toBe('heal-other');
+
+    db.close();
+  });
+
   it('a legacy events table (no tenant_id column) self-heals: gains the column and backfills existing rows to \'local\'', () => {
     const { dir, path } = tempDbPath();
     dirs.push(dir);

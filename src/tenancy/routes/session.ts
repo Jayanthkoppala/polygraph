@@ -114,6 +114,17 @@ export async function handleSessionRoutes(ctx: RouteContext, session: Session, t
     return;
   }
 
+  if (method === 'GET' && path === '/api/receipts') {
+    const limit = parseLimit(url.searchParams.get('n'), 100);
+    const scope = scopeFor(deps.reader, session.tenantId, tenantRowWriter.genesis_hash);
+    const receipts = scope.ledger.repairReceipts(limit).map((receipt) => ({
+      ...receipt,
+      collector_name: scope.collectors.get(receipt.collector)?.name ?? receipt.collector,
+    }));
+    sendJson(res, 200, { receipts });
+    return;
+  }
+
   if (method === 'POST' && path === '/api/ack') {
     if (!requireCsrf(req, res, deps.publicOrigin)) return;
     const body = await readJsonBody<{ ledger_id?: unknown }>(req, res);
