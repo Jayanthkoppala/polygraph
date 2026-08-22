@@ -77,7 +77,9 @@ function readableFields(fields: string[]) {
   return `${labels.slice(0, -1).join(', ')}, and ${labels.at(-1)}`;
 }
 
-function immutableSnapshotUrl(liveFixtureUrl: string | null, version: 'v1' | 'v2') {
+type FixtureVersion = 'v1' | 'v2' | 'v3';
+
+function immutableSnapshotUrl(liveFixtureUrl: string | null, version: FixtureVersion) {
   if (!liveFixtureUrl) return null;
   try {
     return new URL(`/versions/${version}`, liveFixtureUrl).toString();
@@ -90,7 +92,7 @@ function SceneButton({ children, onClick, variant = 'primary', disabled = false,
   return <Button type="button" data-testid={testId} disabled={disabled} onClick={onClick} variant={variant === 'primary' ? 'default' : 'ghost'} className={`pg-action pg-action-${variant}`}>{children}</Button>;
 }
 
-type VersionFocus = 'v1' | 'v2' | 'both';
+type VersionFocus = 'baseline' | 'changed' | 'both';
 
 const FIXTURE_REPOSITORY_URL = 'https://github.com/Jayanthkoppala/polygraph-version-shift-store';
 const FIXTURE_LIVE_URL = 'https://polygraph-version-shift-store.vercel.app';
@@ -118,9 +120,9 @@ function ProofSources({ liveUrl }: { liveUrl: string | null }) {
   );
 }
 
-function VersionFrame({ version, source, muted }: { version: 'v1' | 'v2'; source: string | null; muted: boolean }) {
-  const label = version === 'v1' ? 'Initial snapshot' : 'Switched version';
-  const detail = version === 'v1' ? 'reference page' : 'changed page';
+function VersionFrame({ version, role, source, muted }: { version: FixtureVersion; role: 'baseline' | 'changed'; source: string | null; muted: boolean }) {
+  const label = role === 'baseline' ? `V${version.slice(1)} reference` : `V${version.slice(1)} switched`;
+  const detail = role === 'baseline' ? 'reference page' : 'changed page';
   const displayUrl = source ? source.replace(/^https?:\/\//, '') : 'connecting…';
   return (
     <figure className={`pg-version-frame ${muted ? 'is-muted' : ''}`} data-version={version}>
@@ -134,10 +136,12 @@ function VersionFrame({ version, source, muted }: { version: 'v1' | 'v2'; source
 
 function VersionPair({ mission, focus }: { mission: MissionState; focus: VersionFocus }) {
   const liveFixtureUrl = mission.evidence.liveFixtureUrl;
+  const baseline = mission.evidence.baselineVersion;
+  const changed = mission.evidence.changedVersion;
   return (
     <section className="pg-version-pair" aria-label="Live product versions">
-      <VersionFrame version="v1" source={immutableSnapshotUrl(liveFixtureUrl, 'v1')} muted={focus === 'v2'} />
-      <VersionFrame version="v2" source={immutableSnapshotUrl(liveFixtureUrl, 'v2')} muted={focus === 'v1'} />
+      <VersionFrame version={baseline} role="baseline" source={immutableSnapshotUrl(liveFixtureUrl, baseline)} muted={focus === 'changed'} />
+      <VersionFrame version={changed} role="changed" source={immutableSnapshotUrl(liveFixtureUrl, changed)} muted={focus === 'baseline'} />
     </section>
   );
 }
@@ -208,7 +212,7 @@ function LandingScene({ onStart, onConnect, reducedMotion }: { onStart: () => vo
         <section className="poly-landing__copy">
           <p className="poly-landing__eyebrow">Watch a real recovery happen</p>
           <h1>See a scraper break, heal, and prove itself.</h1>
-          <p className="poly-landing__lede">We built a version-shifting store for this test. You will collect its healthy V1 result, move the live store to V2, watch the same Bright Data collector break, and see Polygraph guide the repair through a fresh production proof.</p>
+          <p className="poly-landing__lede">We built a version-shifting store for this test. You will collect a healthy result, move the live store to its changed version, watch the same Bright Data collector break, and see Polygraph guide the repair through a fresh production proof.</p>
           <div className="poly-landing__actions">
             <button type="button" className="poly-landing__primary" onClick={onStart}>Start proof <ArrowRight weight="bold" aria-hidden="true" /></button>
             <button type="button" className="poly-landing__secondary" onClick={onConnect}>Connect collectors</button>
@@ -228,28 +232,30 @@ function BaselineScene({ mission, request, reducedMotion, replaying, onShift }: 
   const ready = (replaying || mission.status === 'waiting') && Boolean(baseline);
   const lead = replaying
     ? 'This proof already completed live. Polygraph is replaying its saved evidence from Collect to Prove without running Bright Data again.'
-    : ready ? `For this test, we built a live version-shifting store and connected it to a real Bright Data collector.` : 'For this test, we built a live version-shifting store. Now Bright Data is collecting its healthy V1 result.';
+    : ready ? `For this test, we built a live version-shifting store and connected it to a real Bright Data collector.` : `For this test, we built a live version-shifting store. Now Bright Data is collecting its healthy ${mission.evidence.baselineVersion.toUpperCase()} result.`;
   return (
-    <ConversationScene state="state-v1" activeStage={0} reducedMotion={reducedMotion} visual={<VersionPair mission={mission} focus="v1" />}>
+    <ConversationScene state="state-v1" activeStage={0} reducedMotion={reducedMotion} visual={<VersionPair mission={mission} focus="baseline" />}>
       <StoryLine>{reducedMotion ? lead : <span className="pg-type-guidance"><span className="pg-visually-hidden">{lead}</span><span aria-hidden="true"><TextType as="span" text={lead} loop={false} typingSpeed={18} /></span></span>}</StoryLine>
-      <StoryLine quiet>{ready ? `V1 returned ${facts.productCode}, its full product title, ${facts.price}, and ${facts.availability}. Polygraph saved all four fields as the healthy reference before anything changes.` : 'Once that real result arrives, Polygraph will remember the product code, title, price, and availability before anything changes.'}</StoryLine>
+      <StoryLine quiet>{ready ? `${mission.evidence.baselineVersion.toUpperCase()} returned ${facts.productCode}, its full product title, ${facts.price}, and ${facts.availability}. Polygraph saved all four fields as the healthy reference before anything changes.` : 'Once that real result arrives, Polygraph will remember the product code, title, price, and availability before anything changes.'}</StoryLine>
       <ProofSources liveUrl={mission.evidence.liveFixtureUrl} />
       {replaying
         ? <StoryLine quiet><span className="pg-auto-status">Verified receipt replay · no GitHub deployment, Bright Data collection, or Self-Healing call.</span></StoryLine>
-        : <><ShinyButton className="pg-kickoff-action cursor-target" type="button" onClick={onShift} disabled={!ready || request !== 'idle'} data-testid="shift-v2-btn">{request === 'shift' ? 'Changing the live store…' : 'Change the store to V2'}<ArrowRight weight="bold" aria-hidden="true" /></ShinyButton><p className="pg-kickoff-note">When scraping breaks, Polygraph guides the self-healing loop: repair, re-run, then independently prove the fresh result.</p></>}
+        : <><ShinyButton className="pg-kickoff-action cursor-target" type="button" onClick={onShift} disabled={!ready || request !== 'idle'} data-testid="shift-v2-btn">{request === 'shift' ? 'Changing the live store…' : `Change the store to ${mission.evidence.changedVersion.toUpperCase()}`}<ArrowRight weight="bold" aria-hidden="true" /></ShinyButton><p className="pg-kickoff-note">When scraping breaks, Polygraph guides the self-healing loop: repair, re-run, then independently prove the fresh result.</p></>}
     </ConversationScene>
   );
 }
 
 function DeployScene({ mission, reducedMotion, replaying }: { mission: MissionState; reducedMotion: boolean; replaying: boolean }) {
-  const marker = eventFor(mission, 'marker_v2');
+  const marker = eventFor(mission, `marker_${mission.evidence.changedVersion}`);
+  const baseline = mission.evidence.baselineVersion.toUpperCase();
+  const changed = mission.evidence.changedVersion.toUpperCase();
   const switchMessage = replaying
-    ? 'Polygraph is replaying the verified V2 deployment marker that preceded the broken collection.'
-    : marker ? 'You moved the test store from V1 to V2, and that changed version is now live in production.' : 'You asked the test store to move from V1 to V2. GitHub is publishing that real change now.';
+    ? `Polygraph is replaying the verified ${changed} deployment marker that preceded the broken collection.`
+    : marker ? `You moved the test store from ${baseline} to ${changed}, and that changed version is now live in production.` : `You asked the test store to move from ${baseline} to ${changed}. GitHub is publishing that real change now.`;
   return (
     <ConversationScene state="state-deploying" activeStage={0} reducedMotion={reducedMotion} visual={<VersionPair mission={mission} focus="both" />}>
-      <StoryLine>{marker || replaying ? switchMessage : <SplitFlapText words={['PUBLISHING V2', 'WAITING FOR PRODUCTION', 'VERIFYING LIVE MARKER']} loop cycleDelay={1_150} flipDuration={0.09} stagger={0.025} flipsPerChar={4} padTo={22} fontSize={15} gap={2} tileRadius={3} />}</StoryLine>
-      <StoryLine quiet>{replaying ? 'The saved mission proves GitHub published V2 before the same collector produced its changed result.' : reducedMotion ? (marker ? 'Polygraph left the collector untouched and automatically started the same collector against V2.' : 'Polygraph is waiting for the production marker instead of pretending the new page is already live.') : <DecryptedText text={marker ? 'Polygraph left the collector untouched and automatically started the same collector against V2.' : 'Polygraph is waiting for the production marker instead of pretending the new page is already live.'} animateOn="view" sequential speed={24} />}</StoryLine>
+      <StoryLine>{marker || replaying ? switchMessage : <SplitFlapText words={[`PUBLISHING ${changed}`, 'WAITING FOR PRODUCTION', 'VERIFYING LIVE MARKER']} loop cycleDelay={1_150} flipDuration={0.09} stagger={0.025} flipsPerChar={4} padTo={22} fontSize={15} gap={2} tileRadius={3} />}</StoryLine>
+      <StoryLine quiet>{replaying ? `The saved mission proves GitHub published ${changed} before the same collector produced its changed result.` : reducedMotion ? (marker ? `Polygraph left the collector untouched and automatically started the same collector against ${changed}.` : 'Polygraph is waiting for the production marker instead of pretending the new page is already live.') : <DecryptedText text={marker ? `Polygraph left the collector untouched and automatically started the same collector against ${changed}.` : 'Polygraph is waiting for the production marker instead of pretending the new page is already live.'} animateOn="view" sequential speed={24} />}</StoryLine>
       <StoryLine quiet><span className="pg-auto-status">{replaying ? 'Replaying saved evidence only. No provider action is running.' : 'No more clicks. The proof continues automatically.'}</span></StoryLine>
     </ConversationScene>
   );
@@ -258,11 +264,13 @@ function DeployScene({ mission, reducedMotion, replaying }: { mission: MissionSt
 function BrokenScene({ mission, reducedMotion }: { mission: MissionState; reducedMotion: boolean }) {
   const difference = eventFor(mission, 'difference');
   const changedFields = mission.evidence.changedFields.length > 0 ? mission.evidence.changedFields : difference ? ['price'] : [];
-  const breakMessage = difference ? `The same collector just ran against V2. ${readableFields(changedFields)} no longer match the healthy V1 result.` : 'The changed store is live. Polygraph is watching the same collector run against V2 now.';
+  const baseline = mission.evidence.baselineVersion.toUpperCase();
+  const changed = mission.evidence.changedVersion.toUpperCase();
+  const breakMessage = difference ? `The same collector just ran against ${changed}. ${readableFields(changedFields)} no longer match the healthy ${baseline} result.` : `The changed store is live. Polygraph is watching the same collector run against ${changed} now.`;
   return (
     <ConversationScene state="state-broken" activeStage={1} reducedMotion={reducedMotion} visual={difference ? <JsonDifference before={mission.evidence.baselineResult} after={mission.evidence.brokenResult} changedFields={changedFields} /> : <div className="pg-visual-wait">Waiting for the changed collector result.</div>}>
       <StoryLine>{difference && !reducedMotion ? <span className="pg-fuzzy-message"><span className="pg-visually-hidden">{breakMessage}</span><FuzzyText fontSize={27} fontWeight={650} color="#8f252d" baseIntensity={0.14} hoverIntensity={0.3} enableHover>{`${changedFields.length} EXTRACTION FIELDS BROKE`}</FuzzyText></span> : breakMessage}</StoryLine>
-      <StoryLine quiet>{difference ? <Highlighter action="underline" color="#8f252d" strokeWidth={2}>Polygraph holds the incomplete V2 result instead of sending it downstream. The comparison shows exactly which fields regressed and which evidence remained healthy.</Highlighter> : 'Polygraph will wait for the returned data before deciding whether the version change actually broke anything.'}</StoryLine>
+      <StoryLine quiet>{difference ? <Highlighter action="underline" color="#8f252d" strokeWidth={2}>Polygraph holds the incomplete {changed} result instead of sending it downstream. The comparison shows exactly which fields regressed and which evidence remained healthy.</Highlighter> : 'Polygraph will wait for the returned data before deciding whether the version change actually broke anything.'}</StoryLine>
       <StoryLine quiet><span className="pg-auto-status">Polygraph is investigating this regression automatically.</span></StoryLine>
     </ConversationScene>
   );
@@ -272,7 +280,7 @@ function DiagnosisScene({ mission, reducedMotion }: { mission: MissionState; red
   const memory = eventFor(mission, 'incident_memory');
   const prompt = eventFor(mission, 'healing_prompt');
   const changedFields = mission.evidence.changedFields;
-  const diagnosis = `Here is what Polygraph found: V2 moved ${readableFields(changedFields)}, while availability still agrees with the healthy V1 result.`;
+  const diagnosis = `Here is what Polygraph found: ${mission.evidence.changedVersion.toUpperCase()} moved ${readableFields(changedFields)}, while availability still agrees with the healthy ${mission.evidence.baselineVersion.toUpperCase()} result.`;
   return (
     <ConversationScene state="state-diagnosis" activeStage={1} reducedMotion={reducedMotion} visual={<PolygraphProcessGraphic phase="diagnosis" proofReady={false} reducedMotion={reducedMotion} changedFields={changedFields} />}>
       <StoryLine>{reducedMotion ? diagnosis : <span className="pg-type-guidance"><span className="pg-visually-hidden">{diagnosis}</span><span aria-hidden="true"><TextType as="span" text={diagnosis} typingSpeed={12} loop={false} /></span></span>}</StoryLine>
@@ -291,8 +299,8 @@ function HealScene({ mission, reducedMotion, replaying }: { mission: MissionStat
   return (
     <ConversationScene state="state-healing" activeStage={replaying ? 2 : proofReady ? 3 : 2} reducedMotion={reducedMotion} visual={<PolygraphProcessGraphic phase="healing" proofReady={proofReady} reducedMotion={reducedMotion} changedFields={changedFields} />}>
       <StoryLine>{healing ? `Polygraph sent one evidence-backed request for ${readableFields(changedFields)}, and Bright Data returned an autosaved repair candidate for the same collector.` : `Polygraph has handed Bright Data the exact ${changedFields.length}-field diff. Self-Healing is preparing a candidate for the same collector now.`}</StoryLine>
-      <StoryLine quiet>{healing ? 'But a “repair completed” message is not proof. Polygraph keeps the old result held and runs the repaired collector against live V2 again.' : 'While Bright Data works, Polygraph keeps the broken result safely held.'}</StoryLine>
-      <StoryLine quiet>{proofReady ? 'That separate V2 run has arrived. Polygraph checked product code, title, price, and availability before unlocking the final proof.' : reducedMotion ? 'Now Polygraph is waiting for a completely fresh V2 collection.' : <DecryptedText text="Now Polygraph is waiting for a completely fresh V2 collection." animateOn="view" sequential speed={24} />}</StoryLine>
+      <StoryLine quiet>{healing ? `But a “repair completed” message is not proof. Polygraph keeps the old result held and runs the repaired collector against live ${mission.evidence.changedVersion.toUpperCase()} again.` : 'While Bright Data works, Polygraph keeps the broken result safely held.'}</StoryLine>
+      <StoryLine quiet>{proofReady ? `That separate ${mission.evidence.changedVersion.toUpperCase()} run has arrived. Polygraph checked product code, title, price, and availability before unlocking the final proof.` : reducedMotion ? `Now Polygraph is waiting for a completely fresh ${mission.evidence.changedVersion.toUpperCase()} collection.` : <DecryptedText text={`Now Polygraph is waiting for a completely fresh ${mission.evidence.changedVersion.toUpperCase()} collection.`} animateOn="view" sequential speed={24} />}</StoryLine>
       <StoryLine quiet><span className="pg-auto-status">{proofReady ? 'The fresh proof passed. Opening the verified result automatically.' : 'Polygraph will open the result only after the fresh proof passes.'}</span></StoryLine>
     </ConversationScene>
   );
@@ -302,7 +310,7 @@ function ProofScene({ mission, reducedMotion }: { mission: MissionState; reduced
   const facts = missionFacts(mission, 'receipt');
   return (
     <ConversationScene state="state-proof" activeStage={3} reducedMotion={reducedMotion} visual={<RecoverySuccess productCode={facts.productCode} price={facts.price} />}>
-      <StoryLine>The third production run is back. Product code, title, price, and availability all match the healthy V1 reference again.</StoryLine>
+      <StoryLine>The third production run is back. Product code, title, price, and availability all match the healthy {mission.evidence.baselineVersion.toUpperCase()} reference again.</StoryLine>
       <StoryLine quiet>Polygraph now has fresh evidence that Bright Data repaired every regressed field, not merely a “repair completed” message.</StoryLine>
       <StoryLine><Highlighter action="highlight" color="#245b3d" iterations={1}>{`${facts.productCode} is back at ${facts.price} with 4 of 4 fields verified.`}</Highlighter></StoryLine>
       <div className="pg-proof-actions" aria-label="Next steps">
@@ -316,7 +324,7 @@ function ProofScene({ mission, reducedMotion }: { mission: MissionState; reduced
 function ReplayScene({ mission, reducedMotion }: { mission: MissionState; reducedMotion: boolean }) {
   return (
     <ConversationScene state="state-replay" activeStage={3} reducedMotion={reducedMotion} visual={<div className="pg-conversation-events">{mission.events.map((event) => <div key={`${event.step}-${event.at}`}><time>{providerTime(event.at)}</time><span>{readableStep(event.step)}</span><span>{event.detail}</span></div>)}</div>}>
-      <StoryLine>Here is the evidence trail behind the story. Every line came from this live mission, from the first V1 collection to the final V2 proof.</StoryLine>
+      <StoryLine>Here is the evidence trail behind the story. Every line came from this live mission, from the first {mission.evidence.baselineVersion.toUpperCase()} collection to the final {mission.evidence.changedVersion.toUpperCase()} proof.</StoryLine>
     </ConversationScene>
   );
 }

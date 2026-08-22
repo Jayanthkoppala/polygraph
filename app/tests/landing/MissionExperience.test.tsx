@@ -46,6 +46,8 @@ const evidence: MissionState['evidence'] = {
   fixtureRepo: 'https://github.com/Jayanthkoppala/polygraph-version-shift-store',
   v1Url: 'https://github.com/example/fixture/blob/main/versions/v1.html',
   v2Url: 'https://github.com/example/fixture/blob/main/versions/v2.html',
+  baselineVersion: 'v1',
+  changedVersion: 'v2',
   workflowUrl: 'https://github.com/example/fixture/actions/workflows/switch-version.yml',
   liveFixtureUrl: 'https://fixture.example/',
   collectorUrl: 'https://brightdata.example/collectors/c_demo',
@@ -184,9 +186,9 @@ describe('MissionExperience live mission story', () => {
     expect(await screen.findByText(/for this test, we built a live version-shifting store/i)).toBeInTheDocument();
     expect(missionApi.createMission).toHaveBeenCalledOnce();
     expect(screen.getAllByText(/product\/code-123/i).length).toBeGreaterThan(0);
-    expect(screen.getByTitle(/live product page — initial snapshot/i)).toHaveAttribute('src', 'https://fixture.example/versions/v1');
-    expect(screen.getByTitle(/live product page — switched version/i)).toHaveAttribute('src', 'https://fixture.example/versions/v2');
-    expect(screen.getByTitle(/live product page — initial snapshot/i).closest('.pg-magic-safari')).not.toBeNull();
+    expect(screen.getByTitle(/live product page — v1 reference/i)).toHaveAttribute('src', 'https://fixture.example/versions/v1');
+    expect(screen.getByTitle(/live product page — v2 switched/i)).toHaveAttribute('src', 'https://fixture.example/versions/v2');
+    expect(screen.getByTitle(/live product page — v1 reference/i).closest('.pg-magic-safari')).not.toBeNull();
     expect(screen.getByLabelText(/mission progress: collect/i)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId('proof-route')).toHaveTextContent('/live-proof?stage=collect&mission=mission-1'));
     expect(screen.getByRole('button', { name: /change the store to v2/i })).toBeEnabled();

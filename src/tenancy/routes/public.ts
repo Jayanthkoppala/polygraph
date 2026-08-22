@@ -23,7 +23,7 @@ export async function handlePublicRoutes(ctx: RouteContext): Promise<boolean> {
     return true;
   }
 
-  if (await tryHandleDemoMissionRequest(req, res, deps.demoService)) return true;
+  if (await tryHandleDemoMissionRequest(req, res, deps.demoService, deps.demoConfig)) return true;
 
   // ---- Bright Data push delivery (public capability URL) ----------------
 

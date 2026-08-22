@@ -65,7 +65,7 @@ describe('landing viewport composition', () => {
     expect(mission).toMatch(/function LandingScene/);
     expect(mission).toMatch(/data-testid="landing-scene"/);
     expect(mission).toMatch(/We built a version-shifting store for this test/);
-    expect(mission).toMatch(/Change the store to V2/);
+    expect(mission).toMatch(/Change the store to \$\{mission\.evidence\.changedVersion\.toUpperCase\(\)\}/);
     expect(missionCss).toMatch(/min-height: calc\(100svh - var\(--poly-chrome-offset/);
     expect(chrome).toMatch(/<Dither/);
     expect(mission).toMatch(/createMission/);

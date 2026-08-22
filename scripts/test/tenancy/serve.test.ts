@@ -50,7 +50,7 @@ async function sessionCookieFor(base: string, token: string): Promise<string> {
   return setCookie!.split(';')[0];
 }
 
-const DEMO_ENV_KEYS = ['POLYGRAPH_DEMO_LIVE', 'POLYGRAPH_HEAL_ENABLED', 'POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE', 'POLYGRAPH_DEMO_GITHUB_TOKEN', 'POLYGRAPH_DEMO_FIXTURE_REPO', 'POLYGRAPH_DEMO_FIXTURE_WORKFLOW', 'POLYGRAPH_DEMO_FIXTURE_URL', 'POLYGRAPH_DEMO_COLLECTOR_ID', 'POLYGRAPH_DEMO_EXPECTED_PRODUCT_CODE', 'POLYGRAPH_DEMO_EXPECTED_SKU', 'POLYGRAPH_DEMO_EXPECTED_PRICE', 'POLYGRAPH_DEMO_EXPECTED_CURRENCY', 'POLYGRAPH_DEMO_EXPECTED_SYMBOL', 'BRIGHTDATA_API_KEY'] as const;
+const DEMO_ENV_KEYS = ['POLYGRAPH_DEMO_LIVE', 'POLYGRAPH_HEAL_ENABLED', 'POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE', 'POLYGRAPH_DEMO_GITHUB_TOKEN', 'POLYGRAPH_DEMO_FIXTURE_REPO', 'POLYGRAPH_DEMO_FIXTURE_WORKFLOW', 'POLYGRAPH_DEMO_FIXTURE_URL', 'POLYGRAPH_DEMO_COLLECTOR_ID', 'POLYGRAPH_DEMO_EXPECTED_PRODUCT_CODE', 'POLYGRAPH_DEMO_EXPECTED_SKU', 'POLYGRAPH_DEMO_EXPECTED_PRICE', 'POLYGRAPH_DEMO_EXPECTED_CURRENCY', 'POLYGRAPH_DEMO_EXPECTED_SYMBOL', 'POLYGRAPH_DEMO_FRESH_PROOF_TOKEN', 'BRIGHTDATA_API_KEY'] as const;
 const DEMO_CONFIG: DemoMissionConfig = { githubToken: 'test-token', fixtureRepo: 'owner/fixture', fixtureWorkflow: 'flip.yml', fixtureUrl: 'https://fixture.test/', collectorId: 'c_demo', brightDataApiKey: 'bdata-test', expectedProductCode: 'Product/Code-123', expectedPrice: '51.77', expectedCurrency: 'GBP', expectedSymbol: '£' };
 
 function createFakeDemoService(): DemoMissionService {
@@ -93,9 +93,38 @@ describe('tenancy/serve — public demo integration', () => {
       );
       await running.stop();
 
+      Object.assign(process.env, {
+        POLYGRAPH_DEMO_LIVE: '1',
+        POLYGRAPH_HEAL_ENABLED: '1',
+        POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE: '1',
+        POLYGRAPH_DEMO_GITHUB_TOKEN: DEMO_CONFIG.githubToken,
+        POLYGRAPH_DEMO_FIXTURE_REPO: DEMO_CONFIG.fixtureRepo,
+        POLYGRAPH_DEMO_FIXTURE_WORKFLOW: DEMO_CONFIG.fixtureWorkflow,
+        POLYGRAPH_DEMO_FIXTURE_URL: DEMO_CONFIG.fixtureUrl,
+        POLYGRAPH_DEMO_COLLECTOR_ID: DEMO_CONFIG.collectorId,
+        POLYGRAPH_DEMO_EXPECTED_PRODUCT_CODE: DEMO_CONFIG.expectedProductCode,
+        POLYGRAPH_DEMO_EXPECTED_PRICE: DEMO_CONFIG.expectedPrice,
+        POLYGRAPH_DEMO_EXPECTED_CURRENCY: DEMO_CONFIG.expectedCurrency,
+        POLYGRAPH_DEMO_EXPECTED_SYMBOL: DEMO_CONFIG.expectedSymbol,
+        POLYGRAPH_DEMO_FRESH_PROOF_TOKEN: 'hosted-fresh-proof-token',
+        BRIGHTDATA_API_KEY: DEMO_CONFIG.brightDataApiKey,
+      });
       running = await startServer({ dbPath: join(dir, 'polygraph.sqlite'), port: 0, host: '127.0.0.1', publicOrigin: ORIGIN, webDir: join(dir, 'nope'), demoService: createFakeDemoService() });
       const base = `http://127.0.0.1:${running.port}`;
-      const created = await fetch(`${base}/api/demo/missions`, { method: 'POST', headers: jsonHeaders(), body: '{}' });
+      const ordinary = await fetch(`${base}/api/demo/missions`, { method: 'POST', headers: jsonHeaders(), body: '{}' });
+      expect(ordinary.status).toBe(409);
+      expect((await fetch(`${base}/api/demo/missions/hosted-mission-1`)).status).toBe(404);
+
+      const missingToken = await fetch(`${base}/api/demo/missions/fresh`, { method: 'POST', headers: jsonHeaders(), body: '{}' });
+      expect(missingToken.status).toBe(403);
+      const wrongToken = await fetch(`${base}/api/demo/missions/fresh`, { method: 'POST', headers: jsonHeaders({ 'x-polygraph-demo-fresh-proof-token': 'wrong-token' }), body: '{}' });
+      expect(wrongToken.status).toBe(403);
+
+      const created = await fetch(`${base}/api/demo/missions/fresh`, {
+        method: 'POST',
+        headers: jsonHeaders({ 'x-polygraph-demo-fresh-proof-token': 'hosted-fresh-proof-token' }),
+        body: '{}',
+      });
       expect(created.status).toBe(201);
       const { id } = (await created.json()) as { id: string };
       expect(id).toBe('hosted-mission-1');

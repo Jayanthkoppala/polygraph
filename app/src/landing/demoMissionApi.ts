@@ -9,6 +9,9 @@ export interface MissionEvidenceRef {
   fixtureRepo: string | null;
   v1Url: string | null;
   v2Url: string | null;
+  /** Old receipts predate these fields and are V1 -> V2 by contract. */
+  baselineVersion: 'v1' | 'v2' | 'v3';
+  changedVersion: 'v1' | 'v2' | 'v3';
   workflowUrl: string | null;
   liveFixtureUrl: string | null;
   collectorUrl: string | null;
@@ -97,6 +100,8 @@ function coalesceEvidence(raw: Record<string, unknown>): MissionEvidenceRef {
     fixtureRepo: stringValue(raw, 'fixture_repo'),
     v1Url: stringValue(raw, 'v1_url'),
     v2Url: stringValue(raw, 'v2_url'),
+    baselineVersion: (stringValue(raw, 'baseline_version') === 'v2' || stringValue(raw, 'baseline_version') === 'v3') ? stringValue(raw, 'baseline_version') as 'v2' | 'v3' : 'v1',
+    changedVersion: (stringValue(raw, 'changed_version') === 'v3') ? 'v3' : 'v2',
     workflowUrl: stringValue(raw, 'workflow_url'),
     liveFixtureUrl: stringValue(raw, 'live_fixture_url'),
     collectorUrl: stringValue(raw, 'collector_url', 'bright_data_collector_url'),

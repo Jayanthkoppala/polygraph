@@ -122,6 +122,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Runnin
     fetchImpl: opts.fetchImpl,
     baseUrl: opts.baseUrl,
     demoService,
+    demoConfig,
     googleAuth,
   };
 

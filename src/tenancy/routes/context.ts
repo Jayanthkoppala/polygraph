@@ -6,7 +6,7 @@ import { BrightDataClient } from '../../brightdata/client.js';
 import { resolveSession, checkCsrf, type Session } from '../auth.js';
 import { scopeFor, type TenantScope } from '../scope.js';
 import { ScopedSecrets, revealPlaintext } from '../secrets.js';
-import type { DemoMissionService } from '../../demo/mission.js';
+import type { DemoMissionConfig, DemoMissionService } from '../../demo/mission.js';
 import { type GoogleAuthVerifier } from '../google-auth.js';
 /** Everything a route handler needs, resolved once per request. */
 export interface RouteContext {
@@ -48,6 +48,8 @@ export interface TenantServerDeps {
   baseUrl?: string;
   /** Public demo service; omitted when its live configuration is incomplete. */
   demoService?: DemoMissionService;
+  /** Server-only demo configuration, including the fresh-proof operator token. */
+  demoConfig?: DemoMissionConfig;
   /** Google Identity Services verifier. The browser receives only clientId;
    * credential verification always happens server-side. */
   googleAuth?: GoogleAuthVerifier;

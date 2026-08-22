@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -14,7 +15,8 @@ export function readDemoMissionConfig(env: NodeJS.ProcessEnv = process.env): Dem
   const values = { githubToken: env.POLYGRAPH_DEMO_GITHUB_TOKEN, fixtureRepo: env.POLYGRAPH_DEMO_FIXTURE_REPO, fixtureWorkflow: env.POLYGRAPH_DEMO_FIXTURE_WORKFLOW, fixtureUrl: env.POLYGRAPH_DEMO_FIXTURE_URL, collectorId: env.POLYGRAPH_DEMO_COLLECTOR_ID, brightDataApiKey: env.BRIGHTDATA_API_KEY, expectedProductCode: env.POLYGRAPH_DEMO_EXPECTED_PRODUCT_CODE ?? env.POLYGRAPH_DEMO_EXPECTED_SKU, expectedPrice: env.POLYGRAPH_DEMO_EXPECTED_PRICE, expectedCurrency: env.POLYGRAPH_DEMO_EXPECTED_CURRENCY, expectedSymbol: env.POLYGRAPH_DEMO_EXPECTED_SYMBOL };
   if (Object.values(values).some((value) => !value || value.trim() === '')) return undefined;
   const requestedMax = Number(env.POLYGRAPH_DEMO_MAX_MISSIONS ?? '2');
-  return { ...values as Omit<DemoMissionConfig, 'maxMissions'>, maxMissions: Number.isInteger(requestedMax) && requestedMax > 0 ? Math.min(requestedMax, 3) : 2 };
+  const freshProofToken = env.POLYGRAPH_DEMO_FRESH_PROOF_TOKEN?.trim();
+  return { ...values as Omit<DemoMissionConfig, 'maxMissions'>, maxMissions: Number.isInteger(requestedMax) && requestedMax > 0 ? Math.min(requestedMax, 3) : 2, ...(freshProofToken ? { freshProofToken } : {}) };
 }
 export function createDemoMissionService(config: DemoMissionConfig, store?: DemoMissionStore): DemoMissionService { const github = new GithubFixtureClient({ config }); const brightData: DemoBrightDataClient = new BrightDataClient({ apiKey: config.brightDataApiKey }); return new DemoMissionService({ config, github, brightData, store }); }
 function sendJson(res: ServerResponse, status: number, body: unknown): void { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); }
@@ -24,11 +26,19 @@ function trustedJsonMutation(req: IncomingMessage): boolean {
   const fetchSite = req.headers['sec-fetch-site'];
   return fetchSite === undefined || fetchSite === 'same-origin' || fetchSite === 'same-site' || fetchSite === 'none';
 }
+function hasFreshProofToken(req: IncomingMessage, config: DemoMissionConfig | undefined): boolean {
+  const expected = config?.freshProofToken;
+  const provided = req.headers['x-polygraph-demo-fresh-proof-token'];
+  if (!expected || typeof provided !== 'string') return false;
+  const expectedBytes = Buffer.from(expected);
+  const providedBytes = Buffer.from(provided);
+  return expectedBytes.length === providedBytes.length && timingSafeEqual(expectedBytes, providedBytes);
+}
 function defaultAppDir(): string { return join(fileURLToPath(new URL('../..', import.meta.url)), 'app', 'dist'); }
 /** Handles only public demo API routes, returning false for all other paths. */
-export async function tryHandleDemoMissionRequest(req: IncomingMessage, res: ServerResponse, service?: DemoMissionService): Promise<boolean> {
+export async function tryHandleDemoMissionRequest(req: IncomingMessage, res: ServerResponse, service?: DemoMissionService, config?: DemoMissionConfig): Promise<boolean> {
   const url = new URL(req.url ?? '/', 'http://localhost');
-  if (url.pathname !== '/api/demo/receipts' && url.pathname !== '/api/demo/missions' && !url.pathname.startsWith('/api/demo/missions/')) return false;
+  if (url.pathname !== '/api/demo/receipts' && url.pathname !== '/api/demo/missions' && url.pathname !== '/api/demo/missions/fresh' && !url.pathname.startsWith('/api/demo/missions/')) return false;
 
   try {
     const method = req.method ?? 'GET';
@@ -38,6 +48,12 @@ export async function tryHandleDemoMissionRequest(req: IncomingMessage, res: Ser
       const limit = Number.isFinite(requested) ? Math.min(100, Math.max(1, Math.floor(requested))) : 100;
       sendJson(res, 200, { receipts: service.repairReceipts(limit) });
       return true;
+    }
+    if (method === 'POST' && url.pathname === '/api/demo/missions/fresh') {
+      if (!hasFreshProofToken(req, config)) { sendJson(res, 403, { error: 'fresh proof requires the operator token' }); return true; }
+      if (!trustedJsonMutation(req)) { sendJson(res, 415, { error: 'demo mutations require same-site application/json requests' }); return true; }
+      if (!(await jsonBody(req))) { sendJson(res, 400, { error: 'invalid JSON body' }); return true; }
+      const mission = service.startFresh(); sendJson(res, 201, { id: mission.id, reused: false }); return true;
     }
     if (method === 'POST' && !trustedJsonMutation(req)) { sendJson(res, 415, { error: 'demo mutations require same-site application/json requests' }); return true; }
     if (method === 'POST' && url.pathname === '/api/demo/missions') { if (!(await jsonBody(req))) { sendJson(res, 400, { error: 'invalid JSON body' }); return true; } const acquired = service.acquire(); sendJson(res, acquired.reused ? 200 : 201, { id: acquired.mission.id, reused: acquired.reused }); return true; }
@@ -50,9 +66,9 @@ export async function tryHandleDemoMissionRequest(req: IncomingMessage, res: Ser
   } catch (error) { if (error instanceof DemoMissionLeaseError || error instanceof DemoMissionConflictError) sendJson(res, 409, { error: error.message }); else if (error instanceof DemoMissionBudgetError) sendJson(res, 429, { error: error.message }); else if (error instanceof DemoMissionNotFoundError) sendJson(res, 404, { error: error.message }); else if (error instanceof RequestBodyTooLargeError) sendJson(res, 413, { error: error.message }); else sendJson(res, 500, { error: 'internal server error' }); }
   return true;
 }
-export function createDemoMissionServer(deps: DemoServerDeps = {}): Server { const config = deps.config ?? readDemoMissionConfig(); const service = deps.service ?? (config ? createDemoMissionService(config) : undefined); const appDir = deps.appDir ?? defaultAppDir(); return createHttpServer((req, res) => { void handle(req, res, service, appDir); }); }
-async function handle(req: IncomingMessage, res: ServerResponse, service: DemoMissionService | undefined, appDir: string): Promise<void> {
-  if (await tryHandleDemoMissionRequest(req, res, service)) return;
+export function createDemoMissionServer(deps: DemoServerDeps = {}): Server { const config = deps.config ?? readDemoMissionConfig(); const service = deps.service ?? (config ? createDemoMissionService(config) : undefined); const appDir = deps.appDir ?? defaultAppDir(); return createHttpServer((req, res) => { void handle(req, res, service, config, appDir); }); }
+async function handle(req: IncomingMessage, res: ServerResponse, service: DemoMissionService | undefined, config: DemoMissionConfig | undefined, appDir: string): Promise<void> {
+  if (await tryHandleDemoMissionRequest(req, res, service, config)) return;
   const method = req.method ?? 'GET'; const url = new URL(req.url ?? '/', 'http://localhost');
   if (method === 'GET') { await serveStaticOrSpa(url.pathname, appDir, res); return; }
   sendJson(res, 404, { error: 'not found' });

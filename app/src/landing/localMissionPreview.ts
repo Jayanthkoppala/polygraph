@@ -21,6 +21,8 @@ const evidence: MissionState['evidence'] = {
   fixtureRepo: 'https://github.com/Jayanthkoppala/polygraph-version-shift-store',
   v1Url: 'https://github.com/Jayanthkoppala/polygraph-version-shift-store/blob/main/versions/v1.html',
   v2Url: 'https://github.com/Jayanthkoppala/polygraph-version-shift-store/blob/main/versions/v2.html',
+  baselineVersion: 'v1',
+  changedVersion: 'v2',
   workflowUrl: null,
   liveFixtureUrl: 'https://polygraph-version-shift-store.vercel.app',
   collectorUrl: null,
