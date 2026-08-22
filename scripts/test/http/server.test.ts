@@ -4,6 +4,7 @@ import type { Server } from 'node:http';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Ledger } from '../../../src/store/ledger.js';
 import { Governor } from '../../../src/loop/policy.js';
 import { createServer, ackLedgerEvent, AckError, MAX_LEDGER_LIMIT } from '../../../src/http/server.js';
@@ -509,4 +510,17 @@ describe('server — SPA dashboard serving', () => {
     expect(body).toContain('npm run build');
   });
 
+});
+
+/**
+ * Guards the DEFAULT app/dist resolution. Every test above injects `appDir`,
+ * which is why moving server.ts deeper into src/http/ broke `polygraph demo`
+ * silently: it served the "app hasn't been built" notice instead of the SPA.
+ */
+describe('server — default app directory resolution', () => {
+  it('resolves app/dist at the repo root, not relative to its own nesting depth', async () => {
+    const { defaultAppDirForTest } = await import('../../../src/http/server.js');
+    const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
+    expect(defaultAppDirForTest()).toBe(join(repoRoot, 'app', 'dist'));
+  });
 });

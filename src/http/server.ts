@@ -46,7 +46,7 @@ interface ServerDeps {
   ledger: Ledger;
   governor: Governor;
   /** Directory containing the built React app (`app/dist`) — the dashboard
-   * `polygraph demo`/`watch` serve. Defaults to `../app/dist` resolved
+   * `polygraph demo`/`watch` serve. Defaults to `../../app/dist` resolved
    * relative to this module. Injectable for tests. */
   appDir?: string;
   /** Clock, injectable for tests. Defaults to `() => new Date().toISOString()`. */
@@ -360,10 +360,15 @@ export function ackLedgerEvent(ledger: Ledger, ledgerId: number, nowIso: string)
   });
 }
 
+export function defaultAppDirForTest(): string {
+  return defaultAppDir();
+}
+
 function defaultAppDir(): string {
   // src/server.ts (dev, via tsx) and dist/server.js (compiled) both live one
-  // directory below the repo root, so `../app/dist` resolves from either.
-  return fileURLToPath(new URL('../app/dist', import.meta.url));
+  // This module sits two directories below the repo root in both src/ and
+  // dist/, so `../../app/dist` resolves from either.
+  return fileURLToPath(new URL('../../app/dist', import.meta.url));
 }
 
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {
