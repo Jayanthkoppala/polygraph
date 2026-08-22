@@ -1,8 +1,5 @@
-/**
- * VerdictChip tests — the glyph + label set (§2.4, §2.7). The label is
- * always rendered and never truncated (§6.2); the refusal badge only shows
- * at row density, per §2.8 "Where the slot appears".
- */
+// The glyph + label set (§2.4, §2.7): the label always renders and is never truncated (§6.2);
+// the refusal badge shows only at row density, per §2.8 "Where the slot appears".
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { VerdictChip } from '@/components/verdict/VerdictChip';
@@ -46,12 +43,8 @@ describe('VerdictChip — refusal badge only at row density (§2.8)', () => {
   });
 });
 
-/**
- * The badge follows the RUN. At row density the slot is dropped, so this
- * badge is the only surface left that can carry a refusal — and a blocked
- * run is a WRONG_SHAPE card that refuses. §2.8: "the refusal is never
- * invisible at any density."
- */
+// The badge follows the RUN: at row density the slot is dropped, so it is the only surface left
+// that can carry a refusal. §2.8: "the refusal is never invisible at any density."
 describe('VerdictChip — the refusal badge follows the run, not the label', () => {
   it('WRONG_SHAPE with refused=true shows the badge', () => {
     render(<VerdictChip state="WRONG_SHAPE" showRefusal refused />);
@@ -65,10 +58,8 @@ describe('VerdictChip — the refusal badge follows the run, not the label', () 
   });
 
   it('refused=false cannot suppress the badge for WRONG_TARGET... it is simply never passed one', () => {
-    // Documents the contract: VerdictCard derives `refused` from
-    // repairRefusal(), which returns a refusal for every WRONG_TARGET run,
-    // so refused=false is unreachable there. The prop is an override for the
-    // WRONG_SHAPE split, not a licence to un-refuse an identity failure.
+    // VerdictCard derives `refused` from repairRefusal(), which refuses every WRONG_TARGET run.
+    // The prop overrides the WRONG_SHAPE split — not a licence to un-refuse an identity failure.
     render(<VerdictChip state="WRONG_TARGET" showRefusal />);
     expect(screen.getByTestId('verdict-chip-refusal-badge')).toBeInTheDocument();
   });

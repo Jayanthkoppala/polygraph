@@ -51,13 +51,8 @@ interface DigitProps {
 }
 
 function Digit({ place, value, height, digitStyle }: DigitProps) {
-  // Both hooks unconditional — the registry's original put them after an
-  // early `return` for the decimal-point case, a real rules-of-hooks
-  // violation (oxlint's react-hooks/rules-of-hooks correctly flags it as
-  // an error) that happened to never matter for this product's own usage
-  // (the ledger-total odometer's `value` is always a plain integer, so
-  // `places` never contains a '.' entry) — fixed rather than left resting
-  // on that coincidence, since a future `places` override could hit it.
+  // Both hooks unconditional: the registry's original put them after an early return
+  // for the decimal case, a real rules-of-hooks violation this product never hit.
   const valueRoundedToPlace = getValueRoundedToPlace(value, place === '.' ? 1 : place);
   const animatedValue = useSpring(valueRoundedToPlace);
 
@@ -97,12 +92,8 @@ interface CounterProps {
   value: number;
   fontSize?: number;
   padding?: number;
-  /**
-   * An array of place values that determines which digit positions
-   * should be displayed. For decimal places, use "." to represent
-   * the decimal point. Leave this prop empty to enable automatic
-   * detection based on the current value.
-   */
+  /** Which digit positions to display; "." represents the decimal point.
+   *  Leave empty to detect automatically from the current value. */
   places?: PlaceValue[];
   gap?: number;
   borderRadius?: number;

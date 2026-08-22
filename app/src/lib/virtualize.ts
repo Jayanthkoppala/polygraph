@@ -1,13 +1,5 @@
-/**
- * Minimal row virtualizer, pure and framework-free so the windowing math is
- * unit-testable without fighting jsdom's zeroed-out layout (`clientHeight`/
- * `offsetHeight` are always 0 in jsdom, which is why this isn't driven by
- * real measured layout). `FleetColumn` supplies a `scrollTop` from a plain
- * `onScroll` handler and a fixed, known `rowHeight`/`viewportHeight`; this
- * function turns that into "which index range actually needs real DOM"
- * (ui-system.md §5.3: virtualize past 24 rows at 13-40 collectors, always
- * at n>40).
- */
+// Pure row virtualizer: the caller supplies scrollTop and fixed row/viewport heights
+// rather than measured layout, because jsdom reports every element height as 0.
 export interface VirtualWindow {
   /** First index that should render real DOM (inclusive). */
   startIndex: number;

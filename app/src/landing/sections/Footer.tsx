@@ -1,15 +1,5 @@
-/**
- * Footer — S6 footer per copy.md §2/S6: the one-line premise plus links
- * `Sandbox · GitHub · Privacy · Sign in`. No testimonials, no logo wall,
- * no team section, no test counts.
- *
- * `Terms` is kept alongside copy.md's links: ui-system.md §4.3/B10 makes
- * privacy AND terms mandatory ship requirements — ratified by the lead and
- * positioning, and copy.md's list now includes it.
- *
- * The repository is public, so the footer links directly to the source that
- * backs the product claims and offline demo.
- */
+// S6 footer. `Terms` ships alongside copy.md links because ui-system.md §4.3/B10
+// makes privacy AND terms mandatory.
 export function Footer() {
   return (
     <footer className="border-t border-[#272727] bg-[#000000] px-6 py-10">

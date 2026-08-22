@@ -1,19 +1,5 @@
-/**
- * The repair slot under `prefers-reduced-motion: reduce` (ui-system.md §6.5).
- *
- * This lives in its own file on purpose. motion/react resolves the
- * reduced-motion media query once per module registry and caches the answer
- * for every later `useReducedMotion()` call, so whichever test renders first
- * in a file fixes the setting for the whole file. To assert the reduced case
- * honestly, it has to own the first render — hence a dedicated file whose
- * every test stubs `reduce`.
- *
- * §6.5's promise is that nothing is lost when the motion goes away, because
- * "all five states are distinguished by static geometry". For this component
- * that means: no withdrawal plays, and the refusal is nonetheless fully
- * stated by the sunken elevation, the visible word "refused", the disabled
- * button, and the `aria-describedby` argument.
- */
+// Its own file on purpose: motion/react caches the reduced-motion query per module registry, so
+// whichever test renders first fixes it for the whole file — the reduced case must own it (§6.5).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { RepairSlot } from '@/components/verdict/RepairSlot';
@@ -53,8 +39,7 @@ describe('RepairSlot — prefers-reduced-motion (§6.5)', () => {
       />,
     );
     const button = screen.getByRole('button') as HTMLElement;
-    // Settled sunken/magenta on the first paint: never the raised red
-    // starting keyframe, so there is nothing to animate away from.
+    // Settled sunken/magenta on first paint: never the raised red starting keyframe.
     expect(button.style.boxShadow).toContain('inset 0 -1px 0 0 rgb(255 255 255 / 0.04)');
     expect(button.style.boxShadow).not.toContain('inset 0 1px 0 0 rgb(255 255 255 / 0.05)');
     expect(button.style.borderColor).toBe('rgb(232, 121, 249)');
@@ -77,8 +62,7 @@ describe('RepairSlot — prefers-reduced-motion (§6.5)', () => {
     expect(button).toBeDisabled();
     expect(screen.getByText('refused')).toBeInTheDocument();
     const strike = document.querySelector('[data-testid="repair-slot-strike"]') as HTMLElement;
-    // Drawn, not mid-draw: scaleX(1) is the identity transform, which
-    // motion/react writes as "none".
+    // Drawn, not mid-draw: scaleX(1) is the identity transform, which motion/react writes "none".
     expect(['none', 'scaleX(1)']).toContain(strike.style.transform);
     const describedBy = button.getAttribute('aria-describedby');
     expect(document.getElementById(describedBy!)?.textContent).toMatch(/wrong target/i);

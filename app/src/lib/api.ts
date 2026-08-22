@@ -1,25 +1,8 @@
-/**
- * Typed client for the dashboard HTTP API (`src/server.ts`).
- *
- * COUPLING NOTE: this module is a hand-mirrored copy of `../../../src/server.ts`'s
- * `CollectorState`/`FleetState` and `../../../src/types.ts`'s `Evidence`, not an
- * import of them. Two reasons: (1) `app/` is a separate TS project/npm
- * workspace with its own module resolution, so reaching into `src/**` would
- * either need a project reference or a relative path escaping `app/`'s own
- * root, both of which blur the "app/ owns app/, src/ owns src/" boundary
- * this task was given; (2) `src/server.ts` was actively being edited by
- * another agent while this file was written (adding `evidence`,
- * `suggestedHealCommand`, `action`, and `fillRates` to `/api/state`) — this
- * client is written defensively (every server-added field optional/nullable
- * at the type level, and never assumed present at runtime) so it does not
- * silently break if the shape moves again before Task 6/7 consume it.
- *
- * If this drifts from `src/server.ts`, the smoke test in
- * `src/theme/tokens.smoke.test.ts` does NOT catch it — this file's shape
- * accuracy has no automated check yet. Re-diff against `src/server.ts`'s
- * `CollectorState`/`FleetState` exports before Task 6/7 builds real UI on
- * top of this client.
- */
+// Typed client for the dashboard HTTP API. These types are a HAND-MIRRORED copy of
+// `src/server.ts`/`src/types.ts`, not an import — `app/` is a separate TS project.
+
+// NOTHING CHECKS THAT THIS STILL MATCHES THE SERVER. Re-diff by hand against
+// `src/server.ts`'s exports; every server-added field is optional here on purpose.
 
 /** Mirrors `src/types.ts`'s `Evidence`. */
 export interface Evidence {
@@ -29,11 +12,8 @@ export interface Evidence {
   metrics?: Record<string, unknown>;
 }
 
-/** Mirrors `src/server.ts`'s `CollectorState`. Every field the server can
- * legitimately omit or send `null` for is typed that way here too — this
- * client never fabricates a value the server didn't send (see the Global
- * Constraints in docs/plans/polygraph-v2-hosted-plan.md: "absent values
- * render as '—', never as a pass"). */
+/** Mirrors `src/server.ts`'s `CollectorState`. Anything the server may omit is nullable
+ *  here too: absent values render as "—", never as a pass. */
 export interface CollectorState {
   id: string;
   name: string;
@@ -43,10 +23,8 @@ export interface CollectorState {
   rows: number | null;
   fillPct: number | null;
   fillRates: Record<string, number> | null;
-  /** R4 of the v2 plan cuts `learning: n/7` from the UI. The field may
-   * still arrive on the wire from an un-migrated server — kept optional
-   * and typed loosely so this client doesn't break if/when it's removed
-   * server-side, but no consumer should render it. */
+  /** R4 cut `learning: n/7` from the UI. Still arrives from un-migrated servers, so it
+   *  stays optional — but no consumer should render it. */
   learning?: { n: number; of: number };
   lastTs: string | null;
   ledgerId: number | null;
@@ -75,10 +53,8 @@ export interface FleetState {
   };
 }
 
-/** One row from `GET /api/ledger?n=`. Mirrors `LedgerEventRow` as exposed
- * over the wire (`src/ledger.ts`), kept intentionally loose (`unknown`
- * evidence) since this client does not need to interpret ledger rows
- * beyond display — Task 7 owns the real ledger UI and its own translation. */
+/** One row from `GET /api/ledger?n=`, mirroring `LedgerEventRow`. Evidence stays
+ *  `unknown` — nothing here interprets a ledger row beyond displaying it. */
 export interface LedgerEventRow {
   id: number;
   ts: string;
@@ -157,21 +133,11 @@ export interface LedgerVerifyResult {
   reason?: string;
 }
 
-/**
- * POST /api/ledger/verify — walks the tenant's chain from genesis
- * (`Ledger.verify()` in src/ledger.ts) and reports whether every
- * event_hash/prev_hash link still holds. ux-spec.md §1/§6 requires this be
- * a real, running check ("a `Verify chain` button that actually runs and
- * prints `OK — 47 events verified, chain intact`"), not a static claim.
- *
- * COUPLING NOTE: as of this writing `src/server.ts` exposes `/api/state`,
- * `/api/ledger`, and `/api/ack` only — no verify route yet (that module was
- * being built concurrently by another task). This client calls the REST
- * path the rest of `/api/ledger*` already establishes; `LedgerStream`
- * degrades to a plain error message (never a crash, never a fabricated
- * "chain intact") if the route 404s. Re-confirm this path once the serve
- * task reports its final route list.
- */
+// Walks the tenant's chain from genesis and reports whether every event_hash/prev_hash
+// link holds — §1/§6 require a real running check, never a static claim.
+
+// If the route 404s, `LedgerStream` shows a plain error: never a crash, and never a
+// fabricated "chain intact".
 export async function verifyLedgerChain(): Promise<LedgerVerifyResult> {
   const res = await fetch('/api/ledger/verify', { method: 'POST', headers: { accept: 'application/json' } });
   if (!res.ok) {

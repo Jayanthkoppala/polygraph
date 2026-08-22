@@ -6,8 +6,6 @@ import { EffectComposer, wrapEffect } from '@react-three/postprocessing';
 import { Effect } from 'postprocessing';
 import * as THREE from 'three';
 
-import './Dither.css';
-
 const waveVertexShader = `
 precision highp float;
 varying vec2 vUv;
@@ -258,9 +256,7 @@ function DitheredWaves({
         <RetroEffect colorNum={colorNum} pixelSize={pixelSize} />
       </EffectComposer>
       <mesh
-        onPointerMove={(event) => {
-          handlePointerMove(event);
-        }}
+        onPointerMove={handlePointerMove}
         position={[0, 0, 0.01]}
         scale={[viewport.width, viewport.height, 1]}
         visible={false}
@@ -310,9 +306,8 @@ export default function Dither({
   className,
   eventSource,
 }: DitherProps) {
-  // jsdom has no ResizeObserver/WebGL implementation. Keep route and
-  // accessibility tests about the page shell rather than crashing in a
-  // renderer the browser-only effect cannot use.
+  // jsdom has no ResizeObserver or WebGL, so bail rather than crash the whole
+  // page shell inside a renderer this browser-only effect cannot use.
   if (
     typeof window !== 'undefined' &&
     (typeof ResizeObserver === 'undefined' || !supportsWebGL())
@@ -322,7 +317,7 @@ export default function Dither({
   return (
     <div className={className}>
       <Canvas
-        className="dither-canvas"
+        className="relative h-full w-full"
         camera={{ position: [0, 0, 6] }}
         dpr={1}
         eventSource={eventSource}

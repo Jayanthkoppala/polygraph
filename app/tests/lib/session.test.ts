@@ -41,13 +41,8 @@ describe('fetchSessionStatus', () => {
     expect(await fetchSessionStatus()).toBe('demo');
   });
 
-  // These three used to assert `'anonymous'`. That was not a safe default,
-  // it was a false claim: `AppGate` maps `'anonymous'` to
-  // `<Navigate to="/">`, so one flaky request ejected a live authenticated
-  // session onto the marketing page (observed twice against a route that
-  // was healthy either side). A 401 is an answer; a timeout is not. Nothing
-  // here is weaker than before — `'unknown'` still never grants a session,
-  // it just no longer asserts a logout that never happened.
+  // These asserted `'anonymous'`, which AppGate maps to `<Navigate to="/">` — one
+  // flaky request ejected a live session. A 401 is an answer; a timeout is not.
   it('a non-401 error status is unknown, not a logout', async () => {
     mockFetchOnce(503, { error: 'unavailable' });
     expect(await fetchSessionStatus()).toBe('unknown');

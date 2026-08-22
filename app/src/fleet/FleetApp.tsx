@@ -1,11 +1,5 @@
-/**
- * FleetApp — polls `/api/state` and `/api/ledger`, and renders the real
- * three-region shell (docs/design/ui-system.md §5.2, assembled in
- * `FleetShell`). This is Task 7's original `App.tsx` body, moved here
- * unchanged so `App.tsx` itself can become the router root (Task 10):
- * mounted at `/app` and `/fleet` once `AppGate` has confirmed the session
- * is authenticated and keyed.
- */
+// Polls `/api/state` and `/api/ledger` into `FleetShell`. Mounted at `/app` and
+// `/fleet` only once `AppGate` has confirmed the session is authenticated and keyed.
 import { useCallback, useEffect, useState } from 'react';
 import { FleetShell } from '@/components/fleet/FleetShell';
 import { fetchFleetState, fetchLedger, acknowledgeCollector, ApiError } from '@/lib/api';
@@ -15,12 +9,8 @@ import type { LedgerRow } from '@/components/ledger/LedgerStream';
 
 const POLL_INTERVAL_MS = 5000;
 
-/** Same engine->display mapping `lib/verdict.ts` uses for a collector,
- * applied to a raw ledger row. Ledger rows don't carry an `unverified`
- * flag on the wire (that's a `CollectorState`-only derived field, per
- * `src/server.ts`'s `isUnverified`) — a skipped check on a ledger row is
- * legible from its own `evidence[]` instead, which the rail's five-state
- * split doesn't need to distinguish for a historical log entry. */
+/** `lib/verdict.ts`'s mapping applied to a raw ledger row. Rows carry no `unverified`
+ *  flag on the wire — a historical entry doesn't need that distinction. */
 function ledgerRowState(verdict: string, cause: string | null) {
   return toVerdictState({ verdict, cause, unverified: false } as CollectorState);
 }
@@ -67,11 +57,8 @@ export function FleetApp() {
     [fleet, poll],
   );
 
-  // No `/api/repair` route exists yet (repairs are executed by heal.ts on
-  // its own schedule, not triggered from the dashboard). While that wiring
-  // doesn't exist, Repair's click gives the diagnostic fallback ux-spec.md
-  // §6 describes for repairs being off: the exact manual command, copied
-  // to the clipboard, never a dead button.
+  // No `/api/repair` route exists — heal.ts runs on its own schedule. So Repair gives
+  // §6's repairs-off fallback: the exact manual command on the clipboard, never a dead button.
   const handleRepair = useCallback(
     (id: string) => {
       const collector = fleet?.collectors.find((c) => c.id === id);

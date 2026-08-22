@@ -15,18 +15,14 @@ export default defineConfig({
     },
   },
   build: {
-    // Consumed by the existing Node server (src/server.ts), which currently
-    // only serves web/index.html — a later integration task wires it to
-    // serve this directory's contents too. See task-5-report.md.
+    // The Node server (src/http/static.ts) serves this dist as the dashboard SPA.
     outDir: 'dist',
     emptyOutDir: true,
   },
   server: {
     proxy: {
-      // Dev-only convenience so `npm run dev` can hit a locally running
-      // `polygraph watch` (default port 4141, see src/index.ts) without
-      // duplicating API logic. Not used in the production build, which is
-      // served same-origin by the Node server.
+      // Dev-only: reach a local `polygraph watch` (default port 4141).
+      // Production is same-origin, so no proxy there.
       '/api': {
         target: 'http://localhost:4141',
         changeOrigin: true,

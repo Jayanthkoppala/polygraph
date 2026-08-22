@@ -1,13 +1,5 @@
-/**
- * SchemaConfirmStep — the required-fields/entity-key table. Two things
- * this task's binding constraints make load-bearing:
- *   - a zero-row probe must route to `onSkippedEmpty` (NOT VERIFIED,
- *     onboarding continues) rather than ever rendering a table for data
- *     that doesn't exist.
- *   - the table must never show a fabricated fill-rate percentage (see
- *     ../api.ts's module doc on why the real endpoint can't supply one) —
- *     only the honest "Always filled" / "Sometimes empty" signal.
- */
+/** A zero-row probe must route to `onSkippedEmpty`, never render a table for data that
+ * doesn't exist; and no fabricated fill-rate % — the endpoint cannot supply one. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SchemaConfirmStep } from '@/onboarding/steps/SchemaConfirmStep';
@@ -136,14 +128,8 @@ async function renderReady() {
 
 describe('the schema table fits its card (the REQUIRED? column must be on screen)', () => {
   it('uses a fixed layout with explicit column widths instead of auto layout', async () => {
-    // Measured in Chrome at 1512x805 and again at 1280x700: with the default
-    // auto table layout this table rendered 110px wider than the 448px card
-    // that contains it, pushing the REQUIRED? column — the only interactive
-    // control on ux-spec.md §6's "Confirm what good looks like" screen —
-    // past the right edge of an `overflow-x-auto` wrapper with no visible
-    // scrollbar. The toggles existed, reported visible, and could not be
-    // seen. jsdom cannot measure that, so this guards the layout decision
-    // that fixes it.
+    // Measured in Chrome: auto table layout rendered 110px wider than its 448px card,
+    // pushing the REQUIRED? toggles past an overflow-x-auto edge with no scrollbar.
     await renderReady();
     const table = await screen.findByTestId('schema-confirm-table');
     expect(table.className).toContain('table-fixed');

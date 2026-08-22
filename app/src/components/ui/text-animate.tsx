@@ -43,59 +43,34 @@ type MotionElementType = Extract<
 >
 
 interface TextAnimateProps extends Omit<MotionProps, "children"> {
-  /**
-   * The text content to animate
-   */
+  /** The text content to animate */
   children: string
-  /**
-   * The class name to be applied to the component
-   */
+  /** The class name to be applied to the component */
   className?: string
-  /**
-   * The class name to be applied to each segment
-   */
+  /** The class name to be applied to each segment */
   segmentClassName?: string
-  /**
-   * The delay before the animation starts
-   */
+  /** The delay before the animation starts */
   delay?: number
-  /**
-   * The duration of the animation
-   */
+  /** The duration of the animation */
   duration?: number
-  /**
-   * Custom motion variants for the animation
-   */
+  /** Custom motion variants for the animation */
   variants?: Variants
-  /**
-   * The element type to render
-   */
+  /** The element type to render */
   as?: MotionElementType
-  /**
-   * How to split the text ("text", "word", "character")
-   */
+  /** How to split the text ("text", "word", "character") */
   by?: AnimationType
-  /**
-   * Whether to start animation when component enters viewport
-   */
+  /** Whether to start animation when component enters viewport */
   startOnView?: boolean
-  /**
-   * Whether to animate only once
-   */
+  /** Whether to animate only once */
   once?: boolean
-  /**
-   * The animation preset to use
-   */
+  /** The animation preset to use */
   animation?: AnimationVariant
-  /**
-   * Whether to enable accessibility features (default: true)
-   */
+  /** Whether to enable accessibility features (default: true) */
   accessible?: boolean
 }
 
-/** How `children` is broken into individually animated spans. `word` keeps
- * the whitespace runs as their own segments so `whitespace-pre` preserves
- * the original spacing. */
+/** How `children` splits into animated spans. `word` keeps whitespace runs as
+ *  their own segments so `whitespace-pre` preserves the original spacing. */
 function splitSegments(text: string, by: AnimationType): string[] {
   switch (by) {
     case "word":

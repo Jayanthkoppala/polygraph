@@ -1,16 +1,5 @@
-/**
- * VerdictRail geometry + motion tests.
- *
- * The grayscale test (ui-system.md §6.2): screenshot the dashboard,
- * convert to grayscale, confirm all five states are still identifiable.
- * We can't literally rasterize in jsdom, so the equivalent unit assertion
- * is to strip colour out of the equation entirely and assert on the
- * differing STRUCTURE per state — element count, width, mask presence,
- * discreteness — none of which reads `background`/`color`/`fill`. If two
- * states ever produced identical geometry-describing DOM, this test would
- * pass a colour check but fail a grayscale screenshot; asserting structure
- * directly is the stricter, faithful version of that requirement.
- */
+// The grayscale test (§6.2): all five states stay identifiable with colour removed. jsdom can't
+// rasterize, so assert per-state STRUCTURE only — element count, width, mask, discreteness.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
 import { VerdictRail } from '@/components/verdict/VerdictRail';
@@ -21,8 +10,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** Minimal matchMedia stub. `reduced` controls whether
- * `(prefers-reduced-motion: reduce)` reports a match. */
+// `reduced` controls whether `(prefers-reduced-motion: reduce)` reports a match.
 function stubMatchMedia(reduced: boolean) {
   vi.stubGlobal(
     'matchMedia',
@@ -85,11 +73,8 @@ describe('VerdictRail — five geometries, distinguishable with colour removed (
     const { container } = render(<VerdictRail state="WRONG_SHAPE" />);
     const el = container.querySelector('[data-verdict-state="WRONG_SHAPE"]') as HTMLElement;
     expect(el).toHaveClass('w-[3px]');
-    // Final (settled) state has the gap fully open (6px), carving the
-    // fracture out of an otherwise solid line. `data-mask-gap` mirrors the
-    // real mask-image's gap value — see the component's own comment on why
-    // this is asserted here rather than the CSS string (a jsdom CSS-engine
-    // limitation, not a product behaviour).
+    // Settled = gap fully open (6px). `data-mask-gap` mirrors the real mask-image gap, asserted
+    // instead of the CSS string because of a jsdom CSS-engine limit, not a product behaviour.
     expect(el).toHaveAttribute('data-mask-gap', '6');
   });
 
@@ -101,8 +86,7 @@ describe('VerdictRail — five geometries, distinguishable with colour removed (
     expect(requested).toBeTruthy();
     expect(returned).toBeTruthy();
     expect(requested).not.toBe(returned);
-    // Each line is 1px, distinct from every other state's 3px (or 1px
-    // hairline-but-single-element) rail.
+    // Each line is 1px, distinct from every other state's 3px (or single-element hairline) rail.
     expect(requested).toHaveClass('w-px');
     expect(returned).toHaveClass('w-px');
   });
@@ -140,9 +124,7 @@ describe('VerdictRail — prefers-reduced-motion renders the final state directl
     stubMatchMedia(true);
     const { container } = render(<VerdictRail state="WRONG_SHAPE" />);
     const el = container.querySelector('[data-verdict-state="WRONG_SHAPE"]') as HTMLElement;
-    // The settled gap value (6px) must already be present — proving the
-    // component rendered the end state, not frame zero of a draw-then-snap
-    // animation.
+    // The settled 6px gap proves it rendered the end state, not frame zero of a draw-then-snap.
     expect(el).toHaveAttribute('data-mask-gap', '6');
   });
 
@@ -150,8 +132,7 @@ describe('VerdictRail — prefers-reduced-motion renders the final state directl
     stubMatchMedia(true);
     const { container } = render(<VerdictRail state="WRONG_TARGET" />);
     const returned = container.querySelector('[data-rail-line="returned"]') as HTMLElement;
-    // motion/react writes committed transform values inline; the finished
-    // position (translateY 4px) must be present with no animation pending.
+    // motion/react writes committed transforms inline; the finished translateY 4px must be there.
     expect(returned.style.transform).toContain('4px');
   });
 
@@ -170,8 +151,7 @@ describe('VerdictRail — event-only motion: nothing animates on initial paint',
     stubMatchMedia(false);
     const onFractureSettle = vi.fn();
     render(<VerdictRail state="WRONG_SHAPE" onFractureSettle={onFractureSettle} />);
-    // Give any (incorrect) residual animation time to complete if the
-    // "freeze at first render" guard regresses.
+    // Time for a residual animation to complete if the "freeze at first render" guard regresses.
     await new Promise((r) => setTimeout(r, 400));
     expect(onFractureSettle).not.toHaveBeenCalled();
   });

@@ -1,28 +1,19 @@
-/**
- * SandboxPanel — covers the ux-spec.md §3 interaction contract (breaking ->
- * minimum 1.6s re-verify -> resolved verdict, all in one frame), that
- * `blocked` is never offered as a button, and — the R8 proof at the
- * component level — that two independently mounted sandboxes never affect
- * each other.
- */
+/** ux-spec.md §3 interaction contract (break -> min 1.6s re-verify -> verdict, one
+ * frame), `blocked` never offered as a button, and R8: two sandboxes stay isolated. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { SandboxPanel } from '@/landing/sandbox/SandboxPanel';
 import { useSandboxEngine } from '@/landing/sandbox/useSandboxEngine';
 
-/** `wrong_entity` is gated behind a real `AlertDialog` confirm (ui-system.md
- * §3.7: "should not fire on a stray click") — its Radix Portal renders to
- * `document.body`, outside whatever container scoped `getByTestId` found the
- * trigger in, so this always queries the unscoped `screen`, never a
- * `within(...)` scope. */
+/** Confirm dialog per ui-system.md §3.7. Radix portals to `document.body`, so the
+ * confirm is queried on unscoped `screen`, never through `within(...)`. */
 function clickWrongEntityBreakButton(triggerScope: { getByTestId: typeof screen.getByTestId }) {
   fireEvent.click(triggerScope.getByTestId('sandbox-break-wrong_entity'));
   fireEvent.click(screen.getByRole('button', { name: 'Serve it' }));
 }
 
-// VerdictCard's children (VerdictRail/RepairSlot) call motion/react's
-// useReducedMotion(), which reads window.matchMedia — jsdom doesn't
-// implement it, so every test here stubs it, same as VerdictCard.test.tsx.
+// VerdictRail/RepairSlot call useReducedMotion(), which reads matchMedia —
+// unimplemented in jsdom, so stub it everywhere here.
 beforeEach(() => {
   vi.stubGlobal(
     'matchMedia',
@@ -57,10 +48,7 @@ function Harness({ testId }: { testId: string }) {
 describe('SandboxPanel — first paint, no signup wall', () => {
   it('renders three already-green VerdictCards immediately, with no account and no network', () => {
     render(<Harness testId="h" />);
-    // Scoped to the fleet list on purpose: each name also appears in the
-    // panel's own gloss above the cards ("store-pricing reads the price on
-    // every product…"), which is the whole point of the rename — the names
-    // are said in plain words before the reader meets them as card titles.
+    // Scoped to the fleet list: each name also appears in the panel's gloss above.
     const fleet = within(screen.getByRole('list', { name: 'Sandbox fleet' }));
     expect(fleet.getByText('store-pricing')).toBeInTheDocument();
     expect(fleet.getByText('store-stock')).toBeInTheDocument();
@@ -80,9 +68,8 @@ describe('SandboxPanel — first paint, no signup wall', () => {
 
   it('says what each collector does in plain words before the reader meets it as a card title', () => {
     render(<Harness testId="h" />);
-    // The names are only self-explaining if the panel actually explains
-    // them once. Asserted on the panel, not on a card, so a future copy
-    // edit cannot quietly drop the gloss and leave three bare handles.
+    // Asserted on the panel, not a card, so a copy edit cannot drop the gloss
+    // and leave three bare handles.
     const panel = screen.getByTestId('sandbox-panel');
     expect(panel).toHaveTextContent(/store-pricing reads the price on every product/);
     expect(panel).toHaveTextContent(/store-stock the stock count/);
@@ -109,9 +96,8 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
     expect(screen.getByTestId('sandbox-break-price_dead')).toBeDisabled();
     expect(screen.queryByText('Wrong shape')).not.toBeInTheDocument();
 
-    // Past the 600ms "Breaking…" beat but still well under the 1.6s floor:
-    // must still be a skeleton, never the resolved card, even though the
-    // engine itself resolves synchronously.
+    // Past the 600ms "Breaking…" beat, under the 1.6s floor: still a skeleton,
+    // even though the engine resolves synchronously.
     await vi.advanceTimersByTimeAsync(900);
     expect(screen.getAllByTestId('sandbox-card-skeleton').length).toBeGreaterThan(0);
     expect(screen.queryByText('Wrong shape')).not.toBeInTheDocument();
@@ -130,9 +116,8 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
     fireEvent.click(screen.getByTestId('sandbox-break-price_dead'));
     await vi.advanceTimersByTimeAsync(900);
 
-    // Exactly one skeleton, not three: erasing the whole grid reads as a
-    // page reload rather than as one collector being caught, and leaves the
-    // failing accent nothing to be read against (ui-system.md §5.4 rule 8).
+    // One skeleton, not three: erasing the grid reads as a page reload, and leaves
+    // the failing accent nothing to be read against (ui-system.md §5.4 rule 8).
     expect(screen.getAllByTestId('sandbox-card-skeleton')).toHaveLength(1);
     expect(screen.getAllByText('Verified')).toHaveLength(2);
 
@@ -147,30 +132,24 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
 
     const grid = screen.getByRole('list', { name: 'Sandbox fleet' });
 
-    // First paint is not an event (§1.9). Nothing is force-animated, even
-    // though `targetId` is already known — gating on `targetId` alone would
-    // animate the default target on page load, which is the exact thing the
-    // motion budget forbids.
+    // First paint is not an event (§1.9): gating on `targetId` alone would animate
+    // the default target on page load.
     expect(grid).toHaveAttribute('data-just-resolved', '');
     expect(screen.queryByTestId('repair-slot-glyph-outgoing')).not.toBeInTheDocument();
 
     clickWrongEntityBreakButton(screen);
 
-    // Mid-sequence the flag is cleared, so a stale "just resolved" from the
-    // previous action can never leak into this one.
+    // Flag cleared mid-sequence so a stale "just resolved" cannot leak forward.
     await vi.advanceTimersByTimeAsync(900);
     expect(grid).toHaveAttribute('data-just-resolved', '');
 
     await vi.advanceTimersByTimeAsync(1600);
 
-    // The skeleton->card swap is a real remount, so `useSkipEntrance` reads
-    // it as first paint and would mount the card already settled. The
-    // explicit `animateEntrance` override is what makes the run count as the
-    // event it actually is.
+    // The skeleton->card swap is a real remount, so `useSkipEntrance` sees first
+    // paint; the explicit `animateEntrance` override is what makes it animate.
     expect(grid).toHaveAttribute('data-just-resolved', 'store-pricing');
-    // `repair-slot-glyph-outgoing` is the wrench that is on its way OUT —
-    // RepairSlot only mounts it when the entrance is genuinely playing, so
-    // its presence is proof the withdrawal ran rather than being skipped.
+    // RepairSlot mounts the outgoing wrench only while the entrance is really
+    // playing, so its presence proves the withdrawal ran.
     expect(screen.getAllByTestId('repair-slot-glyph-outgoing')).toHaveLength(1);
   });
 
@@ -181,9 +160,8 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
     fireEvent.click(screen.getByTestId('sandbox-break-price_dead'));
     await vi.advanceTimersByTimeAsync(600 + 1600);
 
-    // Exactly one card is named as "just resolved"; the other two keep the
-    // natural mount-based gate (`animateEntrance` undefined, not false —
-    // they never re-verified, so nothing should have an opinion about them).
+    // One card is "just resolved"; the others keep the mount-based gate
+    // (`animateEntrance` undefined, not false — they never re-verified).
     expect(screen.getByRole('list', { name: 'Sandbox fleet' })).toHaveAttribute('data-just-resolved', 'store-pricing');
     expect(screen.getAllByText('Verified')).toHaveLength(2);
   });
@@ -197,14 +175,12 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
 
     const rail = screen.getByTestId('sandbox-skeleton-rail');
     expect(rail).toBeInTheDocument();
-    // Rule 3 wants "the exact shape of the card it will become, including
-    // the rail"; rule 7 wants that rail inset 8px top and bottom rather than
-    // flush. Assert the geometry, not the colour.
+    // Rule 3: exact shape of the card it becomes, rail included; rule 7: inset 8px,
+    // not flush. Geometry, not colour.
     expect(rail.className).toContain('w-[3px]');
     expect(rail.className).toContain('inset-y-2');
     expect(rail.className).toContain('rounded-full');
-    // ...and it must NOT claim one of the five verdict geometries, because
-    // the verdict is exactly what is not yet known.
+    // ...and no verdict geometry, since the verdict is what is not yet known.
     expect(rail).not.toHaveAttribute('data-verdict-geometry');
   });
 
@@ -217,10 +193,8 @@ describe('SandboxPanel — the interaction contract (ux-spec.md §3)', () => {
 
     expect(screen.getAllByText('Wrong target')).toHaveLength(1);
     expect(screen.getAllByText(/refused/).length).toBeGreaterThan(0);
-    // WRONG_TARGET swaps the metrics row for the requested/received entity
-    // comparison (VerdictCard.tsx), computed from the fixture catalog rather
-    // than canned — and only on the collector whose page was actually
-    // substituted.
+    // WRONG_TARGET swaps the metrics row for a requested/received comparison
+    // computed from the fixture catalog, only on the substituted collector.
     expect(screen.getAllByTestId('entity-key-swap')).toHaveLength(1);
     expect(screen.getAllByText('Verified')).toHaveLength(2);
     const safeOutput = screen.getByTestId('safe-output-panel');

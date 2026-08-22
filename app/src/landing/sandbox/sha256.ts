@@ -1,17 +1,5 @@
-/**
- * A small, dependency-free SHA-256 (hex digest), used only by the landing
- * sandbox's client-side ledger (`engine.ts`) to make `Verify chain` a real
- * cryptographic check rather than a scripted animation.
- *
- * Why hand-rolled instead of `crypto.subtle.digest`: `SubtleCrypto` is only
- * guaranteed in a secure context (https or localhost) and its availability
- * inside this project's jsdom test environment is unconfirmed — this
- * function needs to behave identically in the browser and under `vitest
- * run`, synchronously, with zero new dependencies (this task's file
- * ownership is `app/src/landing/**` only, so it can't reach for a package
- * that would touch `app/package.json`/the lockfile while other agents are
- * editing `app/` concurrently). Standard FIPS 180-4 SHA-256, unmodified.
- */
+// Hand-rolled FIPS 180-4 SHA-256 rather than `crypto.subtle`: this must be
+// synchronous and work identically in jsdom, with zero new dependencies.
 
 const K = new Uint32Array([
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -37,13 +25,13 @@ export function sha256Hex(message: string): string {
   const bytes = new TextEncoder().encode(message);
   const bitLen = bytes.length * 8;
 
-  // Pad: 0x80, then zeros, then the 64-bit length, to a multiple of 64 bytes.
+  // Pad: 0x80, zeros, then the 64-bit length, to a multiple of 64 bytes.
   const paddedLen = Math.ceil((bytes.length + 9) / 64) * 64;
   const padded = new Uint8Array(paddedLen);
   padded.set(bytes);
   padded[bytes.length] = 0x80;
-  // bitLen fits in 32 bits for every realistic sandbox payload; the high
-  // 32 bits of the 64-bit length field are left as zero.
+  // The high 32 bits of the length field stay zero — bitLen fits in 32 bits for
+  // every realistic sandbox payload.
   const view = new DataView(padded.buffer);
   view.setUint32(paddedLen - 4, bitLen >>> 0, false);
 

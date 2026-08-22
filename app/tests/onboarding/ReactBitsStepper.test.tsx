@@ -1,13 +1,5 @@
-/**
- * ReactBitsStepper — installed via `npx shadcn@latest add
- * @react-bits/Stepper-TS-TW` per ui-system.md §3.8/§3.3. Two required
- * overrides after installing (§3.3): the inline `1px solid #222` border
- * (off-palette) and the arbitrary `sm:aspect-[4/3] md:aspect-[2/1]`
- * wrapper sizing must both be gone. Also covers the additional off-palette
- * demo colours (`#5227FF`, `bg-green-500`, `text-neutral-400`, etc.) this
- * project's own token rule (every value a token) requires fixing too,
- * since this copied file is now owned here like any other component.
- */
+/** Vendored ReactBits Stepper (ui-system.md §3.8/§3.3): guards the required overrides
+ * — off-palette border, demo colours, and the arbitrary aspect-ratio sizing — staying gone. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import Stepper, { Step } from '@/onboarding/ReactBitsStepper';
@@ -57,8 +49,7 @@ describe('ReactBitsStepper — required overrides (ui-system.md §3.3)', () => {
         <Step>three</Step>
       </Stepper>,
     );
-    // Step 1 is active — ReactBits' own design shows a solid dot for the
-    // active indicator, not the numeral (numerals are pending-only).
+    // ReactBits shows a solid dot for the active indicator; numerals are pending-only.
     expect(container.querySelectorAll('.rounded-full.font-semibold')).toHaveLength(3);
     expect(screen.getByText('2')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
@@ -83,9 +74,8 @@ describe('ReactBitsStepper — required overrides (ui-system.md §3.3)', () => {
         <Step>one</Step>
       </Stepper>,
     );
-    // Single step => the footer's own button reads "Complete", not
-    // "Continue" (ReactBits' own isLastStep logic) — found by role alone,
-    // scoped to `.hidden` to prove footerClassName actually reached it.
+    // Single step => "Complete", not "Continue" (isLastStep). Scoped to `.hidden`
+    // to prove footerClassName actually reached the footer.
     const footerButton = screen.getByRole('button');
     const footer = footerButton.closest('.hidden');
     expect(footer).not.toBeNull();

@@ -1,12 +1,5 @@
-/**
- * Viewport one has one job: explain the promise and hand the visitor either
- * to signup, self-hosting, or the live suite directly below. The supplied
- * FaultyTerminal shader supplies restrained atmosphere; all product proof
- * lives in SandboxSuite, where it can use the full next viewport.
- *
- * The headline still uses the one permitted text gradient. Motion components
- * and WebGL all collapse to static output under prefers-reduced-motion.
- */
+// Viewport one: the promise plus a hand-off to signup, self-hosting, or the live
+// suite below. All product proof lives in SandboxSuite. WebGL collapses to static.
 import { useReducedMotion } from 'motion/react';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { DotPattern } from '@/components/ui/dot-pattern';
@@ -30,12 +23,8 @@ export function Hero() {
 
   return (
     <section className="relative isolate flex min-h-[calc(100svh-45px)] items-center overflow-hidden bg-[#000000] px-6 pb-24 pt-4">
-      {/* MU dot-pattern behind the heading block (ui-system.md §4: "SVG dots
-          on a flat ground rather than a gradient background", 4% opacity,
-          radial mask). Bounded to the top 384px rather than the whole
-          section: the stock component renders one SVG circle per dot, and
-          an unbounded inset-0 across hero+flowchart would be ~6000 DOM
-          nodes for decoration the mask hides anyway. */}
+      {/* Bounded to the top 384px, not inset-0: DotPattern renders one SVG circle
+          per dot, and a full-section field would be ~6000 nodes the mask hides. */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 z-0 h-96"
@@ -44,11 +33,8 @@ export function Hero() {
         <DotPattern width={24} height={24} cx={1.5} cy={1.5} cr={1.5} className="text-[#FFFFFF] opacity-[0.04]" />
       </div>
 
-      {/* The supplied FaultyTerminal shader is atmosphere, not proof. It is
-          mouse-reactive at full motion and disappears completely under the
-          reduced-motion preference, where the static SVG dot field above
-          remains. The low brightness keeps copy contrast inside the page's
-          existing token budget. */}
+      {/* Atmosphere, not proof: gone entirely under reduced motion, where the static
+          dot field above remains. Low brightness keeps copy contrast in budget. */}
       {!reducedMotion && (
         <FaultyTerminal
           aria-hidden
@@ -92,9 +78,8 @@ export function Hero() {
             </TextAnimate>
           )}
 
-          {/* copy.md S1 sub, the team lead's exact final sentence — the
-              product never claims to run a repair; it hands you one, or
-              refuses to. */}
+          {/* copy.md S1 sub, verbatim: the product never claims to run a repair;
+              it hands you one, or refuses to. */}
           <Entrance reduced={reducedMotion} delay={0.15} className="mt-4">
             <p className="text-pretty text-lg text-[#B4B4B4]">
               Scrapers fail by succeeding — right shape, wrong data. Polygraph re-verifies the run and
@@ -127,9 +112,8 @@ export function Hero() {
               >
                 Start watching your fleet
               </a>
-              {/* Anchors to the S5 band FinalCTA.tsx ships as
-                  `id="run-it-yourself"` — built there specifically as this
-                  link's target, so the page has ONE copy-command, not two. */}
+              {/* Targets FinalCTA.tsx `id="run-it-yourself"`, built as this link's
+                  target so the page has ONE copy-command, not two. */}
               <a
                 href="#run-it-yourself"
                 className="inline-flex min-h-11 items-center text-sm font-medium text-[#9B9B9B] outline-none transition-[color,transform]
@@ -162,10 +146,8 @@ export function Hero() {
   );
 }
 
-/** Entrance wrapper: the real MU `BlurFade` with the static fallback the
- * stock component lacks — under prefers-reduced-motion the content renders
- * in place with no transform, blur, or fade (§1.9: reduced motion collapses
- * everything; nothing is lost because nothing here encodes state). */
+/** MU `BlurFade` plus the static fallback the stock component lacks: under
+ * reduced motion the content renders in place, no transform, blur, or fade. */
 function Entrance({
   reduced,
   delay = 0,
@@ -187,6 +169,5 @@ function Entrance({
   );
 }
 
-// The hero's CopyCommand control moved with the self-host band to
-// FinalCTA.tsx's S5 `RunItYourself` (testid `selfhost-copy-command`) —
-// positioning.md S1: "the self-host footnote + copy command (moves to S5)".
+// The hero CopyCommand moved with the self-host band to FinalCTA.tsx S5
+// `RunItYourself` (testid `selfhost-copy-command`).

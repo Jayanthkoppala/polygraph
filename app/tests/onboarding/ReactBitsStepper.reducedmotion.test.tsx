@@ -1,19 +1,5 @@
-/**
- * `prefers-reduced-motion: reduce` for the onboarding stepper.
- *
- * ui-system.md §1.9: "`prefers-reduced-motion: reduce` collapses every
- * transition in this document to a 120ms opacity and color crossfade", and
- * §6.5: "gate the choreographed transitions on `useReducedMotion()` from
- * `motion/react`, returning the end state directly rather than a compressed
- * animation." The stepper's step change is a horizontal slide plus a height
- * animation — the largest single piece of motion in the funnel — and it
- * honoured neither until now.
- *
- * `useReducedMotion` is stubbed rather than driven through `matchMedia`
- * because `motion` reads the media query once, at module init, and caches
- * it globally: a `matchMedia` stub installed from a test file would be both
- * order-dependent and leaky across files.
- */
+/** ui-system.md §1.9/§6.5: the stepper's slide+height must return the end state directly
+ * under reduce. `useReducedMotion` is stubbed — `motion` caches matchMedia at module init. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 
@@ -63,9 +49,7 @@ describe('the stepper under prefers-reduced-motion', () => {
 
     await waitFor(() => {
       const slide = contentBox().firstElementChild as HTMLElement;
-      // `translateX` is the reduced-motion offender: the slide variants
-      // collapse to opacity-only, so no horizontal travel should ever be
-      // written.
+      // The slide variants must collapse to opacity-only: no horizontal travel.
       expect(slide.style.transform ?? '').not.toMatch(/translateX\(-?[1-9]/);
     });
   });
@@ -87,8 +71,7 @@ describe('the stepper under prefers-reduced-motion', () => {
     await screen.findByTestId('step-action');
 
     await waitFor(() => {
-      // The height animation is what proves the animated path is live: with
-      // motion allowed the box is driven to an explicit measured height.
+      // Proves the animated path is live: motion drives an explicit measured height.
       expect(contentBox().style.height).not.toBe('');
     });
   });

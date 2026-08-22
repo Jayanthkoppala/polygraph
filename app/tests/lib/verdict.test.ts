@@ -125,15 +125,8 @@ describe('VERDICT metadata — R1 display labels never leak the engine string', 
   });
 });
 
-/**
- * Repair eligibility is a property of the RUN, not of the display label.
- *
- * WRONG_SHAPE is the state where that distinction bites: §2.1 maps both
- * `cause: 'STRUCTURAL'` and `cause: 'BLOCKED'` onto it, and only the first
- * kind is fixable. src/policy.ts's `decideBlocked` always QUARANTINEs
- * ("anti-bot blocks and compliance-restricted targets are never healable by
- * re-capturing a template"), so a blocked run must never be shown a repair.
- */
+/** Repair eligibility is a property of the RUN, not the label: §2.1 maps both
+ * STRUCTURAL and BLOCKED onto WRONG_SHAPE, and BLOCKED is never healable. */
 describe('repairRefusal — the run decides, and says why', () => {
   it('a BLOCKED run refuses, with the block-specific argument — not the wrong-target one', () => {
     const refusal = repairRefusal(collector({ verdict: 'FAILED_BLOCKED_RESPONSE', cause: 'BLOCKED' }));
@@ -195,18 +188,8 @@ describe('repairRefusal — the run decides, and says why', () => {
   });
 });
 
-/**
- * Adversarial guard on the one refusal that must never become conditional.
- *
- * The fix moved repair eligibility from a per-state flag to a per-run
- * derivation, and one of the run-level signals is the ABSENCE of a
- * `suggestedHealCommand`. That raises a fair question: could a wrong-target
- * run be talked into offering a repair by carrying a command, or could the
- * label stop rendering because the refusal path changed? Neither. The
- * per-state check runs FIRST and returns before any command or cause is
- * consulted, so WRONG_TARGET's refusal is reached by a path that reads
- * nothing about the run at all.
- */
+/** WRONG_TARGET's refusal must never become conditional: the per-state check returns
+ * FIRST, before any `suggestedHealCommand` or cause on the run is consulted. */
 describe('repairRefusal — WRONG_TARGET refuses on a path that never consults the run', () => {
   it('refuses with a heal command present — the command cannot buy a repair', () => {
     expect(

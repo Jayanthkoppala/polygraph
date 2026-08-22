@@ -1,16 +1,7 @@
-/**
- * LedgerStream — the warm archive material (ui-system.md §3.5/§1.2). Rows
- * are full bleed on `--color-archive`, keyed by their own stable ledger
- * `id`: React never remounts an existing row on a later poll, only mounts
- * genuinely new ones, so `AnimatePresence`'s entrance plays exactly once
- * per event, never as a re-sort or a replay from index 0 (ux-spec.md §5,
- * "Ledger events are append-only").
- *
- * `Verify chain` runs the real chain walk (`verifyLedgerChain`,
- * `lib/api.ts`) rather than asserting a static claim — ux-spec.md §1/§6:
- * "a button that actually runs and prints `OK — 47 events verified, chain
- * intact`."
- */
+// Rows are keyed by their stable ledger `id`, so a poll never remounts an existing row
+// and each entrance plays exactly once per event — never a re-sort or a replay.
+
+// `Verify chain` runs the real chain walk (`verifyLedgerChain`), never a static claim.
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { VerdictRail } from '@/components/verdict/VerdictRail';
@@ -45,19 +36,8 @@ export function LedgerStream({ rows }: { rows: LedgerRow[] }) {
   const [message, setMessage] = useState<string | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
 
-  /**
-   * Three outcomes, and the whole point is that they must never be mistaken
-   * for each other (critique.md #10, as re-scoped once `POST
-   * /api/ledger/verify` shipped in `src/server.ts`):
-   *
-   *   ok      the chain really was walked, and it held.
-   *   broken  the chain really was walked, and it did NOT hold. This is the
-   *           single most serious thing this product can say, so it says it
-   *           in the failure hue and never hedges it into a "hiccup".
-   *   error   the walk never happened. Nothing was verified and nothing was
-   *           disproved — said explicitly, in the amber "needs you" hue, so
-   *           a dropped request can never be read as a broken ledger.
-   */
+  /** Three outcomes that must never be mistaken for each other: `ok` walked and held,
+   *  `broken` walked and did NOT hold, `error` never walked — proving nothing either way. */
   async function handleVerify() {
     setStatus('checking');
     setMessage(null);
@@ -72,9 +52,7 @@ export function LedgerStream({ rows }: { rows: LedgerRow[] }) {
       }
       setStatus('broken');
       setMessage('Chain broken — this ledger no longer verifies.');
-      // `checked` counts the failing row too, so it is not a "verified
-      // count" and is never printed as one. The server's own reason names
-      // the event the walk stopped at; without it, say only what is known.
+      // `checked` counts the failing row too, so it is never printed as a verified count.
       setDetail(result.reason ?? `The walk stopped after ${result.checked.toLocaleString('en-US')} event(s).`);
     } catch (err) {
       setStatus('error');
@@ -104,9 +82,8 @@ export function LedgerStream({ rows }: { rows: LedgerRow[] }) {
     >
       <header className="flex items-center gap-3 border-b border-[#272727] px-3 py-2">
         <span className="text-xs font-medium uppercase tracking-wide text-[#9B9B9B]">Ledger</span>
-        {/* The event count is a fact about the record, not chrome — it moves
-            off the decoration-only #6E7681 (3.59:1, "never for text that
-            carries meaning", ui-system.md §1.3/§6.1) onto muted #9B9B9B. */}
+        {/* The count is a fact about the record, not chrome, so it takes muted #9B9B9B
+            rather than the decoration-only #6E7681 (3.59:1). */}
         <span className="font-mono text-xs tabular-nums text-[#9B9B9B]">
           {rows.length.toLocaleString('en-US')} events
         </span>
@@ -151,13 +128,8 @@ export function LedgerStream({ rows }: { rows: LedgerRow[] }) {
                   <time dateTime={row.ts} className="shrink-0 pl-3 tabular-nums text-[#9B9B9B]">
                     {row.ts.slice(11, 19)}
                   </time>
-                  {/* The collector name is the one fact this row must carry
-                      (docs/design/critique.md next-tier #5) — a fixed
-                      min-width keeps it from truncating past readability
-                      even in the narrow 360px LEDGER column, and the
-                      redundant ACTION column (closely tracks the verdict
-                      label already shown next to it) was dropped to make
-                      room rather than starving the name further. */}
+                  {/* The one fact this row must carry: a fixed min-width keeps it readable
+                      in the 360px column, paid for by dropping the redundant ACTION column. */}
                   <span className="min-w-[84px] flex-1 truncate text-[#EDEDED]" title={row.collector}>
                     {row.collector}
                   </span>

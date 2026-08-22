@@ -1,32 +1,25 @@
-# React + TypeScript + Vite
+# polygraph app
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+The React 19 + Vite frontend for polygraph: the landing page, tenant onboarding,
+and the fleet dashboard. `npm run build` emits `dist/`, which the Node server
+(`src/http/static.ts`) serves as an SPA behind `polygraph watch` / `polygraph demo`.
 
-Currently, two official plugins are available:
+## Scripts
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Vite dev server; `/api` proxies to a local `polygraph watch` on port 4141 |
+| `npm run build` | `tsc -b` then `vite build` into `dist/` |
+| `npm run typecheck` | Project-references typecheck, no emit |
+| `npm test` | Vitest (jsdom) over `tests/` |
+| `npm run lint` | Oxlint |
 
-## React Compiler
+## Layout
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
-
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+- `src/landing/` — public landing page
+- `src/onboarding/` — signup, login, key-paste wizard
+- `src/fleet/` — the dashboard
+- `src/routes/` — route gates that pick a surface from session state
+- `src/app.css` — Tailwind entry and the only place design tokens are declared,
+  copied from `docs/design/ui-system.md`; `tests/theme/tokens.smoke.test.ts` asserts them
+- `src/components/ui/` — shadcn/ui components (`components.json`, new-york style)

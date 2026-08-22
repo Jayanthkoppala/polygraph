@@ -1,19 +1,5 @@
-/**
- * FleetShell — the three-region app shell (ui-system.md §5.2): FLEET 280px
- * / FOCUS 1fr / LEDGER 360px, header and footer fixed, only region
- * interiors scroll. Cards never resize to fill space (§5.4 rule 2) — the
- * shell itself changes shape instead, in three modes driven by
- * `layoutFor()`:
- *
- *   hero    (n<=1)   FLEET+FOCUS collapse into one column: the single
- *                    card plus its evidence inline, per §5.3's "zero
- *                    empty regions" rule. LEDGER stays.
- *   docked  (n=2-3)  the real three-column grid as drawn in §5.2.
- *   overlay (n>=4)   FLEET takes the FOCUS column's width so the fleet
- *                    grid/rows have room; FOCUS becomes a slide-in panel
- *                    (§5.3: "FOCUS becomes a sheet that slides in from
- *                    the right") instead of a permanent column.
- */
+// The three-region shell (§5.2), only region interiors scroll. Cards never resize to
+// fill space, so the SHELL changes shape: hero (n<=1), docked (2-3), overlay (n>=4).
 import { useMemo, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { X } from '@phosphor-icons/react';
@@ -38,11 +24,8 @@ export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: Fleet
   const collectors = fleet.collectors;
   const layout = layoutFor(collectors.length);
 
-  // FOCUS follows the story (critique.md #4). The selection is *resolved*
-  // on every render against the current fleet rather than captured once at
-  // mount, so a collector that starts lying an hour in pulls the panel with
-  // it — while a card the user deliberately clicked stays put. All of that
-  // judgement lives in `resolveFocusSelection`, tested on its own.
+  // Resolved every render against the current fleet, not captured at mount, so a
+  // collector that starts lying pulls the panel with it. Judgement: `resolveFocusSelection`.
   const [selection, setSelection] = useState<FocusSelection>(AUTO_FOCUS);
   const focus = useMemo(() => resolveFocusSelection(selection, collectors), [selection, collectors]);
   const selectedId = focus.id;
@@ -110,24 +93,16 @@ export function FleetShell({ fleet, ledgerRows, onRepair, onAcknowledge }: Fleet
 }
 
 function ShellHeader({ fleet, ledgerRows }: { fleet: FleetState; ledgerRows: LedgerRow[] }) {
-  // The most recent event's own id, not `ledgerRows.length` — rows are
-  // capped to the last `fetchLedger(n)` window (FleetApp.tsx polls 100), so
-  // an array length plateaus once the ledger outgrows that window instead
-  // of continuing to climb. Ledger ids are assigned in append order, so the
-  // highest one seen is the honest "how far has the chain gotten" figure —
-  // never fabricated, never a total we can't actually compute client-side.
+  // The latest event's own id, not `ledgerRows.length`: rows are capped to the
+  // fetch window, so a length would plateau while ids keep climbing honestly.
   const latestLedgerId = ledgerRows.length > 0 ? ledgerRows[ledgerRows.length - 1].id : 0;
 
   return (
     <header className="flex h-16 shrink-0 items-center gap-4 border-b border-[#272727] px-4">
       <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[#9B9B9B]">Collector fleet</span>
       <span className="font-mono text-xs text-[#9B9B9B]">{fleet.tenant}</span>
-      {/* ui-system.md §3.2/§3.8: ReactBits `Counter` — an odometer can only
-          roll upward, which is the one numeric display shape that states
-          the ledger's own append-only invariant. `gradientHeight={0}`
-          disables the component's default top/bottom fade mask (a
-          background gradient, which B4 forbids on a surface); the digit
-          reel is short enough here that the fade served no purpose anyway. */}
+      {/* An odometer only rolls upward — the one numeric shape that states the ledger's
+          append-only invariant. `gradientHeight={0}` drops its fade mask, which B4 forbids. */}
       <span className="flex items-center gap-1.5 font-mono text-xs text-[#9B9B9B]">
         <span className="uppercase tracking-wide">Ledger</span>
         <Counter
@@ -154,18 +129,8 @@ function ShellHeader({ fleet, ledgerRows }: { fleet: FleetState; ledgerRows: Led
   );
 }
 
-/**
- * E2, "zero collectors" (ux-spec.md §2): "Not an illustration, not 'Nothing
- * here yet.' A single card, centre, with the one action" — a bold refusal
- * sentence and the two ways out, `[ Connect collectors ]` ·
- * `[ Open the sandbox instead ]`. It used to be a lone grey sentence with
- * nothing to click (critique.md #11), which is exactly ui-system.md §5.4
- * rule 4's "empty state is composed, never blank".
- *
- * The two destinations are the app's own real routes (`App.tsx`): `/signup`
- * is the onboarding entry, and the sandbox is the landing page's live demo
- * section, so neither button promises a surface that doesn't exist.
- */
+/** E2 "zero collectors" (§2): composed, never blank — a sentence plus the two ways out.
+ *  Both destinations are real routes in `App.tsx`, so neither promises a missing surface. */
 function EmptyFleet() {
   return (
     <div
@@ -196,15 +161,8 @@ function EmptyFleet() {
   );
 }
 
-/** §5.3's "sheet that slides in from the right", n>=4 only — FLEET keeps
- * the whole main width for its grid/rows, FOCUS becomes an overlay rather
- * than a permanent column.
- *
- * The border goes all the way around (ui-system.md §1.2/B4, and its own
- * §5.4 checklist grep for `border-l-`): this sheet was the codebase's one
- * remaining single-sided border (critique.md #11). Three of the four edges
- * sit flush against the viewport, so a full border costs nothing visually
- * and the rule stays absolute rather than "absolute except here". */
+/** §5.3's slide-in sheet, n>=4 only. The border goes all the way around: three edges sit
+ *  flush against the viewport anyway, so the no-single-sided-border rule stays absolute. */
 function FocusOverlay({ collector, onClose }: { collector: CollectorState | null; onClose: () => void }) {
   const reduceMotion = useReducedMotion();
   return (

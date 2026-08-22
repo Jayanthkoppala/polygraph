@@ -1,8 +1,5 @@
-/**
- * FleetColumn tests — density rules, the attention cap + healthy collapse
- * at small n, and virtualization + grouped healthy-collapse at large n
- * (ui-system.md §5.3, ux-spec.md §4).
- */
+// Density rules: attention cap + healthy collapse at small n, virtualization + grouped
+// healthy-collapse at large n (ui-system.md §5.3, ux-spec.md §4).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { FleetColumn } from '@/components/fleet/FleetColumn';
@@ -126,8 +123,7 @@ describe('FleetColumn — n>40: grouped, virtualized, VERIFIED collapsed by defa
     );
     const headers = screen.getAllByTestId('fleet-group-header');
     expect(headers.map((h) => h.getAttribute('data-group-state'))).toEqual(['WRONG_TARGET', 'VERIFIED']);
-    // The collapsed VERIFIED group shows its count in the header but no
-    // individual VERIFIED row cards are rendered yet.
+    // The collapsed VERIFIED group shows its count but renders no individual row cards yet.
     expect(screen.queryAllByRole('button', { name: /^healthy-\d+, Verified$/ })).toHaveLength(0);
   });
 
@@ -216,9 +212,7 @@ describe('FleetColumn — roving tabindex (ui-system.md §6.4: arrow keys move f
     const list = screen.getByTestId('fleet-virtual-scroll');
     const groupHeader = screen.getAllByTestId('fleet-group-header')[0];
     expect(groupHeader.hasAttribute('data-roving-item')).toBe(false);
-    // With only one card rendered (the rest collapsed into the closed
-    // VERIFIED group), ArrowDown from it must not throw or move focus onto
-    // the header.
+    // With only one card rendered (the rest collapsed), ArrowDown must not throw or reach the header.
     const card = screen.getByRole('button', { name: 'c0, Wrong shape' });
     card.focus();
     fireEvent.keyDown(list, { key: 'ArrowDown' });

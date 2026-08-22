@@ -16,9 +16,8 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
-    /* Path aliases (shadcn/ui convention). No baseUrl: TS 6's "bundler"
-     * moduleResolution resolves `paths` relative to this file without it,
-     * and `baseUrl` itself is deprecated as of TS 5.9 (removed in 7.0). */
+    /* Path aliases (shadcn/ui convention). No baseUrl: "bundler" resolution
+     * handles `paths` without it, and baseUrl is deprecated since TS 5.9. */
     "paths": {
       "@/*": ["./src/*"]
     },

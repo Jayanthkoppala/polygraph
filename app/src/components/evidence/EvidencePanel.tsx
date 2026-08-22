@@ -1,16 +1,8 @@
-/**
- * EvidencePanel — the FOCUS region, and the direct fix for the user's
- * complaint: "I won't get understanding — why there is no reason, or
- * events, or what the event even emits." Every check always renders,
- * including passes and not-applicable-with-reason (ux-spec.md §5: "the
- * passes are what make the failure believable"); every proof comes from
- * `lib/evidence.ts`'s translation module, never a raw metric name.
- *
- * Sits on the warm archive material (`--color-archive`, ui-system.md §1.2)
- * — this is the immutable-record half of the product, same substance as
- * the ledger stream, and it looks physically different from the mutable
- * fleet cards for exactly that reason.
- */
+// Every check always renders, passes included — "the passes are what make the failure
+// believable" (§5). Proofs come from lib/evidence.ts, never a raw metric name.
+
+// On the warm archive material (§1.2): the immutable-record half of the product, and
+// deliberately a different substance from the mutable fleet cards.
 import { useState } from 'react';
 import { CheckCircle, XCircle, Minus, Copy, Check, ArrowsClockwise } from '@phosphor-icons/react';
 import { translateEvidence, type EvidenceLine, type IdentityMismatch, type CanaryOutcome } from '@/lib/evidence';
@@ -91,10 +83,8 @@ export function EvidencePanel({ collector }: { collector: CollectorState | null 
               ))}
             </tbody>
           </table>
-          {/* The overflow count is the scope of the mismatch, not chrome —
-              "+ 40 more" is part of the proof, so it takes the muted text
-              token (#9B9B9B, 5.93:1) rather than the decoration-only
-              #6E7681 that fails AA (ui-system.md §1.3/§6.1). */}
+          {/* "+ 40 more" is part of the proof, not chrome, so it takes the muted
+              text token rather than the decoration-only #6E7681 that fails AA. */}
           {identityMismatches.length > 5 && (
             <p className="font-mono text-xs text-[#9B9B9B]">+ {identityMismatches.length - 5} more</p>
           )}
@@ -178,10 +168,11 @@ function EvidenceRow({ line }: { line: EvidenceLine }) {
   );
 }
 
-function HealCommand({ command }: { command: string }) {
+/** Copy-with-confirmation. A rejected write is swallowed: the command stays visible
+ *  and selectable as plain text, so an unavailable clipboard costs the user nothing. */
+function useCopyCommand(command: string): [boolean, () => void] {
   const [copied, setCopied] = useState(false);
-
-  const onCopy = () => {
+  const copy = () => {
     const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
     void clipboard
       ?.writeText(command)
@@ -189,11 +180,13 @@ function HealCommand({ command }: { command: string }) {
         setCopied(true);
         window.setTimeout(() => setCopied(false), 1500);
       })
-      .catch(() => {
-        // Clipboard unavailable (permissions, insecure context) — the
-        // command is still fully visible and selectable as plain text.
-      });
+      .catch(() => {});
   };
+  return [copied, copy];
+}
+
+function HealCommand({ command }: { command: string }) {
+  const [copied, onCopy] = useCopyCommand(command);
 
   return (
     <section aria-label="Run it yourself" className="flex flex-col gap-1">
@@ -214,52 +207,17 @@ function HealCommand({ command }: { command: string }) {
   );
 }
 
-/**
- * The refusal panel (ux-spec.md §6, "the heal refused moment"): calm,
- * bordered, confident — never error-red styling. Three parts always, in
- * order, and all three now render (critique.md #2 — part 3 was missing):
- *
- *   1. The refusal, plainly.            "Repair refused."
- *   2. The reason, in the user's terms.
- *   3. The one thing that can actually be done, plus the ledger citation.
- *
- * No "force repair anyway" escape hatch — there isn't one in the engine and
- * the UI must not imply otherwise.
- *
- * Deliberately ignores `collector.actionReason` for part 2 — that string is
- * `policy.ts`'s REDISCOVER reason ("entity_key mismatch on N% of comparable
- * rows — selector likely broken"), which is the *structural* diagnosis and
- * argues FOR repairability at the exact moment the product is refusing to
- * repair. The fixed sentence below says what is actually true: the target
- * was wrong, not the parser. (The panel header suppresses the same string
- * for WRONG_TARGET, above.)
- *
- * Part 3, honestly: v1 has no rediscover endpoint — `policy.ts` emits the
- * REDISCOVER *decision*, but nothing in the engine executes it, and
- * `src/server.ts` sends `suggestedHealCommand: null` for it. So the control
- * does the one real thing available, exactly as the Repair button already
- * does when repairs are off (FleetApp.tsx): it hands over the command that
- * re-verifies this collector once a human has re-pointed it, and says so in
- * plain sight rather than implying Polygraph will do the re-pointing. The
- * affordance is live and never lies about what pressing it does.
- */
-function RefusalPanel({ collector }: { collector: CollectorState }) {
-  const [copied, setCopied] = useState(false);
-  const command = `polygraph run --collector ${collector.id}`;
+// The heal-refused moment (§6): refusal, reason, then the one real thing to do.
+// Never error-red, and never a "force repair anyway" escape hatch — the engine has none.
 
-  const onRediscover = () => {
-    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
-    void clipboard
-      ?.writeText(command)
-      .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1500);
-      })
-      .catch(() => {
-        // Clipboard unavailable (permissions, insecure context) — the
-        // command stays visible as selectable plain text below.
-      });
-  };
+// Ignores `collector.actionReason` deliberately: that string is policy.ts's REDISCOVER
+// diagnosis, which argues FOR repairability at the moment the product is refusing.
+
+// v1 has no rediscover endpoint, so the button hands over the re-verify command and
+// says so — it never implies Polygraph will re-point the collector for you.
+function RefusalPanel({ collector }: { collector: CollectorState }) {
+  const command = `polygraph run --collector ${collector.id}`;
+  const [copied, onRediscover] = useCopyCommand(command);
 
   return (
     <section
@@ -277,11 +235,8 @@ function RefusalPanel({ collector }: { collector: CollectorState }) {
       </p>
 
       <div className="flex flex-col gap-2">
-        {/* The action and its ledger citation share a row: ux-spec.md §6
-            part 3 is one beat ("here is the one thing you can do, and here
-            is where the refusal is recorded"), and keeping them on one line
-            is what lets the whole panel land inside the FOCUS region at
-            1512x805 instead of pushing the citation below the fold. */}
+        {/* Action and ledger citation share a row: §6 part 3 is one beat, and one
+            line is what keeps the panel inside the FOCUS region at 1512x805. */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <button
             type="button"

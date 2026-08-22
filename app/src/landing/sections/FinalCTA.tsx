@@ -1,23 +1,5 @@
-/**
- * FinalCTA — S6's slim repeat CTA per positioning.md §3 and copy.md §2/S6:
- * one line + button, copy.md verbatim. `#181818` ground, hero button
- * treatment (ui-system.md §4.3's "identical to hero" is visual).
- *
- * DESTINATION stays `/signup`, pinned by landing-system.test.tsx: an
- * earlier literal reading produced `href="#sandbox"`, which pointed the
- * page's last conversion control back up at a demo the reader had already
- * scrolled past, and the page converted nowhere.
- *
- * Also exports the page's S5 "Run it yourself" band (team-lead approved
- * positioning's suggestion: one line + the copy-command, in this file set,
- * directly above the CTA). It renders here as a sibling section rather
- * than a separate sections/ file so it ships without touching
- * LandingPage.tsx (the hero agent's file); split it out in the
- * consolidation pass. `id="run-it-yourself"` is the anchor for the hero's
- * "Run it yourself, offline →" secondary link (positioning.md §3 S1).
- * Command is the from-checkout form — polygraph-data is not on npm yet
- * (copy.md §2/S5), so an `npx polygraph-data` line would be a lie.
- */
+// S6 slim repeat CTA plus the S5 "Run it yourself" band. DESTINATION stays
+// `/signup`, pinned by landing-system.test.tsx — `#sandbox` converted nowhere.
 import { useEffect, useRef, useState } from 'react';
 
 const DEMO_COMMAND = 'npx tsx src/index.ts demo';

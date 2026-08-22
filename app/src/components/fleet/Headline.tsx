@@ -1,10 +1,5 @@
-/**
- * The headline sentence (ux-spec.md §4): "First (0-1s): one sentence. Not a
- * stat row. Not KPI tiles. A sentence in the largest type on the page."
- * `text-3xl` is the largest class actually used anywhere in the app shell
- * (metric values are `text-2xl`, card titles `text-base`), so it holds that
- * claim without inventing an off-scale size.
- */
+/** One sentence in the largest type on the page (§4). `text-3xl` is the largest class
+ *  used anywhere in the shell, so the claim holds without an off-scale size. */
 import { computeHeadline } from '@/lib/density';
 import { VERDICT } from '@/lib/verdict';
 import type { CollectorState } from '@/lib/api';

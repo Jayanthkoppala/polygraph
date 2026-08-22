@@ -1,32 +1,8 @@
-/**
- * Evidence translation — the fix for "there is no reason, or events, or
- * what the event even emits" (the literal complaint this task exists to
- * answer). ONE module, metric -> sentence, per ux-spec.md §5: "Write the
- * translation layer once, in one module, and never let a raw metric name
- * reach the screen." `requiredViolationRate`, `mismatchRate`,
- * `collapsedFields`, `errorRowRate`, `passRate` — none of those identifiers
- * is ever assembled into a rendered sentence by this module. They still
- * exist on `Evidence.metrics` and are reachable via each `EvidenceLine.raw`
- * for the `⌄ raw` disclosure (ux-spec.md §5: "Raw JSON lives behind a
- * disclosure... present for the engineer who will ask, invisible to
- * everyone else") — that disclosure is the one place those names are
- * SUPPOSED to be legible, and is not what this module's own output (the
- * `sentence`/`detail`/`label` fields) may ever contain.
- *
- * Every proof is a COMPARISON, never a lone number (ux-spec.md §5): a fill
- * rate is always stated against the rest of the schema's fields, a mismatch
- * is always the requested value next to the received one, a canary result
- * is always "N of M" with the failing reason attached.
- *
- * `translateEvidence` always returns exactly four lines, in this fixed
- * order — contract, coherence, identity, canary — per ux-spec.md §5's run
- * detail page: "All four checks always render, including the ones that
- * passed and the ones that didn't run." A check that never ran (no entry in
- * `evidence[]` at all — e.g. canary, which the engine only appends when
- * `cause === 'STRUCTURAL'`, see src/runner.ts) renders as `status: 'skipped'`
- * WITH the reason it didn't run, never as a silent omission and never as a
- * pass.
- */
+// Metric -> sentence, once, per ux-spec.md §5: no raw metric name (`fillRates`,
+// `collapsedFields`, ...) may reach a `sentence`/`detail`/`label` — only `raw`.
+
+// Every proof is a COMPARISON, never a lone number, and all four checks always
+// render in this fixed order — a check that never ran says so, never passes silently.
 import type { Evidence } from '@/lib/api';
 
 export type EvidenceCheck = 'contract' | 'coherence' | 'identity' | 'canary';
@@ -53,20 +29,16 @@ export interface EvidenceLine {
   status: EvidenceStatus;
   /** The comparison sentence. Never a lone number, never a raw metric name. */
   sentence: string;
-  /** A second, supporting sentence — present only when the proof needs a
-   * scope statement beyond the headline (e.g. identity's "N of M rows"). */
+  /** A second, supporting sentence — only when the proof needs a scope
+   *  statement beyond the headline (e.g. identity's "N of M rows"). */
   detail?: string;
-  /** The verbatim engine Evidence this line was derived from, for the
-   * `⌄ raw` disclosure. `null` when the check never ran at all (nothing to
-   * show raw — the reason is already fully expressed in `sentence`). */
+  /** Verbatim engine Evidence for the `⌄ raw` disclosure. `null` when the check
+   *  never ran — the reason is already fully expressed in `sentence`. */
   raw: Evidence | null;
 }
 
-/** The one entity-key substitution this evidence set proves, if any — the
- * exact pair `VerdictCard`'s rotating chip needs (ui-system.md §2.6 beat 1-2:
- * "the entity key chip in the card body rotates out... the returned key
- * rotates in"). `null` when there is no identity evidence, or identity
- * passed, or (defensively) it failed with an empty `mismatches[]`. */
+/** The one entity-key substitution this evidence set proves — the pair `VerdictCard`'s
+ *  rotating chip needs (§2.6). `null` unless identity failed with a mismatch. */
 export function firstIdentityMismatch(evidence: Evidence[] | null): IdentityMismatch | null {
   const identityEv = (evidence ?? []).find((e) => e.check === 'identity');
   if (!identityEv || identityEv.ok) return null;
@@ -76,14 +48,11 @@ export function firstIdentityMismatch(evidence: Evidence[] | null): IdentityMism
 
 export interface EvidenceContext {
   evidence: Evidence[] | null;
-  /** `CollectorState.cause` — needed only to explain WHY canary didn't run
-   * (a canary re-fetch confirms a structural break; it is never run to
-   * confirm an identity failure — see src/runner.ts, canary only runs when
-   * `cause === 'STRUCTURAL'`). */
+  /** `CollectorState.cause` — explains WHY canary didn't run; the engine only runs
+   *  it when `cause === 'STRUCTURAL'` (src/runner.ts). */
   cause: string | null;
-  /** `CollectorState.rows` — best-effort row count for the contract pass
-   * sentence's scope ("...on all N rows"). `null` renders the sentence
-   * without a row count rather than fabricating one. */
+  /** `CollectorState.rows` — scope for the contract pass sentence. `null` omits the
+   *  row count rather than fabricating one. */
   rows: number | null;
 }
 
@@ -102,10 +71,8 @@ export function translateEvidence({ evidence, cause, rows }: EvidenceContext): E
   ];
 }
 
-/* -------------------------------------------------------------------- */
-/* Shared formatting — every sentence in this module goes through these  */
-/* so "0%" / "97.8%" / "1,204" formatting is consistent everywhere.      */
-/* -------------------------------------------------------------------- */
+/* -- Shared formatting: every sentence goes through these, so "0%" / "97.8%" /
+      "1,204" are formatted identically everywhere. ------------------------- */
 
 function pct(rate: number): string {
   const p = Math.round(rate * 1000) / 10; // one decimal place, trimmed
@@ -160,10 +127,8 @@ function fieldCount(contractEv: Evidence | undefined): number | null {
   return n > 0 ? n : null;
 }
 
-/** "skipped: no schema registered" -> a full sentence, never the raw engine
- * string verbatim (it's a valid English fragment, but not a sentence — and
- * two specific reasons get friendlier phrasing than a strip-and-capitalize
- * would produce). */
+/** "skipped: no schema registered" -> a full sentence; two reasons get friendlier
+ *  phrasing than a strip-and-capitalize would produce. */
 function humanizeSkip(detail: string): string {
   const stripped = detail.replace(/^skipped:\s*/i, '').trim();
   if (stripped === 'no schema registered') {
@@ -176,27 +141,29 @@ function humanizeSkip(detail: string): string {
   return `Not checked — ${sentence}`;
 }
 
-/* -------------------------------------------------------------------- */
-/* Contract                                                              */
-/* -------------------------------------------------------------------- */
+type LineBuilder = (status: EvidenceStatus, sentence: string, raw: Evidence | null, detail?: string) => EvidenceLine;
+
+/** Binds the two fields that are constant per check so each branch below is one line. */
+function lineBuilder(check: EvidenceCheck, label: string): LineBuilder {
+  return (status, sentence, raw, detail) =>
+    detail === undefined ? { check, label, status, sentence, raw } : { check, label, status, sentence, detail, raw };
+}
+
+/* -- Contract -------------------------------------------------------- */
 
 function translateContract(evidence: Evidence | undefined, rows: number | null): EvidenceLine {
-  const check: EvidenceCheck = 'contract';
-  const label = 'Contract';
-
-  if (!evidence) {
-    return { check, label, status: 'skipped', sentence: 'Not checked — no contract evidence was recorded for this run.', raw: null };
-  }
-  if (evidence.metrics?.skipped === true) {
-    return { check, label, status: 'skipped', sentence: humanizeSkip(evidence.detail), raw: evidence };
-  }
+  const line = lineBuilder('contract', 'Contract');
+  if (!evidence) return line('skipped', 'Not checked — no contract evidence was recorded for this run.', null);
+  if (evidence.metrics?.skipped === true) return line('skipped', humanizeSkip(evidence.detail), evidence);
 
   if (evidence.ok) {
-    const sentence =
+    return line(
+      'pass',
       rows != null
         ? `Every required field was filled, on all ${count(rows)} row(s), with no errors.`
-        : 'Every required field was filled, with no errors.';
-    return { check, label, status: 'pass', sentence, raw: evidence };
+        : 'Every required field was filled, with no errors.',
+      evidence,
+    );
   }
 
   const rates = asRates(evidence.metrics?.fillRates);
@@ -204,22 +171,14 @@ function translateContract(evidence: Evidence | undefined, rows: number | null):
   const requiredViolationRate = num(evidence.metrics?.requiredViolationRate) ?? 0;
   const errorRowRate = num(evidence.metrics?.errorRowRate) ?? 0;
 
-  // A contract can fail purely on errored inputs with every returned field
-  // fully filled — the worst-field framing below would be misleading here
-  // (there's no collapsed field to name), so this gets its own comparison.
+  // A contract can fail purely on errored inputs with every returned field filled;
+  // the worst-field framing below would name a collapsed field that doesn't exist.
   if (requiredViolationRate === 0 && errorRowRate > 0) {
-    const sentence = `${pct(errorRowRate)} of inputs errored out entirely — every field that did return data was fully filled.`;
-    return { check, label, status: 'fail', sentence, raw: evidence };
+    return line('fail', `${pct(errorRowRate)} of inputs errored out entirely — every field that did return data was fully filled.`, evidence);
   }
 
   if (fields.length === 0) {
-    return {
-      check,
-      label,
-      status: 'fail',
-      sentence: 'One or more required fields were missing on this run.',
-      raw: evidence,
-    };
+    return line('fail', 'One or more required fields were missing on this run.', evidence);
   }
 
   const sorted = [...fields].sort((a, b) => a[1] - b[1]);
@@ -242,149 +201,102 @@ function translateContract(evidence: Evidence | undefined, rows: number | null):
     }
   }
 
-  const sentence = `${worstName} was filled on ${pct(worstRate)} of rows — ${othersDescription}.`;
-  return { check, label, status: 'fail', sentence, raw: evidence };
+  return line('fail', `${worstName} was filled on ${pct(worstRate)} of rows — ${othersDescription}.`, evidence);
 }
 
-/* -------------------------------------------------------------------- */
-/* Coherence                                                             */
-/* -------------------------------------------------------------------- */
+/* -- Coherence ------------------------------------------------------- */
 
 function translateCoherence(evidence: Evidence | undefined, totalFields: number | null): EvidenceLine {
-  const check: EvidenceCheck = 'coherence';
-  const label = 'Coherence';
-
-  if (!evidence) {
-    return { check, label, status: 'skipped', sentence: 'Not checked — no coherence evidence was recorded for this run.', raw: null };
-  }
-  if (evidence.metrics?.skipped === true) {
-    return { check, label, status: 'skipped', sentence: humanizeSkip(evidence.detail), raw: evidence };
-  }
+  const line = lineBuilder('coherence', 'Coherence');
+  if (!evidence) return line('skipped', 'Not checked — no coherence evidence was recorded for this run.', null);
+  if (evidence.metrics?.skipped === true) return line('skipped', humanizeSkip(evidence.detail), evidence);
 
   if (evidence.ok) {
-    const sentence =
+    return line(
+      'pass',
       totalFields != null
         ? `No field collapsed. Fill rates are even across all ${totalFields} field(s).`
-        : 'No field collapsed. Fill rates are even across every field.';
-    return { check, label, status: 'pass', sentence, raw: evidence };
+        : 'No field collapsed. Fill rates are even across every field.',
+      evidence,
+    );
   }
 
   const collapsedFields = asStrings(evidence.metrics?.collapsedFields);
-  const zeroRows = evidence.metrics?.zeroRows === true;
 
   if (collapsedFields.length > 0) {
     const names = joinNames(collapsedFields);
     const otherCount = totalFields != null ? Math.max(0, totalFields - collapsedFields.length) : null;
-    const sentence =
+    return line(
+      'fail',
       otherCount != null
         ? `Only ${names} collapsed. The other ${otherCount} field(s) are untouched — this is one broken extractor, not a dead page.`
-        : `Only ${names} collapsed. Every other field is untouched — this is one broken extractor, not a dead page.`;
-    return { check, label, status: 'fail', sentence, raw: evidence };
+        : `Only ${names} collapsed. Every other field is untouched — this is one broken extractor, not a dead page.`,
+      evidence,
+    );
   }
 
-  if (zeroRows) {
-    return {
-      check,
-      label,
-      status: 'fail',
-      sentence: 'This run returned zero rows even though the job reported work was done — the page came back empty.',
-      raw: evidence,
-    };
+  if (evidence.metrics?.zeroRows === true) {
+    return line('fail', 'This run returned zero rows even though the job reported work was done — the page came back empty.', evidence);
   }
 
-  return {
-    check,
-    label,
-    status: 'fail',
-    sentence: 'This run failed its coherence check, with no field collapse or empty-page signal recorded.',
-    raw: evidence,
-  };
+  return line('fail', 'This run failed its coherence check, with no field collapse or empty-page signal recorded.', evidence);
 }
 
-/* -------------------------------------------------------------------- */
-/* Identity                                                              */
-/* -------------------------------------------------------------------- */
+/* -- Identity -------------------------------------------------------- */
 
 function translateIdentity(evidence: Evidence | undefined): EvidenceLine {
-  const check: EvidenceCheck = 'identity';
-  const label = 'Identity';
+  const line = lineBuilder('identity', 'Identity');
+  if (!evidence) return line('skipped', 'Not checked — no identity evidence was recorded for this run.', null);
+  if (evidence.metrics?.skipped === true) return line('skipped', humanizeSkip(evidence.detail), evidence);
 
-  if (!evidence) {
-    return { check, label, status: 'skipped', sentence: 'Not checked — no identity evidence was recorded for this run.', raw: null };
-  }
-  if (evidence.metrics?.skipped === true) {
-    return { check, label, status: 'skipped', sentence: humanizeSkip(evidence.detail), raw: evidence };
-  }
   if (evidence.detail.startsWith('not applicable')) {
-    return {
-      check,
-      label,
-      status: 'skipped',
-      sentence: 'Not applicable — no entity key is configured for this collector to compare against.',
-      raw: evidence,
-    };
+    return line('skipped', 'Not applicable — no entity key is configured for this collector to compare against.', evidence);
   }
 
   const compared = num(evidence.metrics?.compared) ?? 0;
   const mismatched = num(evidence.metrics?.mismatched) ?? 0;
 
   if (evidence.ok) {
-    const sentence = `Every ID requested matched the ID returned, across ${count(compared)} comparable row(s).`;
-    return { check, label, status: 'pass', sentence, raw: evidence };
+    return line('pass', `Every ID requested matched the ID returned, across ${count(compared)} comparable row(s).`, evidence);
   }
 
   const mismatches = asMismatches(evidence.metrics?.mismatches);
-  const detail = `${count(mismatched)} of ${count(compared)} row(s) are the wrong product.`;
-
   if (mismatches.length === 0) {
-    return {
-      check,
-      label,
-      status: 'fail',
-      sentence: `${count(mismatched)} of ${count(compared)} row(s) returned the wrong ID.`,
-      raw: evidence,
-    };
+    return line('fail', `${count(mismatched)} of ${count(compared)} row(s) returned the wrong ID.`, evidence);
   }
 
   const first = mismatches[0];
-  const sentence = `We asked for ${first.requestedKey}. The page returned ${first.extractedKey}.`;
-  return { check, label, status: 'fail', sentence, detail, raw: evidence };
+  return line(
+    'fail',
+    `We asked for ${first.requestedKey}. The page returned ${first.extractedKey}.`,
+    evidence,
+    `${count(mismatched)} of ${count(compared)} row(s) are the wrong product.`,
+  );
 }
 
-/* -------------------------------------------------------------------- */
-/* Canary                                                                */
-/* -------------------------------------------------------------------- */
+/* -- Canary ---------------------------------------------------------- */
 
 function translateCanary(evidence: Evidence | undefined, cause: string | null): EvidenceLine {
-  const check: EvidenceCheck = 'canary';
-  const label = 'Canary';
-
+  const line = lineBuilder('canary', 'Canary');
   // The engine only appends canary evidence when cause === 'STRUCTURAL'
-  // (src/runner.ts) — every other cause means it genuinely never ran, not
-  // that it was omitted from the response. The reason it didn't run differs
-  // by what the run actually found.
+  // (src/runner.ts), so a missing entry means it never ran, not that it was omitted.
   if (!evidence) {
     const sentence =
       cause === 'IDENTITY'
         ? "Not run. A canary re-fetch confirms a broken extractor; it can't confirm the wrong target was served."
         : 'Not run. A canary re-fetch only runs to confirm a suspected structural break.';
-    return { check, label, status: 'skipped', sentence, raw: null };
+    return line('skipped', sentence, null);
   }
-  if (evidence.metrics?.skipped === true) {
-    return { check, label, status: 'skipped', sentence: humanizeSkip(evidence.detail), raw: evidence };
-  }
+  if (evidence.metrics?.skipped === true) return line('skipped', humanizeSkip(evidence.detail), evidence);
 
   const outcomes = asOutcomes(evidence.metrics?.outcomes);
   const total = outcomes.length;
   const failCount = num(evidence.metrics?.failCount) ?? outcomes.filter((o) => !o.pass).length;
 
   if (evidence.ok) {
-    const sentence = `We re-fetched ${total} known-good input(s) just now. All ${total} came back clean.`;
-    return { check, label, status: 'pass', sentence, raw: evidence };
+    return line('pass', `We re-fetched ${total} known-good input(s) just now. All ${total} came back clean.`, evidence);
   }
 
-  const firstFail = outcomes.find((o) => !o.pass);
-  const reason = firstFail?.reason ?? 'no reason recorded';
-  const sentence = `We re-fetched ${total} known-good input(s) just now. ${failCount} of ${total} failed: ${reason}.`;
-  return { check, label, status: 'fail', sentence, raw: evidence };
+  const reason = outcomes.find((o) => !o.pass)?.reason ?? 'no reason recorded';
+  return line('fail', `We re-fetched ${total} known-good input(s) just now. ${failCount} of ${total} failed: ${reason}.`, evidence);
 }

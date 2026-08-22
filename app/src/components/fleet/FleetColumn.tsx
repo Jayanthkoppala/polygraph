@@ -1,21 +1,8 @@
-/**
- * FleetColumn — the collector list itself, density-driven per
- * ui-system.md §5.3. The card never resizes to fill space; the container
- * changes what it holds:
- *
- *   n<=1    hero card (handled by the caller — FleetShell renders it inline)
- *   n=2-3   single column, card density
- *   n=4-12  grid-cols-3, card density
- *   n=13-40 row density, grid-cols-2, virtualized past 24 rows
- *   n>40    row density, grid-cols-1, virtualized, sticky group headers,
- *           VERIFIED collapsed by default
- *
- * At n<=12, only VERIFIED collapses into the quiet `HealthyRow` — every
- * other state gets a full card, capped at `MAX_ATTENTION_CARDS` with a
- * "+N more needing attention" note (ux-spec.md §4). At n>40 the same
- * VERIFIED-collapses-by-default rule is expressed as a group that starts
- * closed instead (ui-system.md §5.3).
- */
+// The collector list, density-driven by `layoutFor` (§5.3) — the container changes
+// what it holds, the card never resizes.
+
+// VERIFIED always collapses: into the quiet `HealthyRow` at n<=12, into a
+// closed-by-default group at n>40. Attention cards cap at `MAX_ATTENTION_CARDS`.
 import { useMemo, useState } from 'react';
 import { VerdictCard } from './VerdictCard';
 import { HealthyRow } from './HealthyRow';
@@ -31,8 +18,7 @@ export interface FleetColumnProps {
   onSelect: (id: string) => void;
   onRepair: (id: string) => void;
   onAcknowledge: (id: string) => void;
-  /** Test-only escape hatch: the real viewport is measured from the DOM,
-   * which jsdom always reports as 0. Defaults to a realistic in-app value. */
+  /** Test-only escape hatch — jsdom always measures the viewport as 0. */
   viewportHeight?: number;
 }
 
@@ -48,11 +34,8 @@ export function FleetColumn({
 }: FleetColumnProps) {
   const layout = layoutFor(collectors.length);
   const sorted = useMemo(() => sortBySeverityThenRecency(collectors), [collectors]);
-  // Called unconditionally, before the early return below, so this
-  // component's own hook count never changes between renders — the ref it
-  // returns is only ever attached in the non-virtualized branch's JSX; when
-  // that branch doesn't render, the hook's effect just finds `current ===
-  // null` and no-ops (see the hook's own early return).
+  // Called before the early return so the hook count never changes between renders;
+  // when the branch that attaches the ref doesn't render, the effect no-ops.
   const listRef = useRovingTabIndex<HTMLDivElement>();
 
   if (layout.kind === 'row-grid-2' || layout.kind === 'row-grid-1-grouped') {
@@ -75,12 +58,7 @@ export function FleetColumn({
   const { attention, healthy } = partitionByAttention(sorted);
   const visible = layout.kind === 'hero' ? attention : attention.slice(0, MAX_ATTENTION_CARDS);
   const overflow = attention.length - visible.length;
-  const gridClass =
-    layout.kind === 'hero'
-      ? 'flex flex-col gap-2'
-      : layout.kind === 'single-column'
-        ? 'flex flex-col gap-2'
-        : 'grid grid-cols-3 gap-2';
+  const gridClass = layout.kind === 'grid-3' ? 'grid grid-cols-3 gap-2' : 'flex flex-col gap-2';
 
   return (
     <div className="flex flex-col gap-3">
@@ -111,8 +89,7 @@ type RowItem =
   | { kind: 'row'; collector: CollectorState }
   | { kind: 'group'; state: VerdictState; count: number; expanded: boolean };
 
-/** Severity-first group order, matching `sortBySeverityThenRecency`'s own
- * ranking (ui-system.md §5.3's "sorted worst first"). */
+/** Severity-first, matching `sortBySeverityThenRecency`'s ranking (§5.3). */
 const GROUP_ORDER: VerdictState[] = ['WRONG_TARGET', 'WRONG_SHAPE', 'UNEXPLAINED', 'NOT_CHECKED', 'VERIFIED'];
 
 function buildRowItems(collectors: CollectorState[], grouped: boolean, verifiedExpanded: boolean): RowItem[] {
@@ -122,8 +99,7 @@ function buildRowItems(collectors: CollectorState[], grouped: boolean, verifiedE
   for (const state of GROUP_ORDER) {
     const group = collectors.filter((c) => toVerdictState(c) === state);
     if (group.length === 0) continue;
-    // "VERIFIED collapses by default at n > 40" (ui-system.md §5.3) — every
-    // other group starts open; the healthy group starts closed.
+    // Every group starts open except VERIFIED, which collapses by default (§5.3).
     const expanded = state === 'VERIFIED' ? verifiedExpanded : true;
     items.push({ kind: 'group', state, count: group.length, expanded });
     if (expanded) {
@@ -155,8 +131,7 @@ function VirtualizedRows({
   onAcknowledge: (id: string) => void;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
-  // VERIFIED starts collapsed (ui-system.md §5.3) — a healthy fleet at
-  // scale is noise; the group header's own count is the fact anyone needs.
+  // VERIFIED starts collapsed (§5.3): at scale the header's count is the only fact needed.
   const [verifiedExpanded, setVerifiedExpanded] = useState(false);
 
   const items = useMemo(

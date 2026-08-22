@@ -1,33 +1,5 @@
-/**
- * App — the router root (Task 10a). Wires the three surfaces Tasks 8/9/7
- * each built self-contained and un-mounted:
- *
- *   `/`                 → LandingPage (Task 8), router-agnostic, no auth.
- *   `/signup`, `/login`  → OnboardingEntry — session-aware: a fresh visitor
- *                         gets the signup step, a returning
- *                         authenticated-but-keyless tenant resumes at
- *                         key-paste, an already-keyed tenant is bounced to
- *                         `/fleet`. Matches the two real links
- *                         `LandingPage`'s nav already renders.
- *   `/app`, `/fleet`     → AppGate — same session-aware split, but this is
- *                         also where the backend's `GET /t/:token` exchange
- *                         redirects to (`redirectLocation: '/app'` in
- *                         src/tenancy/auth.ts), so a freshly-exchanged,
- *                         still-keyless tenant has to land here correctly
- *                         too, not just at `/signup`.
- *   anything else        → back to `/`, never a raw 404 shell.
- *
- * react-router-dom, chosen over a hand-rolled path router because this
- * app now genuinely needs declarative route matching plus `<Navigate>` for
- * the session-branch redirects in `AppGate`/`OnboardingEntry` — Task 8's
- * landing page already assumed *some* router would eventually own `/login`
- * and `/signup` as real paths (its nav uses plain `<a href>`, which browser
- * navigation resolves against whatever's mounted, router or not), and Task
- * 9's `OnboardingWizard` explicitly left `initialStage`/`onComplete` as the
- * seam for a router to drive — nothing here needs data loaders, nested
- * layouts, or the rest of react-router's surface, but "just enough" was a
- * bigger, less-maintainable diff than the one real dependency.
- */
+// Router root. `/app` is where the backend's `GET /t/:token` exchange redirects
+// (src/tenancy/auth.ts), so a freshly-exchanged keyless tenant must land here too.
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { LandingPage } from '@/landing/LandingPage';
 import { AppGate } from '@/routes/AppGate';
@@ -35,10 +7,8 @@ import { OnboardingEntry } from '@/routes/OnboardingEntry';
 import { PrivacyPage, TermsPage } from '@/routes/legal';
 import { GlobalChrome } from '@/components/GlobalChrome';
 
-/** The route table on its own, unwrapped — exported so tests can mount it
- * inside a `MemoryRouter` at an arbitrary path instead of `BrowserRouter`,
- * which always reads the real (jsdom) address bar. `App` below is the only
- * thing that actually ships. */
+/** Unwrapped route table, exported so tests can mount it in a `MemoryRouter`
+ *  at an arbitrary path. `App` below is the only thing that ships. */
 export function AppRoutes() {
   return (
     <GlobalChrome>

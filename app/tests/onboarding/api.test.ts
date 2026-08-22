@@ -1,11 +1,5 @@
-/**
- * api.ts — the thin HTTP client. Focused on the two defensive behaviours
- * that matter most: (1) `saveApiKey` discriminates 400 (rejected) from 503
- * (list-unavailable) into the calm-vs-real-error outcomes KeyPasteStep
- * relies on, and (2) every parser degrades to an empty/safe shape on an
- * unrecognised response rather than throwing, since real endpoints are
- * still moving under this client (see module doc).
- */
+/** `saveApiKey` must split 400 (rejected) from 503 (list-unavailable) into the calm-vs-real
+ * outcomes KeyPasteStep relies on, and parsers must degrade rather than throw. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   saveApiKey,

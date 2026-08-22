@@ -1,8 +1,5 @@
-/**
- * CollectorsStep — the payoff ("Connected. Found N collectors.") and its
- * calm 403/unavailable fallback. ux-spec.md §6: fallback copy must never
- * frame the situation as the user's fault.
- */
+/** The payoff ("Connected. Found N collectors.") and its 403/unavailable fallback —
+ * ux-spec.md §6: fallback copy must never frame it as the user's fault. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { CollectorsFoundStep, CollectorsFallbackStep } from '@/onboarding/steps/CollectorsStep';

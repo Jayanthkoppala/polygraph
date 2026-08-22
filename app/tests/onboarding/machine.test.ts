@@ -1,11 +1,5 @@
-/**
- * The onboarding state machine — pure reducer tests, no rendering. Covers
- * every transition task-9-brief.md names explicitly: the happy path, the
- * key-rejected path, and the 403/collectors-unavailable calm-fallback path
- * (both the explicit `KEY_LIST_UNAVAILABLE` event and the "verified but
- * zero collectors returned" case, which the reducer treats identically —
- * see machine.ts's `KEY_VERIFIED` case doc).
- */
+/** Pure reducer tests for every transition task-9-brief.md names. The reducer treats
+ * `KEY_LIST_UNAVAILABLE` and "verified but zero collectors" identically. */
 import { describe, expect, it } from 'vitest';
 import { initialOnboardingState, onboardingReducer, currentCandidate, type OnboardingState } from '@/onboarding/machine';
 

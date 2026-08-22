@@ -1,9 +1,5 @@
-/**
- * VerdictCard — the full card assembly (ui-system.md §3.4). Covers: six
- * facts at card density, the entity-key substitution for WRONG_TARGET, row
- * density's reduced fact set, the fixed repair slot wiring, and the
- * reduced-motion path (no crash, final geometry, no animation).
- */
+// VerdictCard — the full card assembly (ui-system.md §3.4): six facts at card density,
+// the WRONG_TARGET entity-key substitution, row density, repair slot, reduced motion.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { VerdictCard } from '@/components/fleet/VerdictCard';
@@ -56,15 +52,8 @@ function baseCollector(overrides: Partial<CollectorState> = {}): CollectorState 
 
 const noop = () => {};
 
-/**
- * A WRONG_SHAPE run that is genuinely repairable — which means it carries a
- * `suggestedHealCommand`, because that is the only way the server says so.
- * `derivePureActionDetail` (src/server.ts) sets the command exactly when the
- * engine's own decision was REPAIR, so a structural break without one is a
- * run the engine declined to repair, not a repairable one missing a field.
- * The Repair affordance is derived from this, so a fixture that wants the
- * button has to be a run that would actually get it.
- */
+// Repairable means it carries `suggestedHealCommand`: derivePureActionDetail (src/server.ts)
+// sets it exactly when the engine decided REPAIR, and the Repair affordance derives from that.
 function repairableShapeCollector(overrides: Partial<CollectorState> = {}): CollectorState {
   return baseCollector({
     verdict: 'FAILED_CONTRACT',
@@ -184,18 +173,8 @@ describe('VerdictCard — reduced motion (§6.5)', () => {
   });
 });
 
-/**
- * Regression for docs/design/critique.md #1: the repair slot rendered as a
- * 1px sliver on every card because the shell was NOT a flex column and the
- * button took `h-full` (the shell's whole fixed height) with the slot as a
- * sibling after it — button + slot together always exceeded the shell's
- * `overflow-hidden` height by exactly the slot's own height. jsdom does not
- * do real layout, so this can't assert a rendered pixel height (that's
- * covered by the visual re-screenshot in the fix report); it instead
- * asserts the structural invariant that prevents the overflow: the shell
- * stacks as a column and the button shrinks to make room for a
- * never-shrinking slot, rather than both claiming the full height.
- */
+// Regression, critique.md #1: a non-column shell plus an `h-full` button squeezed the slot to
+// a 1px sliver. jsdom has no layout, so assert the structure that prevents it, not pixels.
 describe('VerdictCard — the repair slot has room inside the shell (critique.md #1)', () => {
   it('the card button is a flexed, shrinkable region, not a fixed h-full sibling of the slot', () => {
     stubMatchMedia(false);
@@ -222,12 +201,8 @@ describe('VerdictCard — the repair slot has room inside the shell (critique.md
   });
 });
 
-/**
- * Regression for docs/design/critique.md next-tier #1: `useSkipEntrance`
- * alone treats every remount as indistinguishable from first paint, so
- * ProofMoment's key-bump replay could never actually play the WRONG_TARGET
- * choreography. `animateEntrance` is the explicit override that fixes it.
- */
+// Regression, critique.md next-tier #1: `useSkipEntrance` alone can't tell a remount from first
+// paint, so ProofMoment's key-bump replay never played. `animateEntrance` is the override.
 describe('VerdictCard — animateEntrance overrides the mount-based motion gate (critique.md next-tier #1)', () => {
   it('animateEntrance={false} suppresses the entity-key rotation even though this is a fresh mount', () => {
     stubMatchMedia(false);
@@ -254,9 +229,8 @@ describe('VerdictCard — animateEntrance overrides the mount-based motion gate 
       />,
     );
     const received = screen.getByText('B').closest('div')!;
-    // initial={false} means motion/react never assigns a starting
-    // rotateX/opacity keyframe — the row renders directly in its settled
-    // position, so its transform is either unset or the identity "none".
+    // initial={false} means motion/react assigns no starting keyframe, so the row renders
+    // settled and its transform is either unset or the identity "none".
     expect(['', 'none']).toContain(received.style.transform);
   });
 
@@ -285,15 +259,13 @@ describe('VerdictCard — animateEntrance overrides the mount-based motion gate 
       />,
     );
     const received = screen.getByText('B').closest('div')!;
-    // initial={{ rotateX: 90, opacity: 0 }} means motion/react assigns a
-    // starting transform inline style immediately on mount, before the
+    // initial={{ rotateX: 90, opacity: 0 }} writes an inline transform on mount before the
     // animation runs — proof the entrance keyframe actually fired.
     expect(received.style.transform).not.toBe('');
   });
 });
 
-/** A WRONG_TARGET collector whose every field is filled — the whole point
- * of the state: schema-perfect data about the wrong thing. */
+// Every field filled — the whole point of the state: schema-perfect data about the wrong thing.
 function wrongTargetCollector() {
   return baseCollector({
     verdict: 'FAILED_IDENTITY',
@@ -317,14 +289,8 @@ function wrongTargetCollector() {
   });
 }
 
-/**
- * Regression for critique.md next-tier #6: the entity-key substitution
- * REPLACED the metric row, so `FILL 100%` never rendered on the one card
- * that needs it most. ui-system.md §4.2 draws both and says why: "Note also
- * FILL 100% on the right card. Every field present, schema perfect, nothing
- * missing. That single number is the argument, because by every measure a
- * status monitor has, that card is passing."
- */
+// Regression, critique.md next-tier #6: the key substitution REPLACED the metric row, so FILL
+// 100% never rendered on the card that needs it most — §4.2 says that number IS the argument.
 describe('VerdictCard — the wrong-target card keeps its own best argument (critique.md next-tier #6, §4.2)', () => {
   it('hero density shows the key substitution AND Fill/Rows together', () => {
     stubMatchMedia(false);
@@ -405,12 +371,8 @@ describe('VerdictCard — the wrong-target card keeps its own best argument (cri
   });
 });
 
-/**
- * Regression for critique.md next-tier #6: the strikethrough is the repair
- * slot's own idiom and means exactly one thing — a repair that was
- * withdrawn (§2.8, "the strikethrough crosses only the word 'Repair'").
- * The requested key was never the problem.
- */
+// Regression, critique.md next-tier #6: the strike is the repair slot's own idiom and means one
+// thing — a withdrawn repair (§2.8). The requested key was never the problem.
 describe('VerdictCard — only the withdrawn repair is struck through (critique.md next-tier #6, §2.8)', () => {
   it('the requested key carries no strikethrough', () => {
     stubMatchMedia(false);
@@ -440,12 +402,8 @@ describe('VerdictCard — only the withdrawn repair is struck through (critique.
   });
 });
 
-/**
- * Regression for critique.md next-tier #6: `w-16` is 64px, which is exactly
- * the measured width of "asked for" at 12px Geist Mono, so the label wrapped
- * to two lines on every wrong-target card (measured live: dt height 32px
- * against a 16px line-height, while "received" measured 16px).
- */
+// Regression, critique.md next-tier #6: `w-16` (64px) is exactly the width of "asked for" at
+// 12px Geist Mono, so the label wrapped to two lines on every wrong-target card.
 describe('VerdictCard — the substitution labels never wrap (critique.md next-tier #6)', () => {
   it('both labels are nowrap and wider than the text they hold', () => {
     stubMatchMedia(false);
@@ -472,14 +430,8 @@ describe('VerdictCard — the substitution labels never wrap (critique.md next-t
   });
 });
 
-/**
- * Regression for critique.md "Beautiful but wrong". The cursor-tracked ring
- * meant the verdict colour only existed within 240px of the pointer, so a
- * failing card's border — one of the four places §2.5 says state lives —
- * was plain grey at rest and lit up as a reward for mousing over it. The
- * ring is now flat and always on, and §2.6's own resting values decide
- * which states take a hue.
- */
+// Regression, critique.md "Beautiful but wrong": the cursor-tracked ring left a failing card's
+// border grey at rest and lit it only within 240px of the pointer. The ring is now always on.
 describe('VerdictCard — the ring is a resting state channel, not a hover reward (critique.md "Beautiful but wrong")', () => {
   const RING: Array<[string, Partial<CollectorState>, string]> = [
     ['WRONG_SHAPE', { verdict: 'FAILED_CONTRACT', cause: 'STRUCTURAL' }, 'var(--color-verdict-shape)'],
@@ -517,17 +469,8 @@ describe('VerdictCard — the ring is a resting state channel, not a hover rewar
   });
 });
 
-/**
- * A blocked run is a WRONG_SHAPE card that is NOT repairable.
- *
- * §2.1 maps `cause: 'BLOCKED'` onto the same display state as a structural
- * break, and the label "Wrong shape" is settled (five states, five rail
- * geometries) — so the card keeps the label and the rail, and the ACTION
- * SLOT is where the two must part. src/policy.ts's `decideBlocked` always
- * QUARANTINEs, so the server sends no `suggestedHealCommand`; offering a
- * Repair button anyway is a control that claims it can act while doing
- * nothing, which is the exact failure this product exists to catch.
- */
+// §2.1 maps `cause: 'BLOCKED'` onto WRONG_SHAPE, so label and rail are shared and the ACTION SLOT
+// is where they part: policy.ts `decideBlocked` always QUARANTINEs, so a Repair button would lie.
 describe('VerdictCard — a BLOCKED run keeps the label but never the repair', () => {
   function blockedCollector(overrides: Partial<CollectorState> = {}): CollectorState {
     return baseCollector({
@@ -606,11 +549,8 @@ describe('VerdictCard — a BLOCKED run keeps the label but never the repair', (
   });
 });
 
-/**
- * The other half of the same rule: a structural break that DID come with a
- * repair still gets the live, raised, enabled button. The fix must not
- * over-refuse.
- */
+// The other half of the rule: a structural break that DID come with a repair keeps the live,
+// raised button. The fix must not over-refuse.
 describe('VerdictCard — a repairable structural run still offers repair', () => {
   it('renders an enabled, raised Repair button and wires it to onRepair', () => {
     stubMatchMedia(false);
@@ -634,13 +574,8 @@ describe('VerdictCard — a repairable structural run still offers repair', () =
   });
 });
 
-/**
- * The WRONG_TARGET card is a cross-session invariant: the landing page's
- * proof moment and tagline reveal both compose it, and its refusal is the
- * single most important 300ms in the product (§2.8). These assert that the
- * per-run derivation left both the LABEL and the REFUSAL untouched, in the
- * adversarial case where the run carries a heal command it should never get.
- */
+// WRONG_TARGET is a cross-session invariant (landing proof moment + tagline reveal compose it).
+// Asserts the per-run derivation left label and refusal intact, even carrying a stray heal command.
 describe('VerdictCard — WRONG_TARGET is unchanged by the per-run derivation', () => {
   function wrongTargetCollector(overrides: Partial<CollectorState> = {}): CollectorState {
     return baseCollector({

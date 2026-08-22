@@ -1,8 +1,5 @@
-/**
- * FleetShell — integration smoke tests across the three shell modes
- * (ui-system.md §5.2/§5.3): hero (n<=1), docked (n=2-3), overlay (n>=4).
- * No region is empty at n=1; the empty-fleet state is composed at n=0.
- */
+// The three shell modes (§5.2/§5.3): hero (n<=1), docked (n=2-3), overlay (n>=4).
+// No region is empty at n=1; the empty-fleet state is composed at n=0.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { FleetShell } from '@/components/fleet/FleetShell';
@@ -135,17 +132,8 @@ describe('FleetShell — n>=4: overlay mode, FOCUS is a slide-in panel', () => {
   });
 });
 
-/**
- * Regression for docs/design/critique.md #2: selecting the broken collector
- * on the primary path (headline -> red card -> click) let the FOCUS panel's
- * unwrappable heal command force the grid to 2349px wide, pushing LEDGER
- * fully off-screen — a CSS grid child's implicit `min-width: auto` lets its
- * content dictate track width unless the child (and the thing overflowing
- * inside it) both explicitly opt out with `min-w-0`. jsdom has no real
- * layout engine, so this asserts the structural fix (the classes that
- * prevent the blowout) rather than a measured pixel width — real-width
- * confirmation is the visual re-screenshot in the fix report.
- */
+// Regression, critique.md #2: a grid child's implicit `min-width: auto` let FOCUS's unwrappable
+// heal command force the grid to 2349px, pushing LEDGER off-screen. jsdom can't measure; assert classes.
 describe('FleetShell — the docked grid never lets a region blow out past its column (critique.md #2)', () => {
   it('the FLEET, FOCUS, and LEDGER region wrappers all opt out of grid auto-sizing with min-w-0', () => {
     render(
@@ -159,8 +147,7 @@ describe('FleetShell — the docked grid never lets a region blow out past its c
     expect(screen.getByTestId('fleet-region').className).toContain('min-w-0');
     expect(screen.getByTestId('focus-region').className).toContain('min-w-0');
     expect(screen.getByTestId('ledger-region').className).toContain('min-w-0');
-    // Belt-and-braces: the grid itself never lets the page page-scroll
-    // horizontally even if a future region forgets its own min-w-0.
+    // Belt-and-braces: the grid never page-scrolls even if a future region forgets min-w-0.
     expect(screen.getByTestId('fleet-shell-grid').className).toContain('overflow-x-hidden');
   });
 
@@ -179,14 +166,8 @@ describe('FleetShell — the docked grid never lets a region blow out past its c
   });
 });
 
-/**
- * Regression for docs/design/critique.md next-tier #4: selection was set
- * once from the initial sort, so when a collector started lying later the
- * headline turned red while FOCUS kept showing whatever was picked at load
- * ("1 collector is lying to you" beside an irrelevant NOT CHECKED panel).
- * The resolution rules themselves are unit-tested in lib/density.test.ts;
- * these assert the shell is actually wired to them.
- */
+// Regression, critique.md next-tier #4: selection was set once from the initial sort, so a
+// later failure turned the headline red while FOCUS kept the load-time pick. Rules: lib/density.test.ts.
 describe('FleetShell — FOCUS follows the story (critique.md #4)', () => {
   const focusName = () => within(screen.getByTestId('focus-region')).getByRole('heading', { level: 2 }).textContent;
 
@@ -208,8 +189,7 @@ describe('FleetShell — FOCUS follows the story (critique.md #4)', () => {
     );
     expect(focusName()).toBe('broken');
 
-    // Reading a less severe collector while something worse is lying is a
-    // legitimate, deliberate act — the shell must leave it alone.
+    // Reading a less severe collector while something worse lies is deliberate — leave it alone.
     fireEvent.click(screen.getByRole('button', { name: 'quieter, Unexplained' }));
     expect(focusName()).toBe('quieter');
 
@@ -238,8 +218,8 @@ describe('FleetShell — FOCUS follows the story (critique.md #4)', () => {
   });
 });
 
-/** ux-spec.md §2 E2: the zero-collector state is a composed card with the
- * two real ways out, not a lone sentence (critique.md #11). */
+// ux-spec.md §2 E2: the zero-collector state is a composed card with the two real ways out,
+// not a lone sentence (critique.md #11).
 describe('FleetShell — E2, the empty fleet offers both actions', () => {
   it('renders Connect collectors and Open the sandbox instead, pointing at real routes', () => {
     render(<FleetShell fleet={fleetState([])} ledgerRows={[]} onRepair={noop} onAcknowledge={noop} />);
@@ -257,9 +237,8 @@ describe('FleetShell — E2, the empty fleet offers both actions', () => {
   });
 });
 
-/** ui-system.md §1.2/B4 and its §5.4 checklist: borders go all the way
- * around a shape or the shape has no border. The FOCUS sheet was the one
- * `border-l` left in the codebase (critique.md #11). */
+// §1.2/B4: borders go all the way around a shape or the shape has no border.
+// The FOCUS sheet was the last `border-l` in the codebase (critique.md #11).
 describe('FleetShell — no single-sided borders', () => {
   it('the FOCUS sheet carries a full border', () => {
     const collectors = Array.from({ length: 5 }, (_, i) => makeCollector(`c${i}`, 'FAILED_STRUCTURAL'));

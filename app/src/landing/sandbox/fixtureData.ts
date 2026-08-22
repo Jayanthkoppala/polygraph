@@ -1,18 +1,5 @@
-/**
- * The sandbox's data, hand-copied (not fabricated) from `src/fixture/
- * products.ts` and `src/fixture/render.ts` — real values from the actual
- * local demo fixture, not invented for the landing page.
- *
- * COUPLING NOTE, same shape as `lib/api.ts`'s own note: `app/` is a
- * separate TS project from `src/`, and Task 8's file ownership is scoped to
- * `app/src/landing/**` only (no `src/**` edits), so this is a verbatim
- * hand-copy rather than an import. If the real fixture catalog changes,
- * re-diff this file against `src/fixture/products.ts`.
- *
- * `substituteProduct`'s "wrong_entity" rule below is copied algorithm-for-
- * algorithm from `src/fixture/render.ts`: the next product in catalog
- * order, wrapping around — never a fabricated product.
- */
+// Hand-copied verbatim (not fabricated) from `src/fixture/products.ts` and
+// `render.ts` — `app/` is a separate TS project, so re-diff on fixture changes.
 
 export interface FixtureProduct {
   sku: string;
@@ -42,8 +29,8 @@ function productBySku(sku: string): FixtureProduct {
   return p;
 }
 
-/** Verbatim algorithm from `src/fixture/render.ts`'s `substituteProduct`:
- * the next real product in catalog order, wrapping — never invented. */
+/** Verbatim from `src/fixture/render.ts`s `substituteProduct`: the next real
+ * product in catalog order, wrapping — never invented. */
 export function substituteProduct(requestedSku: string): FixtureProduct {
   const index = PRODUCTS.findIndex((p) => p.sku === requestedSku);
   const fallbackIndex = index === -1 ? 0 : index;
@@ -51,39 +38,18 @@ export function substituteProduct(requestedSku: string): FixtureProduct {
   return PRODUCTS[nextIndex];
 }
 
-/** The fields a sandbox collector's job actually pulls off every row. `sku`
- * is on every job because it is the row's identity — without it there is
- * nothing to check a row against. */
+/** The fields this collector's job actually pulls. `sku` is on every job
+ * because it is the row identity. */
 export type FixtureField = keyof FixtureProduct;
 
-/**
- * The 3 demo collectors. All three crawl the SAME demo store (the same 12
- * rows — see `SANDBOX_ROWS`); what differs is the job each one does, which
- * is what its name states:
- *
- *   store-pricing   — the price on every product row
- *   store-stock     — the stock count on every product row
- *   store-listings  — the product list itself: which SKUs exist, and what
- *                     each one is called
- *
- * Named for the job rather than by letter (`catalog-a`/`-b`/`-c`) because
- * the whole point of the break buttons is that a stranger can tell what
- * was LOST when one of them starts lying. "store-pricing is failing" says
- * "your prices are wrong"; "catalog-a is failing" says nothing at all.
- *
- * `fields` is what makes the names true rather than decorative: it is the
- * field set each collector's contract check actually runs over, so killing
- * the price field can only fail `store-pricing` — the other two never
- * extract a price and are genuinely unaffected (engine.ts relies on this
- * rather than asserting it).
- */
+// All three crawl the same 12 rows; only the job differs, which is what the name
+// states. `fields` is what makes those names true rather than decorative.
 export interface SandboxCollectorDef {
   id: string;
   name: string;
   fields: FixtureField[];
-  /** The one row identity spot-checks by re-requesting it by key — the
-   * "did we get back the page we asked for" probe, not the only row the
-   * collector visits. */
+  /** The one row identity spot-checks by re-requesting it by key — not the only
+   * row the collector visits. */
   probeSku: string;
 }
 
@@ -101,7 +67,6 @@ export function receivedProduct(def: SandboxCollectorDef): FixtureProduct {
   return substituteProduct(def.probeSku);
 }
 
-/** "12 rows" — the whole store every collector's crawl covers per run, matching
- * ux-spec.md's own sitemap mockup ("12 rows 100%") and the real 12-product
- * fixture size. Never a fabricated row count. */
+/** The whole store every collector crawls per run — the real 12-product fixture
+ * size (ux-spec.md), never a fabricated row count. */
 export const SANDBOX_ROWS = PRODUCTS.length;

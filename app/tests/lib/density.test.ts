@@ -1,6 +1,4 @@
-/**
- * Density/layout/headline tests (ui-system.md §5.3, ux-spec.md §4).
- */
+/** Density/layout/headline tests (ui-system.md §5.3, ux-spec.md §4). */
 import { describe, expect, it } from 'vitest';
 import {
   layoutFor,
@@ -139,13 +137,8 @@ describe('computeHeadline — one sentence, the worst true thing, exact preceden
     expect(computeHeadline([])).toEqual({ sentence: 'No collectors connected yet.', worstState: 'NONE' });
   });
 
-  /**
-   * Regression for docs/design/critique.md next-tier #3: `worstState` was
-   * hardcoded to 'WRONG_SHAPE' for any lying fleet, so a fleet whose only
-   * failure is WRONG_TARGET got a red headline over magenta cards — the
-   * exact severity-ramp confusion §2.5 forbids (WRONG_TARGET is
-   * deliberately off the red ramp, not a "worse" WRONG_SHAPE).
-   */
+  /** critique.md next-tier #3: `worstState` was hardcoded to 'WRONG_SHAPE', putting a
+   * red headline over magenta cards — the severity-ramp confusion §2.5 forbids. */
   it('a fleet lying only via WRONG_TARGET takes the WRONG_TARGET (magenta) headline colour, never WRONG_SHAPE red', () => {
     const collectors = [
       collector({ id: 'a', verdict: 'FAILED_IDENTITY', cause: 'IDENTITY' }),
@@ -165,12 +158,8 @@ describe('computeHeadline — one sentence, the worst true thing, exact preceden
   });
 });
 
-/**
- * FOCUS follows the story (docs/design/critique.md next-tier #4). Selection
- * used to be captured once at mount, so a collector that started lying
- * later turned the headline red while the FOCUS panel kept showing whatever
- * sorted first at page load.
- */
+/** FOCUS follows the story (critique.md next-tier #4): selection used to be captured
+ * once at mount, so a collector that started lying later never reached the panel. */
 describe('resolveFocusSelection — FOCUS follows the story, but never steals a deliberate pin', () => {
   const healthy = (id: string) => collector({ id, verdict: 'PASS' });
   const lying = (id: string) => collector({ id, verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL' });

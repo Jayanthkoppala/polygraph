@@ -1,8 +1,5 @@
-/**
- * VerdictCardShell tests — R10 / §3.4: the border-ring illumination trick
- * must never regress into an interior background wash (the exact defect
- * that got magic-card vetoed in the first place).
- */
+// R10 / §3.4: the border-ring illumination must never regress into an interior background
+// wash — the exact defect that got magic-card vetoed in the first place.
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { VerdictCardShell } from '@/components/fleet/VerdictCardShell';
@@ -20,8 +17,7 @@ describe('VerdictCardShell — border-ring illumination only, no interior gradie
     const bg = shell.style.background;
     expect(bg).toContain('border-box');
     expect(bg).toContain('padding-box');
-    // The padding-box (fill) layer is a flat, literal colour — not a
-    // gradient, not the accent.
+    // The padding-box (fill) layer is a flat literal colour — not a gradient, not the accent.
     expect(bg).toMatch(/linear-gradient\(#1F1F1F 0 0\) padding-box/);
   });
 
@@ -58,18 +54,8 @@ describe('VerdictCardShell — border-ring illumination only, no interior gradie
   });
 });
 
-/**
- * Regression for critique.md "Beautiful but wrong". §3.4's original sketch
- * lit the ring with `radial-gradient(240px circle at ${x}px ${y}px, accent,
- * #313131 60%, #272727 100%)` driven by pointer position. It was the most
- * elegant thing in the UI and it made the verdict colour a reward for
- * moving a mouse: measured on the live build, every shell — including the
- * WRONG_TARGET one — resolved to a plain grey ring while idle. §2.5 names
- * the border as one of the four places state lives, and §1.9's motion
- * budget exists to stop exactly this ("nothing animates unless something
- * happened"; a pointer drifting across a failing card is not the verdict
- * changing). The ring is now flat, always on, and hover is elevation only.
- */
+// Regression, critique.md "Beautiful but wrong": §3.4's pointer-driven `radial-gradient(240px
+// circle at ...)` left every shell grey at rest, but §2.5 says the border carries state.
 describe('VerdictCardShell — the ring is flat and always on (critique.md "Beautiful but wrong")', () => {
   it('paints the accent at rest, with no pointer interaction of any kind', () => {
     const { getByTestId } = render(

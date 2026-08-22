@@ -5,25 +5,13 @@ import { cn } from "@/lib/utils"
 export interface NoiseTextureProps extends ComponentProps<"svg"> {
   /** Extra classes merged onto the root `svg` element. */
   className?: string
-  /**
-   * `baseFrequency` for `feTurbulence`; higher values yield finer-grained noise.
-   * @default 0.4
-   */
+  /** `baseFrequency` for `feTurbulence`; higher values yield finer-grained noise. Default 0.4 */
   frequency?: number
-  /**
-   * `numOctaves` for `feTurbulence`; more octaves add detail at smaller scales.
-   * @default 6
-   */
+  /** `numOctaves` for `feTurbulence`; more octaves add detail at smaller scales. Default 6 */
   octaves?: number
-  /**
-   * Linear slope on each channel after desaturation; adjusts contrast of the noise.
-   * @default 0.15
-   */
+  /** Linear slope on each channel after desaturation; adjusts contrast of the noise. Default 0.15 */
   slope?: number
-  /**
-   * Opacity of the filled noise layer (`rect`).
-   * @default 0.6
-   */
+  /** Opacity of the filled noise layer (`rect`). Default 0.6 */
   noiseOpacity?: number
 }
 

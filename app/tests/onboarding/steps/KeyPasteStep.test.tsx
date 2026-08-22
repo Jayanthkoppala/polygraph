@@ -1,13 +1,5 @@
-/**
- * KeyPasteStep — the pasted API key must never be rederable anywhere in
- * this component's own DOM once a submit attempt has started (task-9-
- * brief.md's required test: "the API key is never rendered back after
- * submission — assert it does not appear in the DOM at any later step").
- * The component clears its local `apiKey` state synchronously, before
- * awaiting the network call, so this asserts on the DOM immediately after
- * the click as well as after the async result lands, both for the success
- * and the rejected paths.
- */
+/** task-9-brief.md: the pasted key must never be rendered back. State clears
+ * synchronously before the await, so both the sync and resolved DOM are asserted. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { KeyPasteStep } from '@/onboarding/steps/KeyPasteStep';
@@ -65,8 +57,7 @@ describe('KeyPasteStep — the key is never rendered back', () => {
     await waitFor(() => expect(onRejected).toHaveBeenCalledWith('401 Unauthorized'));
     expect(input.value).toBe('');
     expect(document.body.textContent).not.toContain(FAKE_KEY);
-    // The literal upstream message IS shown — never a generic "something
-    // went wrong" (ux-spec.md §6) — but the raw key itself never appears.
+    // Literal upstream message, never a generic "something went wrong" (ux-spec.md §6).
     expect(screen.getByRole('alert').textContent).toContain('401 Unauthorized');
   });
 

@@ -1,16 +1,5 @@
-/**
- * The refusal choreography's timing, asserted as data.
- *
- * ui-system.md §2.8 calls beat 4 "the single most important 300ms in the
- * product", and §2.6 explains that its 520ms head start is not polish but
- * argument: "Beat four is late on purpose. You read 'the target is wrong',
- * and only then 'and we will not repair it'. Firing them together makes the
- * refusal look like a system limitation." The critique that produced this
- * work found the slot firing ~40ms after the key swap — visually a much
- * snappier animation, and the wrong claim. Numbers that carry an argument
- * need a test, or the next person tightening the animation deletes the
- * argument without noticing.
- */
+/** ui-system.md §2.6/§2.8: beat 4's 520ms head start is the argument, not polish —
+ * firing it with the key swap (as a ~40ms regression did) reads as a system limit. */
 import { describe, expect, it } from 'vitest';
 import { REFUSAL_BEAT } from '@/lib/motion';
 

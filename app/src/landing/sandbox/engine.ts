@@ -1,37 +1,5 @@
-/**
- * SandboxEngine — the landing page's live demo fleet, per ux-spec.md §3 and
- * plan ruling R8. Runs entirely in the visitor's own browser tab: computes
- * real verdict transitions from the same fixture data the CLI's `polygraph
- * demo` uses (`fixtureData.ts`), and keeps a genuine SHA-256 hash chain
- * (`sha256.ts`) that `Verify chain` walks for real.
- *
- * WHY CLIENT-SIDE, NOT A BACKEND `/api/sandbox` ROUTE: ux-spec.md §3 describes
- * a server-hosted per-visitor tenant running the real `runner.ts` pipeline.
- * This task's file ownership is `app/src/landing/**` only — `src/**` (where
- * that route would live) is explicitly off limits, and no other task in the
- * plan owns it either (Task 4 is scheduler/serve/deploy, not a sandbox
- * endpoint; Task 10's "serve serves the built app + API + sandbox" is
- * integration wiring, not the sandbox logic itself). Rather than leave the
- * landing page's single most important surface unbuilt, this reimplements
- * the actual check outcomes (contract fill rates, coherence, identity
- * mismatch) that `src/checks/*` + `src/policy.ts` would produce for this
- * exact fixture data, client-side. It is a real, computed state machine —
- * every verdict, fill rate, and ledger hash below is derived from the mode,
- * never hardcoded per click — not a mocked animation. Flagged in the task
- * report for whoever wires the real hosted sandbox route in a later pass.
- *
- * PER-VISITOR STATE (R8): each `SandboxEngine` instance owns its own fleet
- * array and ledger array in its own closure — there is no module-level
- * mutable state anywhere in this file. Two instances (two browser tabs, or
- * two constructed here in a test) can never observe or mutate each other.
- * This is what makes the R8 concurrency requirement structural rather than
- * something that has to be carefully coordinated.
- *
- * `blocked` is EXCLUDED at the type level — `SandboxMode` has no `'blocked'`
- * member, so there is no method or code path that can produce it (per the
- * plan: "the local fixture can't emit a real Bright Data error_code... it
- * would teach a stranger something false").
- */
+// Client-side demo of the real runner pipeline (ux-spec.md §3): verdicts and
+// the SHA-256 chain are computed from the CLI fixture data, never hardcoded.
 import { sha256Hex } from './sha256';
 import {
   SANDBOX_COLLECTORS,
@@ -43,6 +11,8 @@ import {
 } from './fixtureData';
 import type { CollectorState, Evidence } from '@/lib/api';
 
+// No 'blocked' member on purpose: the local fixture can't emit a real Bright
+// Data error_code, so no code path is allowed to produce that verdict.
 export type SandboxMode = 'healthy' | 'price_dead' | 'wrong_entity';
 
 export const SANDBOX_MODES: SandboxMode[] = ['healthy', 'price_dead', 'wrong_entity'];
@@ -60,11 +30,8 @@ export interface SandboxLedgerRow {
   prevHash: string;
 }
 
-/**
- * The browser demo's equivalent of a downstream safe-output read. This is
- * deliberately a snapshot of the last RELEASE, not the latest run: a failed
- * run can change the verdict and ledger while leaving this object untouched.
- */
+/** A snapshot of the last RELEASE, not the latest run: a failed run changes
+ * the verdict and ledger while leaving this untouched. */
 export interface SandboxSafeOutputSnapshot {
   collectorId: string;
   rowCount: number;
@@ -91,15 +58,8 @@ function isSandboxMode(value: string): value is SandboxMode {
   return (SANDBOX_MODES as string[]).includes(value);
 }
 
-/**
- * The contract check's fill rates for ONE collector — over the fields that
- * collector's job actually extracts (`def.fields`), never a fixed
- * every-field list. This is what makes `store-pricing`/`store-stock`/
- * `store-listings` true statements rather than three labels on identical
- * work: killing the price field collapses a field `store-pricing` extracts
- * and `store-stock`/`store-listings` do not, so their passing is a
- * computed consequence of their job, not an assertion.
- */
+/** Fill rates over the fields THIS collector extracts (`def.fields`), never a
+ * fixed every-field list — that is what makes the three collector names true. */
 function fillRatesFor(def: SandboxCollectorDef, mode: SandboxMode): Record<string, number> {
   const rates: Record<string, number> = {};
   for (const field of def.fields) {
@@ -108,15 +68,8 @@ function fillRatesFor(def: SandboxCollectorDef, mode: SandboxMode): Record<strin
   return rates;
 }
 
-/**
- * What a chaos mode actually does to THIS collector. A dead price field is
- * only a failure for a collector whose job reads the price — for the other
- * two the page they scrape is unchanged, so the honest outcome is a real
- * pass. Without this, applying `price_dead` to `store-stock` would stamp a
- * FAILED_CONTRACT verdict on evidence that says every field it collects is
- * 100% filled, which is exactly the kind of lie this product exists to
- * catch.
- */
+/** A dead price field is only a failure for a collector whose job reads the
+ * price; for the others the page is unchanged, so an honest pass. */
 function effectiveMode(def: SandboxCollectorDef, mode: SandboxMode): SandboxMode {
   if (mode === 'price_dead' && !def.fields.includes('price')) return 'healthy';
   return mode;
@@ -188,19 +141,29 @@ function buildEvidence(def: SandboxCollectorDef, mode: SandboxMode): Evidence[] 
   return [contract, coherence, identity];
 }
 
+// Verdict, cause, action and reason all key off the same mode, so they read as
+// one row each rather than four parallel ternary chains.
+const OUTCOME = {
+  healthy: { verdict: 'PASS', cause: null, pureAction: 'RELEASE', actionReason: null },
+  price_dead: {
+    verdict: 'FAILED_CONTRACT',
+    cause: 'STRUCTURAL',
+    pureAction: 'REPAIR',
+    actionReason: 'price field collapsed to 0% fill — safe to repair automatically',
+  },
+  wrong_entity: {
+    verdict: 'FAILED_IDENTITY',
+    cause: 'IDENTITY',
+    pureAction: 'QUARANTINE',
+    actionReason: "returned a different product than requested — repair can't fix a wrong target, quarantining instead",
+  },
+} as const satisfies Record<SandboxMode, unknown>;
+
 function buildCollector(def: SandboxCollectorDef, requestedMode: SandboxMode, ts: string, ledgerId: number): CollectorState {
   const mode = effectiveMode(def, requestedMode);
   const rates = fillRatesFor(def, mode);
   const fillPct = fillPctFor(rates);
-  const verdict = mode === 'healthy' ? 'PASS' : mode === 'price_dead' ? 'FAILED_CONTRACT' : 'FAILED_IDENTITY';
-  const cause = mode === 'healthy' ? null : mode === 'price_dead' ? 'STRUCTURAL' : 'IDENTITY';
-  const pureAction = mode === 'healthy' ? 'RELEASE' : mode === 'price_dead' ? 'REPAIR' : 'QUARANTINE';
-  const actionReason =
-    mode === 'healthy'
-      ? null
-      : mode === 'price_dead'
-        ? 'price field collapsed to 0% fill — safe to repair automatically'
-        : "returned a different product than requested — repair can't fix a wrong target, quarantining instead";
+  const { verdict, cause, pureAction, actionReason } = OUTCOME[mode];
 
   return {
     id: def.id,
@@ -224,9 +187,8 @@ function buildCollector(def: SandboxCollectorDef, requestedMode: SandboxMode, ts
   };
 }
 
-/** 128-bit-ish opaque id, browser-random — matches ux-spec.md §3's "opaque,
- * 128-bit" `sandbox_id`, generated client-side since there is no backend
- * issuing one here (see the module doc above). */
+/** Opaque 128-bit `sandbox_id` (ux-spec.md §3), generated client-side because
+ * there is no backend issuing one. */
 function randomId(): string {
   const bytes = new Uint8Array(16);
   if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
@@ -239,35 +201,12 @@ function randomId(): string {
     .join('');
 }
 
+// Per-visitor by construction (R8): fleet and ledger live in instance state, so
+// two tabs or two test instances can never observe each other.
 export class SandboxEngine {
   readonly id: string;
-  /**
-   * THE ONE COLLECTOR THE BREAK BUTTONS ACT ON (ux-spec.md §3's interaction
-   * contract, which is written in the singular throughout: "Target card
-   * enters a re-verify skeleton", "Card resolves", and §0.2's "get it"
-   * moment is "a green card flips to red while the HTTP status stays 200").
-   *
-   * This used to apply the chaos mode to all three collectors at once, so a
-   * single click turned the whole panel red. Two things went wrong with
-   * that. Behaviourally, ux-spec.md §3 asks one card to re-verify while the
-   * rest hold still. Visually, it breaks ui-system.md §5.4 rule 8 ("one
-   * accent per screen ... when something breaks, the red or magenta has the
-   * screen to itself and therefore reads instantly") — three simultaneously
-   * red cards have nothing to be read against, and the flip reads as a page
-   * reload rather than as one collector being caught.
-   *
-   * Every collector still RE-RUNS on every action (all three append a
-   * ledger row, exactly as `polygraph run` over a fleet would), and the two
-   * untargeted collectors genuinely pass — their PASS rows are computed the
-   * same way the target's failure is, never asserted.
-   *
-   * It is `store-pricing` (the first collector) because wrong prices are
-   * the most obviously expensive thing to have quietly wrong in your
-   * database — the visitor does not need the failure explained to them.
-   * `effectiveMode` above independently guarantees the price break can only
-   * land on a collector whose job reads the price, so this ordering and the
-   * fixture agree by construction rather than by coincidence.
-   */
+  /** The single collector the break buttons act on (ux-spec.md §3, ui-system.md
+   * §5.4 rule 8): breaking all three at once reads as a page reload, not a catch. */
   readonly targetId: string = SANDBOX_COLLECTORS[0].id;
   private readonly genesisHash: string;
   private mode: SandboxMode = 'healthy';
@@ -276,24 +215,26 @@ export class SandboxEngine {
   private safeOutput: SandboxSafeOutputSnapshot;
   private actionsUsed = 0;
 
-  /** Seeded already-green, per ux-spec.md §3: "Seeded at creation: fleet of
-   * 3 collectors, mode healthy, one completed run already on the chain, so
-   * the panel is green and populated on first paint." `seedTs` defaults to
-   * "a few seconds ago" so the panel's own age readout ("last run 3s ago")
-   * is true on first paint, not "just now" for every visitor forever. */
+  /** Seeded already-green with one completed run (ux-spec.md §3). `seedTs`
+   * defaults to a few seconds ago so "last run 3s ago" is true on first paint. */
   constructor(seedTs: number = Date.now() - 3000) {
     this.id = randomId();
     this.genesisHash = sha256Hex(`polygraph:sandbox:v1:${this.id}`);
     const ts = new Date(seedTs).toISOString();
     this.fleet = SANDBOX_COLLECTORS.map((def, i) => buildCollector(def, 'healthy', ts, i + 1));
 
-    let prevHash = this.genesisHash;
+    this.appendFleetRows(ts);
+    this.safeOutput = this.createSafeOutput(ts, 1);
+  }
+
+  /** One ledger row per collector, chained onto the tip (genesis when empty). */
+  private appendFleetRows(ts: string): void {
+    let prevHash = this.ledger.length > 0 ? this.ledger[this.ledger.length - 1].eventHash : this.genesisHash;
     for (const c of this.fleet) {
       const row = this.hashRow(this.ledger.length + 1, ts, c.name, c.verdict!, c.cause, c.pureAction!, prevHash);
       this.ledger.push(row);
       prevHash = row.eventHash;
     }
-    this.safeOutput = this.createSafeOutput(ts, 1);
   }
 
   private createSafeOutput(releasedAt: string, releaseEventId: number): SandboxSafeOutputSnapshot {
@@ -302,9 +243,8 @@ export class SandboxEngine {
       rowCount: SANDBOX_ROWS,
       releasedAt,
       releaseEventId,
-      // This is a hash of the released fixture rows, so a healthy re-run of
-      // identical output advances the snapshot's provenance without claiming
-      // that the data itself changed.
+      // Hash of the released rows: a healthy re-run of identical output advances
+      // provenance without claiming the data changed.
       outputHash: sha256Hex(JSON.stringify(PRODUCTS)),
     };
   }
@@ -347,15 +287,8 @@ export class SandboxEngine {
     return this.actionsRemaining > 0;
   }
 
-  /**
-   * Applies a chaos mode to the TARGET collector's page and re-runs the
-   * whole fleet — mirrors `polygraph chaos <mode>` followed by a fleet run,
-   * where only the collector watching the broken page can fail. See
-   * `targetId` above for why this is one collector and not all three.
-   * Synchronous and real: every field on every returned `CollectorState` is
-   * computed from that collector's own mode, not looked up from a table of
-   * canned responses per button — including the two that pass.
-   */
+  /** Applies a chaos mode to the target collector and re-runs the whole fleet —
+   * every field on every returned collector is computed, including the passes. */
   applyMode(mode: SandboxMode): CollectorState[] {
     if (!isSandboxMode(mode)) throw new SandboxBlockedModeError();
     if (!this.canAct()) throw new SandboxLimitError();
@@ -368,12 +301,7 @@ export class SandboxEngine {
       buildCollector(def, def.id === this.targetId ? mode : 'healthy', ts, this.ledger.length + i + 1),
     );
 
-    let prevHash = this.ledger.length > 0 ? this.ledger[this.ledger.length - 1].eventHash : this.genesisHash;
-    for (const c of this.fleet) {
-      const row = this.hashRow(this.ledger.length + 1, ts, c.name, c.verdict!, c.cause, c.pureAction!, prevHash);
-      this.ledger.push(row);
-      prevHash = row.eventHash;
-    }
+    this.appendFleetRows(ts);
 
     const target = this.fleet.find((collector) => collector.id === this.targetId);
     if (target?.pureAction === 'RELEASE' && target.ledgerId !== null) {
@@ -383,19 +311,14 @@ export class SandboxEngine {
     return this.getFleet();
   }
 
-  /** Walks the chain from genesis and recomputes every hash — a real check,
-   * not a static "chain intact" string (ux-spec.md §1/§6). */
+  /** Recomputes every hash from genesis — a real check, not a static string. */
   verifyChain(): { ok: boolean; checked: number; reason?: string } {
     return walkChain(this.genesisHash, this.ledger);
   }
 }
 
-/**
- * The actual hash-chain walk, factored out as a standalone pure function so
- * it can be exercised directly against a hand-corrupted row list in tests
- * (proving `verifyChain` is a real recomputation, not a length/shape
- * check) without needing to reach into `SandboxEngine`'s private state.
- */
+/** Standalone so tests can walk a hand-corrupted row list without reaching into
+ * `SandboxEngine`s private state. */
 export function walkChain(genesisHash: string, rows: SandboxLedgerRow[]): { ok: boolean; checked: number; reason?: string } {
   let prev = genesisHash;
   for (let i = 0; i < rows.length; i++) {

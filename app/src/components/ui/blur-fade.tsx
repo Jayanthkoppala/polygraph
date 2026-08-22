@@ -45,12 +45,8 @@ export function BlurFade({
   ...props
 }: BlurFadeProps) {
   const ref = useRef(null)
-  // Environment guard, same convention as sections/ProofMoment.tsx and
-  // sections/FleetScale.tsx: motion's useInView constructs an
-  // IntersectionObserver unconditionally, which this repo's jsdom suite
-  // does not provide — treat everything as in view there. The condition is
-  // constant for the lifetime of the environment, so the hook call count
-  // never changes between renders.
+  // jsdom has no IntersectionObserver, which motion's useInView builds unconditionally,
+  // so treat everything as in view there. Constant per environment, so hook count is stable.
   const hasIO = typeof IntersectionObserver !== "undefined"
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const inViewResult = hasIO ? useInView(ref, { once: true, margin: inViewMargin }) : true

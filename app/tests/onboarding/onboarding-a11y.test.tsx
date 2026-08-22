@@ -1,9 +1,5 @@
-/**
- * Onboarding accessibility + keyboard contract (ux-spec.md §6, ui-system.md
- * §6.4). Everything here was found by auditing the funnel once it was
- * actually reachable in a browser — the whole surface had never been
- * rendered by a human, so none of it had been checked.
- */
+/** Onboarding a11y + keyboard contract (ux-spec.md §6, ui-system.md §6.4), all of it
+ * found by auditing the funnel the first time it was reachable in a browser. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { OnboardingWizard } from '@/onboarding/OnboardingWizard';
@@ -77,20 +73,15 @@ describe('the progress rail', () => {
   });
 
   it('is not dimmed to a disabled treatment just because its dots are not clickable', () => {
-    // ux-spec.md §6 makes the 3-dot rail persistent orientation chrome, and
-    // ui-system.md §5 forbids the blanket opacity disabled treatment where
-    // it costs contrast. `disableStepIndicators` used to also apply
-    // `opacity-40` to every indicator, ghosting the only wayfinding the
-    // funnel has. Removing a click affordance is not the same as disabling
-    // a control.
+    // The rail is persistent orientation chrome (ux-spec.md §6). `disableStepIndicators`
+    // used to also apply `opacity-40`, ghosting the funnel's only wayfinding.
     render(
       <ReactBitsStepper initialStep={1} disableStepIndicators>
         <Step>one</Step>
         <Step>two</Step>
       </ReactBitsStepper>,
     );
-    // Scoped to the rail itself — the Stepper's own footer Back button is a
-    // genuinely disabled control and is allowed its dimming.
+    // Scoped to the rail: the footer Back button is genuinely disabled and may dim.
     const rail = screen.getByRole('list', { name: /onboarding progress/i });
     expect(rail.innerHTML).not.toContain('opacity-40');
     expect(rail.innerHTML).toContain('pointer-events-none');
@@ -105,9 +96,8 @@ describe('keyboard', () => {
     const input = screen.getByTestId('api-key-input');
     fireEvent.change(input, { target: { value: 'brd_customer_hp_keyboard_only' } });
     await act(async () => {
-      // A real submit — the button is `type="submit"` inside the form, which
-      // is the only reason Enter works. It only stays true while the action
-      // lives inside the step's own <form>.
+      // Enter works only because the button is `type="submit"` inside the step's
+      // own <form>; move the action out and this breaks.
       fireEvent.submit(input.closest('form')!);
     });
 
@@ -168,8 +158,7 @@ describe('keyboard', () => {
 
 describe('failure copy never attributes our own outage to Bright Data', () => {
   it('a Polygraph-side error is reported as ours, not as a rejected key', async () => {
-    // Reproduces exactly what the running demo server does today: no
-    // `POST /api/settings/key` route at all, so the save 404s. The shipped
+    // The demo server has no `POST /api/settings/key`, so the save 404s — shipped
     // copy rendered that as "Bright Data rejected that key. Not Found".
     vi.mocked(api.saveApiKey).mockRejectedValue(new (await vi.importActual<typeof import('@/onboarding/api')>('@/onboarding/api')).ApiError('Not Found', 404));
     render(<OnboardingWizard initialStage="key-paste" />);

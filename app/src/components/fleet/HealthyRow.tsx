@@ -1,15 +1,7 @@
-/**
- * The collapsed healthy strip (ux-spec.md §4): "everything that's fine,
- * collapsed to a single quiet row of name chips with a green rule.
- * Expandable. Healthy collectors do not deserve equal pixels — that's the
- * calm." Renders nothing when there are no VERIFIED collectors — an empty
- * region is the wrong region (ui-system.md §5.4 rule 2).
- *
- * The green rule is a positioned bar element, not a `border-l-*` utility —
- * ui-system.md §1.2/B4 forbids single-sided borders anywhere in this
- * product; every other rule mark in the system (VerdictRail included) is
- * drawn the same way, as a small filled bar, never a CSS border.
- */
+// "Healthy collectors do not deserve equal pixels" (§4); renders nothing when empty.
+
+// The green rule is a bar element, never a `border-l-*` — single-sided borders are
+// forbidden product-wide (§1.2/B4).
 import { useState } from 'react';
 import { CaretDown } from '@phosphor-icons/react';
 import type { CollectorState } from '@/lib/api';

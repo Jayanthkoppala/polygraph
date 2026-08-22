@@ -1,7 +1,5 @@
-/**
- * LedgerStream — append-only rendering (ux-spec.md §5: "never animate a
- * re-sort or replay from index 0") and the real `Verify chain` action.
- */
+// Append-only rendering (ux-spec.md §5: "never animate a re-sort or replay from index 0")
+// and the real `Verify chain` action.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { LedgerStream, type LedgerRow } from '@/components/ledger/LedgerStream';
@@ -123,13 +121,8 @@ describe('LedgerStream — Verify chain runs the real check', () => {
     });
   });
 
-  /**
-   * A broken chain is the most serious thing this product can report, and a
-   * dropped request is the least. Neither may be mistaken for the other:
-   * the state is machine-readable (`data-verify-status`), the hue differs
-   * (failure red vs "needs you" amber), and the failed-request copy states
-   * outright that nothing was proved either way.
-   */
+  // A broken chain is the most serious thing this product reports; a dropped request the least.
+  // They must never read alike: distinct `data-verify-status`, distinct hue, distinct copy.
   it('never lets a failed request read as a broken chain, or the reverse', async () => {
     const { verifyLedgerChain } = await import('@/lib/api');
 

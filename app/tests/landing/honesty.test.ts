@@ -1,18 +1,5 @@
-/**
- * Static source scan over the landing surface's own copy — Task 10a's
- * honesty pass, kept as a running assertion rather than a one-time manual
- * check. This product's whole thesis is that impressive-looking output can
- * be silently wrong, so anything invented on our own marketing page is
- * self-refuting: no fabricated metrics, no fake logos, no testimonials, no
- * "trusted by", no uptime/accuracy number the code can't actually compute.
- *
- * Reads the real `.tsx` source files under `src/landing/**` (not a rendered
- * DOM — several sections only mount conditionally, e.g. `FleetScale`'s
- * WebGL branch) and asserts none of the banned patterns appear as literal
- * text content. A `// honesty:` comment explaining why a match is a false
- * positive is the only escape hatch, so a real new violation can't hide
- * behind an allowlist regex silently drifting.
- */
+/** Scans `src/landing/**` source, not a rendered DOM (some sections mount only
+ * conditionally), for fabricated proof. `// honesty:` is the only escape hatch. */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -21,8 +8,7 @@ import { describe, expect, it } from 'vitest';
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const LANDING_DIR = path.resolve(THIS_DIR, '../../src/landing'); // tests/ mirrors src/
 
-/** Node 20 (this project's runtime) has no `fs.globSync` (Node 22+ only) —
- * a plain recursive walk avoids adding a glob dependency for one test file. */
+/** Node 20 has no `fs.globSync` (22+ only); a walk avoids a glob dependency. */
 function landingFiles(dir: string = LANDING_DIR): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
@@ -62,11 +48,8 @@ describe('landing page honesty pass (Task 10a)', () => {
         const lines = source.split('\n');
         lines.forEach((line, i) => {
           const trimmed = line.trim();
-          // Skip comment lines (`//...`, `/**`, ` * ...`) — a doc comment
-          // that explains what NOT to build (as several of these files
-          // have, verbatim quoting ux-spec.md's own "no testimonials"
-          // rulings) is the honesty pass working, not violating it. Real
-          // JSX text content is what a reader actually sees.
+          // Skip comments: a doc comment quoting ux-spec.md's "no testimonials"
+          // ruling is the honesty pass working. Only JSX text reaches a reader.
           const isComment = trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*');
           if (!isComment && pattern.test(line) && !line.includes('honesty:')) {
             expect.fail(`${rel}:${i + 1} matches banned pattern ${pattern} (${why}):\n  ${line.trim()}`);
@@ -78,8 +61,7 @@ describe('landing page honesty pass (Task 10a)', () => {
 
   it('the sandbox is disclosed as client-side somewhere a reader actually sees it', () => {
     const sandboxPanel = readFileSync(path.join(LANDING_DIR, 'sandbox/SandboxPanel.tsx'), 'utf8');
-    // Must be real JSX text content, not just a code comment — a comment
-    // alone is exactly the gap Task 10a's brief called out.
+    // Must be real JSX text, not a code comment — the gap Task 10a called out.
     const jsxTextDisclosure = /<p[^>]*>\s*Runs entirely in your browser/;
     expect(sandboxPanel).toMatch(jsxTextDisclosure);
   });

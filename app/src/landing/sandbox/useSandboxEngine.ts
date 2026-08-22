@@ -1,19 +1,5 @@
-/**
- * useSandboxEngine — the React-facing wrapper around `SandboxEngine`.
- *
- * Owns the interaction contract from ux-spec.md §3:
- *   1. Click -> `breaking` (button disabled, ~600ms)
- *   2. -> `reverifying` (target cards show a skeleton) for a MINIMUM of
- *      1.6s even if the engine already has the answer — sub-second verdicts
- *      read as canned, so this hook, not the (synchronous, fast) engine, is
- *      what enforces the floor.
- *   3. -> `idle`, fleet/ledger updated in one frame, no staggered reveal.
- *
- * One `SandboxEngine` instance is created per hook instance (lazy
- * `useState` initializer, never re-created across re-renders) — this is
- * what makes "per visitor" trivially true for anything mounted from this
- * hook: two components using this hook never share an engine.
- */
+// React wrapper around `SandboxEngine`. Owns ux-spec.md §3s sequence: click ->
+// `breaking` (600ms) -> `reverifying` (min 1.6s, so verdicts never read canned).
 import { useCallback, useMemo, useState } from 'react';
 import { SandboxEngine, SandboxLimitError, type SandboxMode, type SandboxSafeOutputSnapshot } from './engine';
 import type { CollectorState } from '@/lib/api';
@@ -30,10 +16,8 @@ function wait(ms: number): Promise<void> {
 
 export interface UseSandboxEngineResult {
   fleet: CollectorState[];
-  /** The one collector the break buttons act on — see `SandboxEngine.targetId`.
-   * Exposed so the panel can skeleton exactly that card while the rest of the
-   * fleet holds still (ux-spec.md §3: "Target card enters a re-verify
-   * skeleton"), instead of erasing the whole grid on every click. */
+  /** The one collector the break buttons act on, so the panel can skeleton just
+   * that card while the rest of the fleet holds still. */
   targetId: string;
   mode: SandboxMode;
   phase: SandboxPhase;

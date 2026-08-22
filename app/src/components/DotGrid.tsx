@@ -3,7 +3,6 @@ import { useReducedMotion } from 'motion/react';
 import { gsap } from 'gsap';
 import { InertiaPlugin } from 'gsap/InertiaPlugin';
 import { hexToRgb } from '@/lib/color';
-import './DotGrid.css';
 
 gsap.registerPlugin(InertiaPlugin);
 
@@ -211,9 +210,9 @@ export function DotGrid({
   }, [maxSpeed, proximity, reducedMotion, resistance, returnDuration, shockRadius, shockStrength, speedTrigger]);
 
   return (
-    <div className={`dot-grid ${className}`} style={style} aria-hidden>
-      <div ref={wrapperRef} className="dot-grid__wrap">
-        <canvas ref={canvasRef} className="dot-grid__canvas" />
+    <div className={`flex h-full w-full items-center justify-center ${className}`} style={style} aria-hidden>
+      <div ref={wrapperRef} className="relative h-full w-full">
+        <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
       </div>
     </div>
   );

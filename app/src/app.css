@@ -1,21 +1,8 @@
-/**
- * Design tokens, verbatim from docs/design/ui-system.md §1 (Design tokens).
- * This file is the ONLY place colours, radii-inputs, elevation, and motion
- * curves are declared. Every value below is copied character-for-character
- * from the spec — do not "tune" anything here without updating the spec
- * first (see ui-system.md's own warning in §2.5 about drifting the palette).
- *
- * Type scale (§1.5) and spacing scale (§1.6) are deliberately NOT
- * redeclared here: both are Tailwind v4's own default scale steps
- * (text-xs..text-6xl, spacing 0.5..24), verified to match the spec's
- * tables exactly. The token smoke test (src/theme/tokens.smoke.test.ts)
- * asserts this rather than trusting it silently.
- */
+/* Design tokens, verbatim from docs/design/ui-system.md §1 — change the spec first.
+ * Type (§1.5) and spacing (§1.6) are omitted: Tailwind v4 defaults already match. */
 @import 'tailwindcss';
 
-/* ---------------------------------------------------------------------- */
-/* §1.1 Typeface — self-hosted, no CDN, works fully offline.              */
-/* ---------------------------------------------------------------------- */
+/* §1.1 Typeface — self-hosted, no CDN, works fully offline. */
 
 @font-face {
   font-family: 'Geist';
@@ -40,21 +27,15 @@ html {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ---------------------------------------------------------------------- */
-/* Page ground. Without this, `body` computes to browser-default          */
-/* transparent/white and any route that doesn't paint its own full-bleed  */
-/* background (onboarding, session-loading) shows a dark panel floating   */
-/* on a white page. One rule, future-proofs every route. */
-/* ---------------------------------------------------------------------- */
+/* Page ground: without it, routes that don't paint their own full-bleed
+ * background show a dark panel floating on browser-default white. */
 
 body {
   background-color: var(--color-void);
   color: #ededed;
 }
 
-/* ---------------------------------------------------------------------- */
-/* §1.2 Surfaces — flat backgrounds only, no gradients anywhere.          */
-/* ---------------------------------------------------------------------- */
+/* §1.2 Surfaces — flat backgrounds only, no gradients anywhere. */
 
 @theme {
   /* Neutral chrome — live, mutable */
@@ -68,10 +49,7 @@ body {
   --color-archive: #131209; /* ledger stream + evidence panel only */
 }
 
-/* ---------------------------------------------------------------------- */
-/* §1.4 The verdict palette — five states. Magenta is deliberately OFF    */
-/* the red ramp (§2.5) — never "tune" it toward red.                     */
-/* ---------------------------------------------------------------------- */
+/* §1.4 Verdict palette — magenta is deliberately OFF the red ramp (§2.5). */
 
 @theme {
   --color-verdict-pass: #4ade80; /* VERIFIED     */
@@ -81,10 +59,7 @@ body {
   --color-verdict-unchecked: #8b949e; /* NOT CHECKED  */
 }
 
-/* ---------------------------------------------------------------------- */
-/* §1.8 Elevation — border lightness + one inset hairline. No shadows     */
-/* come from a wash; flat backgrounds forbid that.                       */
-/* ---------------------------------------------------------------------- */
+/* §1.8 Elevation — border lightness plus one inset hairline, never a wash. */
 
 @theme {
   /* resting: no shadow at all, border does the work */
@@ -103,10 +78,7 @@ body {
   --shadow-e0: inset 0 -1px 0 0 rgb(255 255 255 / 0.04);
 }
 
-/* ---------------------------------------------------------------------- */
-/* §1.9 Motion — a custom curve everywhere. No ease, no ease-in-out, no   */
-/* linear except genuinely continuous loops.                             */
-/* ---------------------------------------------------------------------- */
+/* §1.9 Motion — custom curves only; linear is for continuous loops alone. */
 
 @theme {
   --ease-fluid: cubic-bezier(0.32, 0.72, 0, 1); /* default, from B7 */
@@ -120,11 +92,8 @@ body {
   --dur-reveal: 800ms; /* landing page scroll reveals, per B7 */
 }
 
-/* ---------------------------------------------------------------------- */
-/* §6.5 Motion accessibility floor — collapses every transition to a      */
-/* 120ms opacity/colour crossfade. Every state is geometry-distinct       */
-/* (rail form), so nothing becomes ambiguous when this fires.             */
-/* ---------------------------------------------------------------------- */
+/* §6.5 Motion floor — collapses transitions to 120ms; every state stays
+ * geometry-distinct, so nothing goes ambiguous when this fires. */
 
 @media (prefers-reduced-motion: reduce) {
   *,

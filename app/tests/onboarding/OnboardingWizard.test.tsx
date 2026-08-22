@@ -1,13 +1,5 @@
-/**
- * OnboardingWizard — end-to-end integration through the 403/collectors-
- * unavailable fallback path (task-9-brief.md's named test), starting from
- * `initialStage="key-paste"` (the stage a returning, authenticated-but-
- * keyless tenant would be routed to by Task 10 post-signup-redirect).
- * Re-asserts, across every subsequent screen, that the pasted key is never
- * in the DOM again — the strongest form of "not rendered back": not just
- * immediately after submit (KeyPasteStep.test.tsx covers that in
- * isolation) but at every later step of the whole flow.
- */
+/** End-to-end through the 403/collectors-unavailable fallback, asserting the pasted key
+ * never reappears at ANY later step (KeyPasteStep.test.tsx only covers submit-time). */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { OnboardingWizard } from '@/onboarding/OnboardingWizard';
@@ -92,19 +84,15 @@ describe('the verified-key path reaches ux-spec.md §6\'s payoff screen', () => 
       fireEvent.click(screen.getByTestId('connect-button'));
     });
 
-    // The reciprocity moment — "Instant reciprocity is the real antidote to
-    // paste anxiety". `KEY_VERIFIED` populates `candidates` in the same
-    // transition that sets `stage: 'collectors-found'`, so a wizard that
-    // branches on the candidate before the stage skips this screen
-    // entirely. It did, for every tenant whose key verified.
+    // `KEY_VERIFIED` sets `candidates` and `stage` in one transition, so a wizard
+    // branching on the candidate before the stage skips this screen. It did.
     const list = await screen.findByTestId('discovered-collectors');
     expect(within(list).getAllByText('amazon-prices').length).toBeGreaterThan(0);
     expect(within(list).getAllByText('shopify-skus').length).toBeGreaterThan(0);
     expect(screen.getByText(/found 2 collectors on the key ending 3f2a/i)).toBeInTheDocument();
     expect(screen.queryByTestId('canary-inputs')).not.toBeInTheDocument();
 
-    // ...and only then does the real connection call reach the honest
-    // awaiting-result handoff. No canary/identity/schema form appears.
+    // Only then does the connection call reach the awaiting-result handoff.
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /connect selected collector/i }));
     });

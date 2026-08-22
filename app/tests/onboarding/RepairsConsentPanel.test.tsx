@@ -1,14 +1,5 @@
-/**
- * RepairsConsentPanel — task-9-brief.md's required test: "the repairs
- * confirm dialog cannot be bypassed." Covers both postures:
- *   - `hostedHealAvailable=false` (today's real hosted-v2 default, R6):
- *     the switch is inert — clicking it does nothing, no dialog, no
- *     `onConfirmEnable` call, ever.
- *   - `hostedHealAvailable=true` (future-ready path): clicking the switch
- *     opens the dialog but does NOT enable repairs by itself — only the
- *     dialog's own "Turn on repairs" button does, and Cancel leaves
- *     repairs off with the dialog closed.
- */
+/** task-9-brief.md: "the repairs confirm dialog cannot be bypassed" — inert switch
+ * when hostedHealAvailable=false (R6), dialog-gated when true. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { RepairsConsentPanel } from '@/onboarding/RepairsConsentPanel';

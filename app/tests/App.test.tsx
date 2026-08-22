@@ -1,25 +1,16 @@
-/**
- * App / AppRoutes — Task 10a's routing wiring. `AppRoutes` (not `App`) is
- * mounted directly inside a `MemoryRouter` so each test can start at an
- * arbitrary path; `App` itself just adds the real `BrowserRouter`.
- */
+// `AppRoutes` (not `App`) mounts inside a `MemoryRouter` so each test can start at an arbitrary
+// path; `App` itself only adds the real `BrowserRouter`.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AppRoutes } from '@/App';
 import type { FleetState } from '@/lib/api';
 
-// The landing's shader is covered by its component/type checks. Route tests
-// exercise navigation in jsdom, which has neither a WebGL canvas nor a
-// ResizeObserver, so use a harmless background stand-in here.
+// jsdom has neither a WebGL canvas nor a ResizeObserver; the shader has its own tests.
 vi.mock('@/components/Dither', () => ({ default: () => <div data-testid="dither" /> }));
 
-// The landing page mounts `FleetScale`, whose own gates need
-// `IntersectionObserver` and `window.matchMedia` — jsdom has neither. This
-// suite is testing routing, not FleetScale's WebGL gating (that's
-// FleetScale.test.tsx's job), so a minimal no-op stand-in that lets the
-// component mount without crashing is enough; it always resolves to the
-// static, non-animating branch.
+// The landing mounts `FleetScale`, whose gates need IntersectionObserver — jsdom has none.
+// This no-op stand-in always resolves to the static branch; its gating is FleetScale.test.tsx's job.
 class NoopIntersectionObserver {
   observe() {}
   disconnect() {}
@@ -57,9 +48,8 @@ const EMPTY_FLEET: FleetState = {
   },
 };
 
-/** Routes a mocked `fetch` by pathname, matching every endpoint a routed
- * screen might call so a given test's target surface actually finishes
- * rendering instead of getting stuck on "loading…". */
+// Routes a mocked `fetch` by pathname. Must cover every endpoint the target screen calls,
+// or it never finishes rendering and stays stuck on "loading…".
 function mockApi(routes: Record<string, { status: number; body: unknown }>) {
   vi.stubGlobal(
     'fetch',
@@ -144,8 +134,7 @@ describe('AppRoutes', () => {
       </MemoryRouter>,
     );
     await waitFor(() => expect(screen.getByTestId('api-key-input')).toBeInTheDocument());
-    // The signup step's own fields must never appear — this is a resume,
-    // not a restart.
+    // The signup step's fields must never appear — this is a resume, not a restart.
     expect(screen.queryByLabelText(/fleet name/i)).not.toBeInTheDocument();
   });
 
@@ -232,8 +221,7 @@ describe('AppRoutes', () => {
       </MemoryRouter>,
     );
     await waitFor(() => expect(screen.getByTestId('session-unavailable')).toBeInTheDocument());
-    // The landing page's hero must NOT be what a transient blip shows an
-    // authenticated user mid-session.
+    // A transient blip must never drop an authenticated user onto the landing hero mid-session.
     expect(screen.queryByRole('heading', { name: /your scraper says 200 OK/i })).not.toBeInTheDocument();
   });
 
@@ -245,8 +233,7 @@ describe('AppRoutes', () => {
         const path = (typeof input === 'string' ? input : input.toString()).split('?')[0];
         if (path === '/api/settings/key/status') {
           attempt += 1;
-          // Both probes of the first mount fail (fetchSessionStatus retries
-          // once internally); everything after succeeds.
+          // Both probes of the first mount fail (fetchSessionStatus retries once internally).
           if (attempt <= 2) throw new TypeError('network error');
           return { ok: true, status: 200, statusText: 'OK', json: async () => ({ status: null }) };
         }

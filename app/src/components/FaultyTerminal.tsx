@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, type CSSProperties, type HTMLAttributes } from 'react';
 import { Color, Mesh, Program, Renderer, Triangle } from 'ogl';
 import { hexToRgb } from '@/lib/color';
-import './FaultyTerminal.css';
 
 const vertexShader = `
 attribute vec2 position;
@@ -236,11 +235,10 @@ export function FaultyTerminal({
     if (!container || typeof window.WebGLRenderingContext === 'undefined') return;
     const element = container;
 
-    // OGL assumes context creation succeeds and otherwise dereferences null
-    // inside Renderer. Create and verify one canvas first, then hand that same
-    // canvas to OGL so constrained/headless environments fall back quietly
-    // without spending a second WebGL context.
+    // OGL dereferences null inside Renderer if context creation fails, so verify one
+    // canvas first and hand OGL that same one — no second WebGL context spent.
     const canvas = document.createElement('canvas');
+    Object.assign(canvas.style, { position: 'absolute', inset: '0', width: '100%', height: '100%' });
     const availableContext = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
     if (!availableContext) return;
 
@@ -297,12 +295,8 @@ export function FaultyTerminal({
       rafRef.current = requestAnimationFrame(update);
       if (!visible || document.hidden) return;
       if (pageLoadAnimation && loadAnimationStartedAt === 0) loadAnimationStartedAt = timestamp;
-      if (!pause) {
-        frozenTime = timestamp * 0.001 * timeScale;
-        program.uniforms.iTime.value = frozenTime;
-      } else {
-        program.uniforms.iTime.value = frozenTime;
-      }
+      if (!pause) frozenTime = timestamp * 0.001 * timeScale;
+      program.uniforms.iTime.value = frozenTime;
       if (pageLoadAnimation) {
         program.uniforms.uPageLoadProgress.value = Math.min((timestamp - loadAnimationStartedAt) / 2000, 1);
       }
@@ -328,5 +322,5 @@ export function FaultyTerminal({
     };
   }, [brightness, chromaticAberration, curvature, digitSize, ditherValue, dpr, flickerAmount, glitchAmount, gridMul, handleMouseMove, mouseReact, mouseStrength, noiseAmp, pageLoadAnimation, pause, scale, scanlineIntensity, timeScale, tintVec]);
 
-  return <div ref={containerRef} className={`faulty-terminal-container ${className}`} style={style} {...rest} />;
+  return <div ref={containerRef} className={`h-full w-full overflow-hidden ${className}`} style={style} {...rest} />;
 }

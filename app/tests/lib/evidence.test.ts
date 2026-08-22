@@ -1,10 +1,5 @@
-/**
- * Evidence translation tests (ux-spec.md §5) — the module this task exists
- * for. Every check type, both pass and fail phrasing, asserted as the
- * COMPARISON sentence itself (never just "some text exists"), plus the
- * hard rule that raw metric identifiers never reach `sentence`/`detail`/
- * `label` for ANY line this module produces.
- */
+/** Evidence translation (ux-spec.md §5): every check type asserted as the COMPARISON
+ * sentence itself, plus the rule that raw metric identifiers never reach user text. */
 import { describe, expect, it } from 'vitest';
 import { translateEvidence, firstIdentityMismatch, type EvidenceLine } from '@/lib/evidence';
 import type { Evidence } from '@/lib/api';

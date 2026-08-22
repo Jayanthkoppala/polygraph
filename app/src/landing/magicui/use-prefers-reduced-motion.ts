@@ -1,11 +1,5 @@
-/**
- * Shared reduced-motion probe for the landing page's Magic UI components.
- *
- * Not `useReducedMotion` from `motion/react`: that hook reads
- * `window.matchMedia` unguarded, and this suite's jsdom environment has no
- * `matchMedia` (see FleetScale.test.tsx's stub, and the same guard inside
- * FleetScale itself). Missing API ⇒ "no preference", exactly like FleetScale.
- */
+// Not `useReducedMotion` from motion/react: that reads `window.matchMedia`
+// unguarded, and this suite jsdom has none. Missing API means "no preference".
 import { useEffect, useState } from 'react';
 
 export function usePrefersReducedMotion(): boolean {

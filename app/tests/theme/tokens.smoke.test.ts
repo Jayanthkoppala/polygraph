@@ -1,31 +1,5 @@
-/**
- * Token smoke test — proves every design token in src/app.css actually
- * resolves through the real Tailwind v4 build pipeline, the way a
- * component will really reference it, rather than just being present as
- * source text.
- *
- * How: compiles app.css with the real `@tailwindcss/postcss` plugin (the
- * same engine `@tailwindcss/vite` uses under the hood) against this
- * project's real content, scanned directly off disk. Tailwind v4
- * tree-shakes any `@theme` variable it never sees referenced in scanned
- * content, so this only stays green because real components reference
- * every token via the exact arbitrary-value syntax
- * (`bg-[var(--color-void)]`, `shadow-[var(--shadow-e2)]`, etc.) the
- * ui-system.md spec's own component snippets use.
- *
- * `token-usage.fixture.tsx` (Task 5's placeholder for tokens with no real
- * consumer yet) was deleted in Task 10a: by then every token this file
- * asserts on, including the two static-class spellings
- * (`text-[var(--color-verdict-pass)]`, `duration-[var(--dur-fast)]`) that
- * were still fixture-only when Task 7 wrote it, had a genuine occurrence
- * in the landing page and onboarding steps. Re-verified by running this
- * suite with the fixture already removed before deleting it for real.
- *
- * This is deliberately NOT a snapshot test: every assertion pins to a
- * literal value transcribed from docs/design/ui-system.md, so a value
- * drifting from the spec fails loudly with the expected/actual spec value
- * in the diff, not a silent snapshot update.
- */
+/** Compiles src/app.css through the real Tailwind v4 pipeline: v4 tree-shakes any `@theme`
+ * var no component references, so green proves real usage. Values pinned to ui-system.md. */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -33,19 +7,8 @@ import postcss from 'postcss';
 import tailwindcss from '@tailwindcss/postcss';
 import { describe, expect, it, beforeAll } from 'vitest';
 
-// Resolved relative to THIS FILE, not process.cwd() — cwd depends on where
-// `vitest` is invoked from (this project's own `app/` when run via `cd app
-// && npx vitest`, but the repo root when the full suite runs from there),
-// so a cwd-relative path breaks depending on the caller's working
-// directory. `new URL('@/app.css', import.meta.url)` looks like the
-// obvious fix but is NOT safe here: vitest runs this file through
-// vite-node, which resolves relative URLs against a virtual
-// `http://localhost:.../` module-graph base rather than the real
-// filesystem path, so that call silently produces an http: URL and
-// `fileURLToPath` throws "The URL must be of scheme file". Calling
-// `fileURLToPath(import.meta.url)` directly (no relative URL construction)
-// does return the real on-disk path correctly under vite-node, so this
-// resolves the directory with plain `path` calls instead.
+// File-relative, not cwd-relative (vitest may run from app/ or the repo root).
+// `new URL('...', import.meta.url)` breaks: vite-node bases it on an http: URL.
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_CSS = path.resolve(THIS_DIR, '../../src/app.css'); // tests/ mirrors src/
 
@@ -57,8 +20,7 @@ beforeAll(async () => {
   compiled = result.css;
 });
 
-/** Asserts an exact `--token: value;` custom-property declaration exists
- * in the compiled `:root` theme layer. */
+/** Asserts an exact `--token: value;` declaration in the compiled `:root` layer. */
 function expectToken(name: string, value: string) {
   expect(compiled).toContain(`${name}: ${value};`);
 }
@@ -71,8 +33,7 @@ describe('design tokens resolve through the real Tailwind v4 build (ui-system.md
     // Self-hosted: served from this app's own /fonts/, never a remote host.
     expect(compiled).toContain('/fonts/Geist-Variable.woff2');
     expect(compiled).toContain('/fonts/GeistMono-Variable.woff2');
-    // Tailwind's printer normalizes to single quotes; semantically identical
-    // to ui-system.md's `format("woff2-variations")`.
+    // Tailwind normalizes to single quotes; same as ui-system.md's double-quoted form.
     expect(compiled).toContain("format('woff2-variations')");
     expect(compiled).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com/);
     // font-weight range per the spec: sans up to 700 (900 never used), mono up to 600.
@@ -156,18 +117,8 @@ describe("Tailwind v4 default scale matches ui-system.md's tables (§1.5-§1.7) 
 
 describe("real usage compiles (the same arbitrary-value syntax ui-system.md's own snippets use)", () => {
   it('every surface, verdict, shadow, and motion token is reachable through a real Tailwind arbitrary-value class', () => {
-    // These are the CSS-escaped selectors Tailwind actually emits for an
-    // arbitrary-value class such as `bg-[var(--color-void)]` (which prints
-    // as `.bg-\[var\(--color-void\)\]`) — asserted as literal substrings
-    // rather than a constructed regex, since re-deriving the escaping
-    // rules here would just be re-testing Tailwind's printer instead of
-    // this project's tokens. NOTE: never write a shortened, truncated
-    // arbitrary-value example anywhere in this project (comments, strings,
-    // test names included) with a bracket-var pattern left incomplete —
-    // Tailwind's content scanner text-scans everything it can reach,
-    // tries to compile the truncated form literally, and emits a build
-    // warning for the malformed candidate. Always spell out a real,
-    // complete token name instead, as the list above does.
+    // Literal CSS-escaped selectors; a regex would just re-test Tailwind's printer.
+    // TRAP: a truncated arbitrary-value example anywhere (comments included) warns.
     for (const selector of [
       '.bg-\\[var\\(--color-void\\)\\]',
       '.text-\\[var\\(--color-verdict-pass\\)\\]',

@@ -1,9 +1,5 @@
-/**
- * EvidencePanel — the direct fix for "there is no reason on screen"
- * (ux-spec.md §5). Every check always renders including passes; raw metric
- * disclosure is collapsed by default; the refusal panel only appears for
- * WRONG_TARGET; the heal command is copyable.
- */
+// ux-spec.md §5: every check renders including passes, raw metrics collapse by default,
+// the refusal panel appears only for WRONG_TARGET, and the heal command is copyable.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { EvidencePanel } from '@/components/evidence/EvidencePanel';
@@ -183,10 +179,8 @@ describe('EvidencePanel — the refusal panel (ux-spec.md §6)', () => {
     const collector = baseCollector({
       verdict: 'FAILED_IDENTITY',
       cause: 'IDENTITY',
-      // policy.ts's REDISCOVER `actionReason` is the STRUCTURAL diagnosis
-      // ("selector likely broken") — it argues FOR repairability at the
-      // exact moment the panel is refusing to repair, so the panel must
-      // never surface it verbatim. Set here specifically to prove that.
+      // policy.ts's REDISCOVER `actionReason` argues FOR repairability at the exact moment the
+      // panel refuses to repair, so it must never be surfaced verbatim. Set here to prove that.
       actionReason: 'entity_key mismatch on 100% of comparable rows — selector likely broken',
     });
     render(<EvidencePanel collector={collector} />);
@@ -198,11 +192,8 @@ describe('EvidencePanel — the refusal panel (ux-spec.md §6)', () => {
     expect(panel).not.toHaveTextContent('selector likely broken');
   });
 
-  /**
-   * ux-spec.md §6 mandates THREE parts, always, in order. Part 3 — the one
-   * thing that can actually be done, plus the ledger citation — was missing
-   * entirely (docs/design/critique.md #2).
-   */
+  // ux-spec.md §6 mandates THREE parts, always, in order. Part 3 — the one thing that can be
+  // done, plus the ledger citation — was missing entirely (critique.md #2).
   it('renders part 3: a live re-discover action that says exactly what it does, plus the ledger citation', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { clipboard: { writeText } });
@@ -221,8 +212,7 @@ describe('EvidencePanel — the refusal panel (ux-spec.md §6)', () => {
     expect(action).toBeEnabled();
     expect(action).toHaveTextContent('Re-discover the target');
 
-    // 3b — it never implies Polygraph will re-point the collector itself,
-    // and the command it hands over is visible before it is pressed.
+    // 3b — never implies Polygraph re-points the collector, and shows the command before it's pressed.
     expect(panel).toHaveTextContent('polygraph run --collector shopify-skus');
     expect(panel).toHaveTextContent('Polygraph will not re-point a collector for you.');
 

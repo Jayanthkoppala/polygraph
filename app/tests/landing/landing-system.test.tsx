@@ -1,24 +1,5 @@
-/**
- * Landing-surface system regressions — the design-law properties that are
- * easy to re-break one section at a time, asserted once, centrally.
- *
- * Two kinds of test live here:
- *
- *   - SOURCE SCANS over `src/landing/**`, in the same style as
- *     `honesty.test.ts`. Section rhythm and token discipline are properties
- *     of every section, so scanning the files catches a new section that
- *     quietly reintroduces `py-16` or `--text-faint`, which a render test of
- *     one component never would.
- *   - RENDER tests for behaviour (the copy control's acknowledgement, the
- *     final CTA's destination).
- *
- * What is deliberately NOT here: the hero's two-line headline break. jsdom
- * performs no text layout, so a "does this wrap" assertion in this file
- * could only ever be a class-name tautology. That property was measured in
- * the built app in a real browser instead (see Hero.tsx's module doc for the
- * numbers); the class-shape test below is the tripwire for someone changing
- * those classes without re-measuring, not a proof of the layout.
- */
+/** Landing design-law regressions: source scans over src/landing/** catch a NEW
+ * section reintroducing `py-16` or `--text-faint`. No wrap assertions — jsdom has no layout. */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -40,14 +21,8 @@ function sourceFiles(dir: string): string[] {
   return out;
 }
 
-/**
- * `honesty.test.ts`'s convention, generalised: a doc comment quoting a rule
- * ("no `animate-pulse` here, because §1.9...") is the rule working, not
- * violating it — so comments are blanked out before scanning. Blanking
- * rather than dropping keeps line numbers honest in the failure message,
- * and covers JSX `{/* ... *\/}` blocks, which a per-line `startsWith` check
- * misses on every continuation line.
- */
+/** Comments are blanked (not dropped, so line numbers stay honest): a comment
+ * quoting a banned pattern is the rule working, not a violation. */
 function codeLines(file: string): { n: number; line: string }[] {
   const blanked = readFileSync(file, 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
@@ -65,17 +40,14 @@ describe('landing section rhythm (ui-system.md §1.6: "Section padding, landing 
         }
       }
     }
-    // Measured before this rule existed: sections alternated 96/64, 64/64
-    // and 96/96, so the page had no rhythm at all — it just looked
-    // unevenly spaced. 96px is the only value §1.6 allows here.
+    // Sections used to alternate 96/64, 64/64, 96/96 — no rhythm at all.
     expect(offenders).toEqual([]);
   });
 
   it('the hero is the one documented exception, and only on the edge that faces the nav', () => {
     const hero = readFileSync(path.join(SECTIONS_DIR, 'Hero.tsx'), 'utf8');
-    // `pt-4` is the hero's offset from the top nav — not a section-to-section
-    // boundary. The bottom edge, which IS a section boundary, stays on the
-    // 96px rhythm before the dedicated sandbox viewport.
+    // `pt-4` is the nav offset, not a section boundary; the bottom edge is one
+    // and stays on the 96px rhythm.
     expect(hero).toMatch(/pb-24 pt-4/);
   });
 });
@@ -113,11 +85,8 @@ describe('landing text tokens (ui-system.md §1.3: --text-faint is "Decoration o
         }
       }
     }
-    // The surviving case is HowItWorks' `$ ` shell prompt: a glyph with no
-    // recoverable meaning, which is the rail-hairline case §1.3 keeps the
-    // token for. Everything a reader has to READ — the hash prefix, the
-    // event count, the run age, the actions-left budget, the legal links,
-    // the skeleton's status line — is --text-muted (#9B9B9B, 5.93:1).
+    // Only survivor: HowItWorks' `$ ` shell prompt, a meaningless glyph.
+    // Anything a reader must READ uses --text-muted (#9B9B9B, 5.93:1).
     expect(offenders).toEqual([]);
   });
 });
@@ -132,10 +101,8 @@ describe('landing motion budget (ui-system.md §1.9: idle pulsing is banned outr
         }
       }
     }
-    // The "live" dot used to carry `motion-safe:animate-pulse` forever. A
-    // dot that throbs on a resting, healthy fleet teaches that green means
-    // "animating" rather than "verified" — §1.9: "A card sitting there being
-    // fine is not an event and gets none."
+    // The "live" dot used to pulse forever, teaching that green means
+    // "animating" rather than "verified".
     expect(offenders).toEqual([]);
   });
 });
@@ -147,10 +114,8 @@ describe('FinalCTA — the page\'s only conversion (ux-spec.md §1a, §3 handoff
     render(<FinalCTA />);
     const cta = screen.getByTestId('final-cta');
     expect(cta).toHaveAttribute('href', '/signup');
-    // ui-system.md §4.3's "identical to hero" is a visual instruction about
-    // the button; read literally it produced `href="#sandbox"`, which sent
-    // the last control on the page back to a demo the reader had already
-    // scrolled past, and the page converted nowhere.
+    // §4.3's "identical to hero" is visual only; read literally it produced
+    // `href="#sandbox"` and the page converted nowhere.
     expect(cta.getAttribute('href')).not.toMatch(/^#/);
   });
 });
@@ -179,9 +144,7 @@ describe('Hero — the copy control acknowledges the click (§1.9: a click IS an
   });
 
   it('writes the real command to the clipboard and says so, then reverts', async () => {
-    // The control moved with the self-host band: hero → FinalCTA.tsx's S5
-    // `RunItYourself` (positioning.md S1: "the self-host footnote + copy
-    // command (moves to S5)"). Same invariant, surviving control.
+    // Control moved hero → FinalCTA's S5 `RunItYourself` (positioning.md S1).
     vi.useFakeTimers();
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
@@ -198,9 +161,8 @@ describe('Hero — the copy control acknowledges the click (§1.9: a click IS an
     expect(button).toHaveAttribute('data-copied', 'true');
     expect(button).toHaveTextContent('copied');
 
-    // It reverts on its own — a control stuck in "copied" is as uninformative
-    // as one that never acknowledged at all. (act(): the revert is a state
-    // update fired from inside a faked timer callback, not an event.)
+    // Reverts on its own; a control stuck in "copied" says nothing. act() because
+    // the revert fires from a faked timer callback, not an event.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
@@ -209,10 +171,8 @@ describe('Hero — the copy control acknowledges the click (§1.9: a click IS an
   });
 
   it("the hero's secondary CTA anchors to the S5 band that actually exists", () => {
-    // `#run-it-yourself` is rendered by FinalCTA's RunItYourself section —
-    // built there specifically as this link's target. If either half is
-    // renamed alone, the hero's only self-host affordance silently 404s
-    // into a no-op scroll.
+    // FinalCTA renders `#run-it-yourself` solely as this link's target; rename
+    // either half alone and the hero's self-host affordance becomes a no-op scroll.
     render(<Hero />);
     const link = screen.getByRole('link', { name: /run it yourself, offline/i });
     expect(link).toHaveAttribute('href', '#run-it-yourself');

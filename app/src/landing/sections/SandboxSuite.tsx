@@ -29,42 +29,52 @@ function classifyMode(mode: UseSandboxEngineResult['mode']): SuiteState {
   return 'healthy';
 }
 
-function stateColor(state: SuiteState) {
-  if (state === 'wrong-target') return 'var(--color-verdict-target)';
-  if (state === 'wrong-shape') return 'var(--color-verdict-shape)';
-  return 'var(--color-verdict-pass)';
-}
-
-function shapeFact(state: SuiteState) {
-  return state === 'wrong-shape' ? 'FAIL' : 'PASS';
-}
-
-function identityFact(state: SuiteState) {
-  return state === 'wrong-target' ? 'FAIL' : 'PASS';
-}
-
-function decisionFact(state: SuiteState) {
-  if (state === 'wrong-shape') return 'Repair available';
-  if (state === 'wrong-target') return 'Quarantine run';
-  return 'Release';
-}
-
-function contractBaseline(state: SuiteState) {
-  return state === 'wrong-shape' ? 'FAIL' : 'PASS';
-}
-
-function keepVerifiedFeedLabel(state: SuiteState) {
-  return state === 'healthy' ? 'Advance safe output' : 'Keep verified feed';
-}
+// One row per suite state, so the three variants read as a table instead of
+// eight parallel ternary chains.
+const SUITE = {
+  healthy: {
+    color: 'var(--color-verdict-pass)',
+    shape: 'PASS',
+    shapeColor: 'var(--color-verdict-pass)',
+    identity: 'PASS',
+    identityColor: 'var(--color-verdict-pass)',
+    decision: 'Release',
+    consumer: 'Advance safe output',
+    contractBaseline: 'PASS',
+    consequence: 'healthy run → release → snapshot advanced',
+    headline: 'Green status. Healthy signal',
+    summary: 'Current run is healthy and can advance the safe output.',
+  },
+  'wrong-shape': {
+    color: 'var(--color-verdict-shape)',
+    shape: 'FAIL',
+    shapeColor: 'var(--color-verdict-shape)',
+    identity: 'PASS',
+    identityColor: 'var(--color-verdict-pass)',
+    decision: 'Repair available',
+    consumer: 'Keep verified feed',
+    contractBaseline: 'FAIL',
+    consequence: 'shape drift → repair requested → snapshot preserved',
+    headline: 'Green status. Shape drift, repair allowed',
+    summary: 'Current run is held while a repair is prepared; verified feed keeps serving.',
+  },
+  'wrong-target': {
+    color: 'var(--color-verdict-target)',
+    shape: 'PASS',
+    shapeColor: 'var(--color-verdict-pass)',
+    identity: 'FAIL',
+    identityColor: 'var(--color-verdict-target)',
+    decision: 'Quarantine run',
+    consumer: 'Keep verified feed',
+    contractBaseline: 'PASS',
+    consequence: 'wrong entity → quarantine → snapshot preserved',
+    headline: 'Green status. Wrong product.',
+    summary: 'Current run is blocked while verified feed keeps serving.',
+  },
+} as const satisfies Record<SuiteState, Record<string, string>>;
 
 function formatProduct(product: { sku: string; title: string } | null) {
   return product ? `${product.sku} — ${product.title}` : 'identity not available';
-}
-
-function parseRunConsequence(state: SuiteState) {
-  if (state === 'wrong-target') return 'wrong entity → quarantine → snapshot preserved';
-  if (state === 'wrong-shape') return 'shape drift → repair requested → snapshot preserved';
-  return 'healthy run → release → snapshot advanced';
 }
 
 function ProofFact({
@@ -92,21 +102,14 @@ function ProofFact({
 export function SandboxSuite({ sandbox }: { sandbox: UseSandboxEngineResult }) {
   const busy = sandbox.phase !== 'idle';
   const state = classifyMode(sandbox.mode);
+  const facts = SUITE[state];
   const target = sandbox.fleet.find((collector) => collector.id === sandbox.targetId);
   const targetDef = SANDBOX_COLLECTORS.find((def) => def.id === sandbox.targetId);
   const requestedProduct = targetDef ? probedProduct(targetDef) : null;
   const receivedProductValue = targetDef ? (state === 'wrong-target' ? receivedProduct(targetDef) : probedProduct(targetDef)) : null;
-  // The engine mutates its private chain before the hook publishes the
-  // resolved React snapshot. During the verification floor, keep the last
-  // published count so old verdict copy and a new ledger count never mix.
+  // The engine mutates its chain before the hook publishes the resolved snapshot,
+  // so hold the last count during the floor or old copy and a new count mix.
   const chain = busy ? { ok: true, checked: sandbox.ledgerCount } : sandbox.verifyChain();
-
-  const headline =
-    state === 'wrong-target'
-      ? 'Green status. Wrong product.'
-      : state === 'wrong-shape'
-        ? 'Green status. Shape drift, repair allowed'
-        : 'Green status. Healthy signal';
 
   function runProof() {
     if (busy || sandbox.limitReached) return;
@@ -167,26 +170,22 @@ export function SandboxSuite({ sandbox }: { sandbox: UseSandboxEngineResult }) {
             <span
               aria-live="polite"
               className="break-words font-mono text-xs text-[#9B9B9B] sm:text-right"
-              style={{ color: busy ? 'var(--color-verdict-suspect)' : stateColor(state) }}
+              style={{ color: busy ? 'var(--color-verdict-suspect)' : facts.color }}
             >
-              {busy ? 'checking' : headline}
+              {busy ? 'checking' : facts.headline}
             </span>
           </div>
 
           <div className="relative grid grid-cols-1 gap-4 p-4 sm:p-6 lg:grid-cols-[minmax(0,0.62fr)_minmax(0,1.38fr)] lg:p-8">
             <section aria-label="Judge action rail" className="overflow-hidden rounded-2xl border border-[#272727] bg-[#181818] p-4 lg:flex lg:flex-col lg:justify-center">
-              <h3 className="text-balance text-2xl font-semibold text-[#EDEDED]">{headline}</h3>
+              <h3 className="text-balance text-2xl font-semibold text-[#EDEDED]">{facts.headline}</h3>
               <p className="mt-2 text-pretty text-sm text-[#EDEDED]">
-                {state === 'wrong-target'
-                  ? 'Current run is blocked while verified feed keeps serving.'
-                  : state === 'wrong-shape'
-                    ? 'Current run is held while a repair is prepared; verified feed keeps serving.'
-                    : 'Current run is healthy and can advance the safe output.'}
+                {facts.summary}
               </p>
               <div className="mt-4 rounded-xl border border-[#272727] bg-[#1F1F1F] p-3 text-xs text-[#9B9B9B]">
                 <p className="font-mono text-xs uppercase tracking-wide text-[#EDEDED]">Proof counterfactual</p>
                 <p className="mt-2">
-                  HTTP 200 · <span className="font-mono">required fields present</span> · Contract baseline: {contractBaseline(state)}
+                  HTTP 200 · <span className="font-mono">required fields present</span> · Contract baseline: {facts.contractBaseline}
                 </p>
               </div>
               <button
@@ -267,20 +266,20 @@ export function SandboxSuite({ sandbox }: { sandbox: UseSandboxEngineResult }) {
                   <ProofFact label="HTTP status" value="HTTP 200" color="#8B949E" testId="proof-fact-http" />
                   <ProofFact
                     label="Shape"
-                    value={shapeFact(state)}
-                    color={state === 'wrong-shape' ? 'var(--color-verdict-shape)' : 'var(--color-verdict-pass)'}
+                    value={facts.shape}
+                    color={facts.shapeColor}
                     testId="proof-fact-shape"
                   />
                   <ProofFact
                     label="Identity"
-                    value={identityFact(state)}
-                    color={state === 'wrong-target' ? 'var(--color-verdict-target)' : 'var(--color-verdict-pass)'}
+                    value={facts.identity}
+                    color={facts.identityColor}
                     testId="proof-fact-identity"
                   />
-                  <ProofFact label="Decision" value={decisionFact(state)} color={stateColor(state)} testId="proof-fact-decision" />
+                  <ProofFact label="Decision" value={facts.decision} color={facts.color} testId="proof-fact-decision" />
                   <ProofFact
                     label="Consumer"
-                    value={keepVerifiedFeedLabel(state)}
+                    value={facts.consumer}
                     color="var(--color-verdict-pass)"
                     testId="proof-fact-consumer"
                   />
@@ -296,7 +295,7 @@ export function SandboxSuite({ sandbox }: { sandbox: UseSandboxEngineResult }) {
                   </dd>
                   <dt className="font-semibold text-[#EDEDED]">Ledger</dt>
                   <dd data-testid="proof-ledger-consequence" className="font-mono text-[#EDEDED]">
-                    {parseRunConsequence(state)}
+                    {facts.consequence}
                   </dd>
                   <dt className="font-semibold text-[#EDEDED]">Chain</dt>
                   <dd data-testid="proof-chain-state" className="font-mono tabular-nums text-[#EDEDED]">
