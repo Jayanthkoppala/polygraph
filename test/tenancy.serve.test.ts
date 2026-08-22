@@ -148,6 +148,24 @@ describe('tenancy/serve — auth required', () => {
     expect(res.status).toBe(401);
   });
 
+  it('allows twenty browser workspaces from one shared judge IP, then preserves the abuse floor', async () => {
+    for (let index = 0; index < 20; index += 1) {
+      const res = await fetch(`${base}/api/signup`, {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ fleet_name: `Judge workspace ${index + 1}` }),
+      });
+      expect(res.status).toBe(200);
+    }
+
+    const blocked = await fetch(`${base}/api/signup`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ fleet_name: 'Judge workspace 21' }),
+    });
+    expect(blocked.status).toBe(429);
+  });
+
   it('GET /api/ledger without a session cookie returns 401', async () => {
     const res = await fetch(`${base}/api/ledger`);
     expect(res.status).toBe(401);

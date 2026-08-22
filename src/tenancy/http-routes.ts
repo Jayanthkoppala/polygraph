@@ -68,7 +68,10 @@ import {
   resolveDeliveryTarget,
 } from './delivery.js';
 
-const SIGNUP_LIMIT_PER_HOUR = 3;
+// Hackathon reviewers may share one venue or VPN egress address. Twenty
+// still provides an abuse floor while allowing the expected ten visitors
+// to create or retry a browser-local workspace during judging.
+const SIGNUP_LIMIT_PER_HOUR = 20;
 const PROBE_LIMIT_PER_DAY = 10;
 const MAX_COLLECTORS_DEFAULT = 5;
 const MAX_CANARY_INPUTS = 5;
