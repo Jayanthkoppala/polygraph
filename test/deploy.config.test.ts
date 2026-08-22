@@ -26,8 +26,17 @@ describe('fly.toml', () => {
     expect(toml).toMatch(/auto_stop_machines\s*=\s*false\b/);
   });
 
-  it('never sets POLYGRAPH_HEAL_ENABLED (R6 — hosted heal is structurally off)', () => {
-    expect(toml).not.toMatch(/^\s*POLYGRAPH_HEAL_ENABLED\s*=/m);
+  it('enables healing only with the exact owned-fixture demo permit', () => {
+    expect(toml).toMatch(/^\s*POLYGRAPH_HEAL_ENABLED\s*=\s*"1"/m);
+    expect(toml).toMatch(/^\s*POLYGRAPH_DEMO_LIVE\s*=\s*"1"/m);
+    expect(toml).toMatch(/^\s*POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE\s*=\s*"1"/m);
+    expect(toml).toMatch(/^\s*POLYGRAPH_DEMO_FIXTURE_URL\s*=\s*"https:\/\/polygraph-version-shift-store\.vercel\.app"/m);
+    expect(toml).toMatch(/^\s*POLYGRAPH_DEMO_COLLECTOR_ID\s*=\s*"c_mt3kif5w1ds27lttug"/m);
+    expect(toml).toMatch(/^\s*POLYGRAPH_DEMO_MAX_MISSIONS\s*=\s*"2"/m);
+  });
+
+  it('keeps deployment secrets out of fly.toml', () => {
+    expect(toml).not.toMatch(/^\s*(POLYGRAPH_MASTER_KEY|BRIGHTDATA_API_KEY|POLYGRAPH_DEMO_GITHUB_TOKEN)\s*=/m);
   });
 
   it('forces HTTPS (the session cookie is Secure — it requires TLS on the very first request)', () => {
