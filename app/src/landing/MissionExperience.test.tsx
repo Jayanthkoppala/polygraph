@@ -1,94 +1,218 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { MissionEvent, MissionState } from './demoMissionApi';
 import { MissionExperience } from './MissionExperience';
+
+const missionApi = vi.hoisted(() => ({
+  createMission: vi.fn(),
+  getMission: vi.fn(),
+  shiftMission: vi.fn(),
+  resetMission: vi.fn(),
+}));
+
+vi.mock('./demoMissionApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./demoMissionApi')>()),
+  ...missionApi,
+}));
 
 vi.mock('@/components/Dither', () => ({ default: () => <div data-testid="dither" /> }));
 
-const mission = {
+const evidence: MissionState['evidence'] = {
+  fixtureRepo: 'https://github.com/Jayanthkoppala/polygraph-version-shift-store',
+  v1Url: 'https://github.com/example/fixture/blob/main/versions/v1.html',
+  v2Url: 'https://github.com/example/fixture/blob/main/versions/v2.html',
+  workflowUrl: 'https://github.com/example/fixture/actions/workflows/switch-version.yml',
+  liveFixtureUrl: 'https://fixture.example/',
+  collectorUrl: 'https://brightdata.example/collectors/c_demo',
+  collectorId: 'c_demo',
+  markerUrl: 'https://fixture.example/version.json?generation=2',
+  commitSha: null,
+  baselineRunId: 'job-a',
+  baselineRunUrl: 'https://brightdata.example/runs/job-a',
+  brokenRunId: null,
+  brokenRunUrl: null,
+  recoveryRunId: null,
+  recoveryRunUrl: null,
+  runId: 'job-a',
+  healRunId: null,
+  healRunUrl: null,
+};
+
+function event(step: string, detail: string, second: number): MissionEvent {
+  return { step, detail, at: `2026-08-22T09:00:${String(second).padStart(2, '0')}.000Z` };
+}
+
+const baselineEvents = [
+  event('dispatch_v1', 'Dispatched fixture workflow for V1 generation 1.', 1),
+  event('marker_v1', 'Live version.json confirmed V1 generation 1.', 2),
+  event('baseline_a', 'Bright Data A proved SKU SKU-ASTER-001 at 51.77 from live V1.', 3),
+];
+
+const baselineMission: MissionState = {
   id: 'mission-1',
   status: 'waiting',
   scene: 'v1_baseline',
-  events: [{ step: 'v1_baseline', detail: 'Baseline receipt saved.', at: '2026-08-22T09:00:00.000Z' }],
-  evidence: {
-    fixture_repo: 'https://github.com/Jayanthkoppala/polygraph-version-shift-store',
-    live_fixture_url: 'https://fixture.example/v1',
-    workflow_url: 'https://github.com/Jayanthkoppala/polygraph-version-shift-store/actions/runs/1',
-    collector_url: 'https://brightdata.example/collectors/c_demo',
-    collector_id: 'c_demo',
-    marker_url: 'https://fixture.example/version.json?generation=1',
-    baseline_run_id: 'job-a',
-    baseline_run_url: 'https://brightdata.example/runs/job-a',
-    broken_run_id: 'job-b',
-    broken_run_url: 'https://brightdata.example/runs/job-b',
-    recovery_run_id: 'job-c',
-    recovery_run_url: 'https://brightdata.example/runs/job-c',
-  },
+  steps: [],
+  events: baselineEvents,
+  evidence,
+  lastError: null,
 };
 
-function response(body: unknown, status = 200) {
-  return { ok: status >= 200 && status < 300, status, statusText: 'test', json: async () => body };
-}
+const deployMission: MissionState = {
+  ...baselineMission,
+  status: 'running',
+  scene: 'deploy_wait',
+  events: [...baselineEvents, event('dispatch_v2', 'Dispatched fixture workflow for V2 generation 2.', 4)],
+};
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+const brokenMission: MissionState = {
+  ...deployMission,
+  scene: 'broken_v2',
+  events: [...deployMission.events, event('marker_v2', 'Live version.json confirmed V2 generation 2.', 5)],
+};
 
-describe('MissionExperience', () => {
-  it('keeps all primary mission controls visible and advances only from API state', async () => {
-    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === '/api/demo/missions' && init?.method === 'POST') return response({ id: 'mission-1' });
-      if (url === '/api/demo/missions/mission-1') return response(mission);
-      if (url === '/api/demo/missions/mission-1/shift') return response({ ...mission, scene: 'broken_v2', events: [...mission.events, { step: 'v2_broken', detail: 'Candidate held.', at: '2026-08-22T09:01:00.000Z' }] });
-      if (url === '/api/demo/missions/mission-1/reset') return response({ ...mission, status: 'idle', scene: 'landing', events: [...mission.events, { step: 'reset_v1', detail: 'V1 reset confirmed.', at: '2026-08-22T09:02:00.000Z' }] });
-      return response({ error: 'not found' }, 404);
-    });
-    vi.stubGlobal('fetch', fetch);
+const healingMission: MissionState = {
+  ...brokenMission,
+  scene: 'self_healing',
+  evidence: { ...evidence, brokenRunId: 'job-b', brokenRunUrl: 'https://brightdata.example/runs/job-b' },
+  events: [
+    ...brokenMission.events,
+    event('difference', 'Bright Data B still identified SKU-ASTER-001, but price collapsed from 51.77 to the schema default 0.', 6),
+    event('incident_memory', 'Matched incident family selector_anchor_moved.', 7),
+    event('healing_prompt', 'Healing prompt prepared for the changed price selector.', 8),
+    event('heal_approved', 'The owned-fixture repair reached Bright Data approval.', 9),
+    event('heal_complete', 'Bright Data reported repair progress status completed.', 10),
+  ],
+};
+
+const recoveredMission: MissionState = {
+  ...healingMission,
+  status: 'healed',
+  scene: 'receipt',
+  evidence: {
+    ...healingMission.evidence,
+    recoveryRunId: 'job-c',
+    recoveryRunUrl: 'https://brightdata.example/runs/job-c',
+    healRunId: 'heal-1',
+    healRunUrl: 'https://brightdata.example/heals/heal-1',
+  },
+  events: [...healingMission.events, event('receipt', 'Bright Data C re-proved SKU SKU-ASTER-001 at 51.78 after the repair.', 11)],
+};
+
+const healedWithoutReceipt: MissionState = {
+  ...healingMission,
+  status: 'healed',
+  scene: 'receipt',
+  evidence: { ...healingMission.evidence, recoveryRunId: 'job-c' },
+};
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe('MissionExperience live mission story', () => {
+  it('keeps the cinematic landing and clearly identifies the mission-consuming action', () => {
     render(<MissionExperience />);
-    expect(screen.getByRole('button', { name: /run the live proof/i })).toBeVisible();
-    expect(screen.getByRole('button', { name: /shift to v2/i })).toBeVisible();
-    expect(screen.getByRole('button', { name: /reset v1/i })).toBeVisible();
+
+    expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Polygraph home' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /the scraper recovered/i })).toBeInTheDocument();
+    expect(screen.getByTestId('run-mission-btn')).toHaveTextContent(/start the live v1 → v2 proof/i);
+    expect(screen.getByText(/starting uses one approved demo mission/i)).toBeInTheDocument();
+    expect(screen.getByTestId('dither')).toBeInTheDocument();
+    expect(missionApi.createMission).not.toHaveBeenCalled();
+  });
+
+  it('renders the complete cinematic story from mission API state and real evidence fields', async () => {
+    missionApi.createMission.mockResolvedValue(baselineMission);
+    missionApi.getMission.mockResolvedValue(baselineMission);
+    missionApi.shiftMission.mockResolvedValue(deployMission);
+    missionApi.resetMission.mockResolvedValue({ ...recoveredMission, status: 'running', scene: 'landing' });
+    render(<MissionExperience />);
+
     fireEvent.click(screen.getByTestId('run-mission-btn'));
-    await waitFor(() => expect(screen.getByText(/baseline receipt saved/i)).toBeInTheDocument());
-    expect(fetch).toHaveBeenCalledWith('/api/demo/missions', expect.objectContaining({ method: 'POST' }));
-    expect(screen.getByRole('link', { name: /live version marker/i })).toHaveAttribute('href', mission.evidence.marker_url);
-    expect(screen.getByText(/collector c_demo/i)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /open job-a/i })).toHaveAttribute('href', mission.evidence.baseline_run_url);
+    expect(await screen.findByRole('heading', { name: /v1 is telling the truth/i })).toBeInTheDocument();
+    expect(missionApi.createMission).toHaveBeenCalledOnce();
+    expect(screen.getByText(/job-a/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/sku-aster-001/i).length).toBeGreaterThan(0);
+
     fireEvent.click(screen.getByTestId('shift-v2-btn'));
-    await waitFor(() => expect(screen.getByText(/candidate held/i)).toBeInTheDocument());
-    expect(fetch).toHaveBeenCalledWith('/api/demo/missions/mission-1/shift', expect.objectContaining({ method: 'POST' }));
+    expect(await screen.findByText(/deploying v2 from github/i)).toBeInTheDocument();
+    expect(missionApi.shiftMission).toHaveBeenCalledWith('mission-1');
+    expect(screen.getByTestId('continue-after-deploy')).toBeDisabled();
+
+    missionApi.getMission.mockResolvedValue(brokenMission);
+    await waitFor(() => expect(screen.getByTestId('continue-after-deploy')).toBeEnabled(), { timeout: 2_800 });
+    fireEvent.click(screen.getByTestId('continue-after-deploy'));
+    expect(await screen.findByRole('heading', { name: /existing collector is running/i })).toBeInTheDocument();
+
+    missionApi.getMission.mockResolvedValue(healingMission);
+    await waitFor(() => expect(screen.getByTestId('open-diagnosis')).toBeEnabled(), { timeout: 2_800 });
+    expect(screen.getByText(/price collapsed from 51.77/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('open-diagnosis'));
+    expect(await screen.findByRole('heading', { name: /separate what we saw/i })).toBeInTheDocument();
+    expect(screen.getByText(/matched incident family selector_anchor_moved/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('advance-to-healing'));
+
+    expect(await screen.findByRole('heading', { name: /recovery has one controlled object/i })).toBeInTheDocument();
+    expect(screen.getByText(/bright data reported repair progress status completed/i)).toBeInTheDocument();
+    expect(screen.getByTestId('verify-fresh-run')).toBeDisabled();
+
+    missionApi.getMission.mockResolvedValue(recoveredMission);
+    await waitFor(() => expect(screen.getByTestId('verify-fresh-run')).toBeEnabled(), { timeout: 2_800 });
+    fireEvent.click(screen.getByTestId('verify-fresh-run'));
+    expect(await screen.findByRole('heading', { name: /the loop closes with new evidence/i })).toBeInTheDocument();
+    expect(screen.getByText('RECOVERY VERIFIED')).toBeInTheDocument();
+    expect(screen.getAllByText(/job-c/i).length).toBeGreaterThan(0);
+    expect(screen.getByText('51.78')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /open recovery receipt/i }));
+    expect(await screen.findByRole('heading', { name: /same flow. server-recorded evidence/i })).toBeInTheDocument();
+    expect(screen.getByText(/11 mission events/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /collection a proof/i })).toHaveAttribute('href', evidence.baselineRunUrl);
+    expect(screen.getByRole('link', { name: /collection b proof/i })).toHaveAttribute('href', healingMission.evidence.brokenRunUrl);
+    expect(screen.getByRole('link', { name: /healing proof/i })).toHaveAttribute('href', recoveredMission.evidence.healRunUrl);
+    expect(screen.getByRole('link', { name: /collection c proof/i })).toHaveAttribute('href', recoveredMission.evidence.recoveryRunUrl);
+    expect(screen.queryByText(/sha256/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /back to recovered state/i }));
+    await screen.findByRole('heading', { name: /the loop closes with new evidence/i });
     fireEvent.click(screen.getByTestId('reset-v1-btn'));
-    await waitFor(() => expect(screen.getByText(/v1 reset confirmed/i)).toBeInTheDocument());
-    expect(screen.getByTestId('run-mission-btn')).toBeEnabled();
-  });
+    await waitFor(() => expect(missionApi.resetMission).toHaveBeenCalledWith('mission-1'));
+  }, 14_000);
 
-  it('holds both transition controls while a mission is still running', async () => {
-    const runningMission = { ...mission, status: 'running' };
-    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === '/api/demo/missions' && init?.method === 'POST') return response({ id: 'mission-1' });
-      if (url === '/api/demo/missions/mission-1') return response(runningMission);
-      return response({ error: 'not found' }, 404);
-    });
-    vi.stubGlobal('fetch', fetch);
+  it('keeps polling when healed status arrives before the receipt event', async () => {
+    missionApi.createMission.mockResolvedValue(baselineMission);
+    missionApi.getMission
+      .mockResolvedValueOnce(healedWithoutReceipt)
+      .mockResolvedValue(recoveredMission);
     render(<MissionExperience />);
+
     fireEvent.click(screen.getByTestId('run-mission-btn'));
-    await waitFor(() => expect(screen.getByText(/baseline receipt saved/i)).toBeInTheDocument());
-    expect(screen.getByTestId('shift-v2-btn')).toBeDisabled();
-    expect(screen.getByTestId('reset-v1-btn')).toBeDisabled();
+
+    await waitFor(() => expect(missionApi.getMission).toHaveBeenCalledTimes(2), { timeout: 2_800 });
   });
 
-  it('labels replay fallback rather than inventing a receipt when the API is unavailable', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => response({ error: 'down' }, 503)));
+  it('never invents a successful scene when the mission API rejects the start', async () => {
+    missionApi.createMission.mockRejectedValue(new Error('/api/demo/missions: 503 unavailable'));
     render(<MissionExperience />);
+
     fireEvent.click(screen.getByTestId('run-mission-btn'));
-    expect(await screen.findByTestId('mission-fallback')).toHaveTextContent(/replay fallback/i);
-    expect(screen.getByTestId('progress-tracker')).toHaveTextContent(/no event has arrived/i);
+    expect(await screen.findByTestId('mission-fallback')).toHaveTextContent(/could not start/i);
+    expect(screen.queryByText('RECOVERY VERIFIED')).not.toBeInTheDocument();
+    expect(missionApi.shiftMission).not.toHaveBeenCalled();
   });
 
-  it('routes customer collector connection into the signed-in onboarding flow', () => {
+  it('hands customer connection to the real signed-in onboarding routes', async () => {
     render(<MissionExperience />);
+
     fireEvent.click(screen.getByRole('button', { name: /connect my collectors/i }));
-    expect(screen.getByRole('heading', { name: /connect your collectors securely/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /connect bright data securely/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /start secure onboarding/i })).toHaveAttribute('href', '/signup');
     expect(screen.getByRole('link', { name: /^sign in$/i })).toHaveAttribute('href', '/login');
+    expect(screen.getByText(/customer repairs require approval/i)).toBeInTheDocument();
+    expect(missionApi.createMission).not.toHaveBeenCalled();
   });
 });

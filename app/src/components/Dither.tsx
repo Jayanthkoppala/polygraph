@@ -282,6 +282,16 @@ export interface DitherProps {
   waveColor?: [number, number, number];
 }
 
+function supportsWebGL() {
+  if (typeof window === 'undefined' || typeof document === 'undefined' || !window.WebGLRenderingContext) return false;
+  try {
+    const canvas = document.createElement('canvas');
+    return Boolean(canvas.getContext('webgl2') || canvas.getContext('webgl'));
+  } catch {
+    return false;
+  }
+}
+
 export default function Dither({
   waveSpeed = 0.05,
   waveFrequency = 3,
@@ -297,8 +307,11 @@ export default function Dither({
   // jsdom has no ResizeObserver/WebGL implementation. Keep route and
   // accessibility tests about the page shell rather than crashing in a
   // renderer the browser-only effect cannot use.
-  if (typeof window !== 'undefined' && typeof ResizeObserver === 'undefined') {
-    return <div className={className} aria-hidden="true" />;
+  if (
+    typeof window !== 'undefined' &&
+    (typeof ResizeObserver === 'undefined' || !supportsWebGL())
+  ) {
+    return <div className={className} aria-hidden="true" data-dither-fallback="true" />;
   }
   return (
     <div className={className}>

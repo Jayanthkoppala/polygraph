@@ -84,13 +84,17 @@ describe('landing viewport composition', () => {
   it('keeps the cinematic proof mission in the first desktop viewport', () => {
     const page = readFileSync(path.join(LANDING_DIR, 'LandingPage.tsx'), 'utf8');
     const mission = readFileSync(path.join(LANDING_DIR, 'MissionExperience.tsx'), 'utf8');
+    const missionCss = readFileSync(path.join(LANDING_DIR, 'MissionExperience.css'), 'utf8');
 
     expect(page).toMatch(/<MissionExperience/);
-    expect(mission).toMatch(/Run the live proof/);
-    expect(mission).toMatch(/Shift to V2/);
-    expect(mission).toMatch(/min-h-\[calc\(100svh-45px\)\]/);
+    expect(mission).toMatch(/Start the live V1 → V2 proof/);
+    expect(mission).toMatch(/Continue after V2 is observed/);
+    expect(missionCss).toMatch(/min-height: 100svh/);
     expect(mission).toMatch(/<Dither/);
-    expect(mission).toMatch(/Real server events only/);
+    expect(mission).toMatch(/LIVE BACKEND MISSION/);
+    expect(mission).toMatch(/createMission/);
+    expect(mission).not.toMatch(/LOCAL PRODUCT WALKTHROUGH/);
+    expect(missionCss).toMatch(/\.poly-floating-nav/);
   });
 });
 

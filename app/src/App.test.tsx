@@ -92,7 +92,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('heading', { name: /your scraper says it recovered/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /the scraper recovered/i })).toBeInTheDocument();
   });
 
   it('an unknown path redirects to the landing page, never a raw 404 shell', () => {
@@ -101,7 +101,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('heading', { name: /your scraper says it recovered/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /the scraper recovered/i })).toBeInTheDocument();
   });
 
   it('/legal/privacy renders a real privacy notice instead of redirecting to the landing page', () => {
@@ -132,7 +132,7 @@ describe('AppRoutes', () => {
       </MemoryRouter>,
     );
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: /your scraper says it recovered/i })).toBeInTheDocument(),
+      expect(screen.getByRole('heading', { name: /the scraper recovered/i })).toBeInTheDocument(),
     );
   });
 
