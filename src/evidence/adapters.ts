@@ -22,7 +22,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Adapter as AdapterKind, Collector } from '../core/config.js';
 import type { RunError, RunResult } from '../core/types.js';
-import { BrightDataClient, type PollOptions } from '../brightdata/client.js';
+import { BrightDataClient, type JobLog, type PollOptions } from '../brightdata/client.js';
 
 /** Turns fetched page content (markdown/html, per the unlocker/local
  * adapters) plus the input that produced it into one output row. Never
@@ -102,6 +102,48 @@ export function resolveInputUrl(collector: Collector, input: unknown): string {
   );
 }
 
+/**
+ * CRITICAL accounting gap (task review finding): Bright Data's docs say a
+ * batch job returns "one row per successful input by default" — a job can
+ * legitimately come back with FEWER rows than inputs requested, with no error
+ * surfaced at all (hp_errors can legitimately be [] for a regular
+ * /dca/trigger job — see `brightdataAdapter`). Nothing else in the pipeline
+ * notices that shortfall: checkContract's errorRowRate denominator is
+ * rows+errors (never inputs requested), checkCoherence's zeroRows only fires
+ * at exactly 0 rows, checkIdentity only iterates rows that came back. Left
+ * unchecked, a collector silently dropping a fraction of its inputs — while
+ * every row it DOES return is well-formed — reads as a clean PASS.
+ *
+ * So: if rows+errors don't add up to what was requested, or the job log's own
+ * success/fails counters don't agree with what we actually got back, return a
+ * synthetic `partial_failure` error (same pattern as
+ * `ambiguous_empty_dataset`) so it classifies as DATA -> SUSPECT/QUARANTINE
+ * rather than silently RELEASE. Returns undefined when everything reconciles.
+ */
+function reconcileRowCounts(
+  requested: number,
+  rowsReturned: number,
+  log: JobLog,
+  errorCount: number
+): RunError | undefined {
+  const accountedFor = rowsReturned + errorCount;
+  const reportedFails = typeof log.fails === 'number' ? log.fails : 0;
+  const reportedSuccess = typeof log.success === 'number' ? log.success : rowsReturned;
+
+  const shortfall = accountedFor < requested;
+  const successMismatch = reportedSuccess !== rowsReturned;
+  const failsUnaccountedFor = reportedFails > errorCount;
+  if (!shortfall && !successMismatch && !failsUnaccountedFor) return undefined;
+
+  return {
+    input: null,
+    error_code: 'partial_failure',
+    message:
+      `${requested} input(s) requested, ${rowsReturned} row(s) returned, ` +
+      `${reportedFails} fail(s) reported by jobLog (hp_errors accounted for ${errorCount})`,
+  };
+}
+
 /** collection_id/j_id -> Bright Data batch trigger + poll + jobLog + hpErrors,
  * merged into one RunResult. */
 export const brightdataAdapter: RunAdapter = {
@@ -147,41 +189,8 @@ export const brightdataAdapter: RunAdapter = {
           'expired/invalid snapshot; not treated as a silent empty success',
       });
     } else {
-      // CRITICAL accounting gap (task review finding): Bright Data's docs
-      // say a batch job returns "one row per successful input by
-      // default" — a job can legitimately come back with FEWER rows than
-      // inputs requested, with no error surfaced at all (hp_errors can
-      // legitimately be [] for a regular /dca/trigger job, per the note
-      // above). Nothing else in the pipeline notices that shortfall:
-      // checkContract's errorRowRate denominator is rows+errors (never
-      // inputs requested), checkCoherence's zeroRows only fires at
-      // exactly 0 rows, checkIdentity only iterates rows that came back.
-      // Left unchecked, a collector silently dropping a fraction of its
-      // inputs — while every row it DOES return is well-formed — reads
-      // as a clean PASS. Reconcile before returning: if rows+errors don't
-      // add up to what was requested, or the job log's own success/fails
-      // counters don't agree with what we actually got back, synthesize
-      // a `partial_failure` error (same pattern as `ambiguous_empty_dataset`
-      // above) so it classifies as DATA -> SUSPECT/QUARANTINE rather than
-      // silently RELEASE.
-      const requested = inputs.length;
-      const accountedFor = dataset.rows.length + errors.length;
-      const reportedFails = typeof log.fails === 'number' ? log.fails : 0;
-      const reportedSuccess = typeof log.success === 'number' ? log.success : dataset.rows.length;
-
-      const shortfall = accountedFor < requested;
-      const successMismatch = reportedSuccess !== dataset.rows.length;
-      const failsUnaccountedFor = reportedFails > errors.length;
-
-      if (shortfall || successMismatch || failsUnaccountedFor) {
-        errors.push({
-          input: null,
-          error_code: 'partial_failure',
-          message:
-            `${requested} input(s) requested, ${dataset.rows.length} row(s) returned, ` +
-            `${reportedFails} fail(s) reported by jobLog (hp_errors accounted for ${errors.length})`,
-        });
-      }
+      const partialFailure = reconcileRowCounts(inputs.length, dataset.rows.length, log, errors.length);
+      if (partialFailure) errors.push(partialFailure);
     }
 
     return {
@@ -200,33 +209,52 @@ export const brightdataAdapter: RunAdapter = {
   },
 };
 
+/**
+ * The shared body of the two extractor-driven adapters (`unlocker` and
+ * `local`): resolve each input to a URL, fetch its page content via
+ * `fetchContent`, and run the collector's registered extractor over it.
+ * Every per-input failure — URL resolution, the fetch itself, the extractor
+ * throwing — is recorded as one `RunError` under `errorCode` and the loop
+ * continues, so one bad input never costs the rest of the batch.
+ */
+async function runViaExtractor(
+  collector: Collector,
+  inputs: unknown[],
+  ctx: AdapterContext,
+  adapterName: string,
+  errorCode: string,
+  fetchContent: (url: string) => Promise<string>
+): Promise<RunResult> {
+  const extractor = requireExtractor(ctx, collector, adapterName);
+
+  const rows: Record<string, unknown>[] = [];
+  const errors: RunError[] = [];
+
+  for (const input of inputs) {
+    try {
+      const content = await fetchContent(resolveInputUrl(collector, input));
+      rows.push({ ...extractor(content, input), input });
+    } catch (err) {
+      errors.push({ input, error_code: errorCode, message: (err as Error).message });
+    }
+  }
+
+  return {
+    collector: collector.id,
+    run_id: generateRunId(),
+    rows,
+    errors: errors.length > 0 ? errors : undefined,
+  };
+}
+
 /** Fetches each input's URL through the Web Unlocker API, then runs the
  * collector's registered extractor over the fetched content. */
 export const unlockerAdapter: RunAdapter = {
   async run(collector, inputs, ctx) {
     const client = requireClient(ctx, 'unlocker');
-    const extractor = requireExtractor(ctx, collector, 'unlocker');
-
-    const rows: Record<string, unknown>[] = [];
-    const errors: RunError[] = [];
-
-    for (const input of inputs) {
-      try {
-        const url = resolveInputUrl(collector, input);
-        const content = await client.scrapeUnlocker(url);
-        const row = extractor(content, input);
-        rows.push({ ...row, input });
-      } catch (err) {
-        errors.push({ input, error_code: 'unlocker_fetch_failed', message: (err as Error).message });
-      }
-    }
-
-    return {
-      collector: collector.id,
-      run_id: generateRunId(),
-      rows,
-      errors: errors.length > 0 ? errors : undefined,
-    };
+    return runViaExtractor(collector, inputs, ctx, 'unlocker', 'unlocker_fetch_failed', (url) =>
+      client.scrapeUnlocker(url)
+    );
   },
 };
 
@@ -234,34 +262,14 @@ export const unlockerAdapter: RunAdapter = {
  * proxy) — for localhost fixtures in tests/demos. */
 export const localAdapter: RunAdapter = {
   async run(collector, inputs, ctx) {
-    const extractor = requireExtractor(ctx, collector, 'local');
     const fetchImpl = ctx.fetchImpl ?? fetch;
-
-    const rows: Record<string, unknown>[] = [];
-    const errors: RunError[] = [];
-
-    for (const input of inputs) {
-      try {
-        const url = resolveInputUrl(collector, input);
-        const res = await fetchImpl(url);
-        if (!res.ok) {
-          errors.push({ input, error_code: 'local_fetch_failed', message: `HTTP ${res.status}` });
-          continue;
-        }
-        const content = await res.text();
-        const row = extractor(content, input);
-        rows.push({ ...row, input });
-      } catch (err) {
-        errors.push({ input, error_code: 'local_fetch_failed', message: (err as Error).message });
-      }
-    }
-
-    return {
-      collector: collector.id,
-      run_id: generateRunId(),
-      rows,
-      errors: errors.length > 0 ? errors : undefined,
-    };
+    return runViaExtractor(collector, inputs, ctx, 'local', 'local_fetch_failed', async (url) => {
+      const res = await fetchImpl(url);
+      // A non-2xx is reported exactly as a thrown fetch would be: one
+      // `local_fetch_failed` RunError carrying "HTTP <status>".
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.text();
+    });
   },
 };
 

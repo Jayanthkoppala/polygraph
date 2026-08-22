@@ -125,6 +125,14 @@ function nowIso(ctx: RunnerContext): string {
   return ctx.now ? ctx.now() : new Date().toISOString();
 }
 
+/** The message a caught failure contributes to an evidence `detail`. An
+ * adapter error is the adapter's own Error#message; brightdata.ts never
+ * puts the API key into one (see its own "never logged" contract), so
+ * nothing here needs additional redaction. */
+function errorMessage(err: unknown): string {
+  return (err as Error).message ?? String(err);
+}
+
 /** Builds a RerunFn for the canary check by replaying a single input
  * through the same adapter this collector already runs on — no separate
  * per-collector "rerun" wiring needed, since a canary rerun IS just a
@@ -221,6 +229,80 @@ export interface EvaluateRunResultOptions {
   runCanary: boolean;
 }
 
+/** Combines a graded run's own error codes with what the structural and
+ * identity checks found into the single cause `decide()` acts on.
+ *
+ * NOTE: `evidence` here only ever holds contract, coherence (or their
+ * "skipped"/"not applicable" stand-ins), and identity (ditto) — canary is
+ * appended by the caller AFTER this runs, and peer isn't produced by this
+ * module at all. So identityFailed/structuralFailed/anySkipped are jointly
+ * exhaustive over every non-ok evidence entry that can exist here: there is
+ * no third "any other failed" case to layer in. (If a future evidence
+ * source is added before this call, revisit this.) */
+function deriveCause(result: RunResult, evidence: Evidence[]): Cause {
+  // Cause, step 1: worst cause implied by this run's own error codes.
+  const errorCauses = (result.errors ?? []).map((e) => causeForErrorCode(e.error_code));
+  let cause = worstCause(errorCauses);
+
+  // Cause, step 1b (task review CRITICAL finding): a run can carry
+  // meta.fails > 0 without that ever having been captured as a
+  // RunResult.errors entry (e.g. an adapter that populates meta straight
+  // from a job log but doesn't itself reconcile fails against hp_errors).
+  // meta.fails is otherwise write-only — nothing reads it — so a
+  // known-partial run could reach PASS purely because nothing downstream
+  // ever looked at this field. worstCause only ever raises `cause`, never
+  // lowers it, so this can't undo a stronger signal already found above.
+  if (typeof result.meta?.fails === 'number' && result.meta.fails > 0) {
+    cause = worstCause([cause, 'DATA']);
+  }
+
+  // Cause, step 2: layer in what the structural/identity checks themselves
+  // found, even when no error_code explains it (e.g. a 200 response with a
+  // silently-defaulted field — no error at all, just a collapsed contract).
+  // A `skippedEvidence` row (registration gap, not a genuine check failure)
+  // is deliberately excluded from both of these — it must never itself
+  // manufacture an IDENTITY or STRUCTURAL cause (and, downstream, a REPAIR
+  // action policy.ts has no real HealProof for); it's handled separately by
+  // `anySkipped` below instead. See this function's docstring for why these
+  // three are jointly exhaustive over the evidence that can exist here.
+  const identityFailed = evidence.some((e) => e.check === 'identity' && !e.ok && !isSkippedEvidence(e));
+  const structuralFailed = evidence.some(
+    (e) => (e.check === 'contract' || e.check === 'coherence') && !e.ok && !isSkippedEvidence(e)
+  );
+  const anySkipped = evidence.some(isSkippedEvidence);
+
+  if (identityFailed) {
+    cause = worstCause([cause, 'IDENTITY']);
+  } else if (structuralFailed && cause !== 'BLOCKED') {
+    // Critical review finding: classifier-derived BLOCKED (an anti-bot
+    // block or a compliance-restricted target) is authoritative and must
+    // survive this escalation. contract.ts fails on ANY error row, so a
+    // blocked run's own error_code always trips checkContract — without
+    // this guard, that structural-looking symptom would silently overwrite
+    // a BLOCKED cause with STRUCTURAL and make an anti-bot block
+    // REPAIR-eligible (a live, paid refactor_template against a collector
+    // whose only real problem is a block, once heal is enabled). A BLOCKED
+    // cause reached here always came from causeForErrorCode reading a real
+    // error_code — never from these checks — so there is nothing structural
+    // being suppressed, only a duplicate symptom of the same block.
+    cause = worstCause([cause, 'STRUCTURAL']);
+  }
+  if (anySkipped) {
+    // A registration gap means nothing was actually verified — never let
+    // that render as cause NONE / verdict PASS / action RELEASE (the exact
+    // failure mode a critical review finding caught: an unregistered
+    // collector reporting a clean pass with nothing checked). DATA is the
+    // right severity: it's an unverifiable run, not a confirmed structural
+    // or identity failure, so it QUARANTINEs for a human rather than ever
+    // being REPAIR-eligible. worstCause only ever raises `cause`, so this
+    // never downgrades a stronger IDENTITY/STRUCTURAL/BLOCKED signal found
+    // above.
+    cause = worstCause([cause, 'DATA']);
+  }
+
+  return cause;
+}
+
 /** Grades an already-delivered result through the same contract,
  * coherence, identity, and cause pipeline as an adapter-driven run. This
  * is the seam used by Bright Data webhook delivery: receiving a scheduled
@@ -231,7 +313,6 @@ export async function evaluateRunResult(
   ctx: RunnerContext,
   options: EvaluateRunResultOptions
 ): Promise<{ result: RunResult; evidence: Evidence[]; cause: Cause }> {
-
   const evidence: Evidence[] = [];
   const registryEntry = COLLECTOR_REGISTRY[collector.name];
   const schema = ctx.schemas?.[collector.id] ?? registryEntry?.schema;
@@ -274,71 +355,7 @@ export async function evaluateRunResult(
     );
   }
 
-  // Cause, step 1: worst cause implied by this run's own error codes.
-  const errorCauses = (result.errors ?? []).map((e) => causeForErrorCode(e.error_code));
-  let cause = worstCause(errorCauses);
-
-  // Cause, step 1b (task review CRITICAL finding): a run can carry
-  // meta.fails > 0 without that ever having been captured as a
-  // RunResult.errors entry (e.g. an adapter that populates meta straight
-  // from a job log but doesn't itself reconcile fails against hp_errors).
-  // meta.fails is otherwise write-only — nothing reads it — so a
-  // known-partial run could reach PASS purely because nothing downstream
-  // ever looked at this field. worstCause only ever raises `cause`, never
-  // lowers it, so this can't undo a stronger signal already found above.
-  if (typeof result.meta?.fails === 'number' && result.meta.fails > 0) {
-    cause = worstCause([cause, 'DATA']);
-  }
-
-  // Cause, step 2: layer in what the structural/identity checks themselves
-  // found, even when no error_code explains it (e.g. a 200 response with a
-  // silently-defaulted field — no error at all, just a collapsed contract).
-  // A `skippedEvidence` row (registration gap, not a genuine check failure)
-  // is deliberately excluded from both of these — it must never itself
-  // manufacture an IDENTITY or STRUCTURAL cause (and, downstream, a REPAIR
-  // action policy.ts has no real HealProof for); it's handled separately by
-  // `anySkipped` below instead. NOTE: at this point `evidence` only ever
-  // holds contract, coherence (or their "skipped"/"not applicable"
-  // stand-ins), and identity (ditto) — canary is appended below, AFTER
-  // cause is decided, and peer isn't produced by this module at all. So
-  // identityFailed/structuralFailed/anySkipped are jointly exhaustive over
-  // every non-ok evidence entry that can exist here: there is no third "any
-  // other failed" case to layer in. (If a future evidence source is added
-  // above this point, revisit this.)
-  const identityFailed = evidence.some((e) => e.check === 'identity' && !e.ok && !isSkippedEvidence(e));
-  const structuralFailed = evidence.some(
-    (e) => (e.check === 'contract' || e.check === 'coherence') && !e.ok && !isSkippedEvidence(e)
-  );
-  const anySkipped = evidence.some(isSkippedEvidence);
-
-  if (identityFailed) {
-    cause = worstCause([cause, 'IDENTITY']);
-  } else if (structuralFailed && cause !== 'BLOCKED') {
-    // Critical review finding: classifier-derived BLOCKED (an anti-bot
-    // block or a compliance-restricted target) is authoritative and must
-    // survive this escalation. contract.ts fails on ANY error row, so a
-    // blocked run's own error_code always trips checkContract — without
-    // this guard, that structural-looking symptom would silently overwrite
-    // a BLOCKED cause with STRUCTURAL and make an anti-bot block
-    // REPAIR-eligible (a live, paid refactor_template against a collector
-    // whose only real problem is a block, once heal is enabled). A BLOCKED
-    // cause reached here always came from causeForErrorCode reading a real
-    // error_code — never from these checks — so there is nothing structural
-    // being suppressed, only a duplicate symptom of the same block.
-    cause = worstCause([cause, 'STRUCTURAL']);
-  }
-  if (anySkipped) {
-    // A registration gap means nothing was actually verified — never let
-    // that render as cause NONE / verdict PASS / action RELEASE (the exact
-    // failure mode a critical review finding caught: an unregistered
-    // collector reporting a clean pass with nothing checked). DATA is the
-    // right severity: it's an unverifiable run, not a confirmed structural
-    // or identity failure, so it QUARANTINEs for a human rather than ever
-    // being REPAIR-eligible. worstCause only ever raises `cause`, so this
-    // never downgrades a stronger IDENTITY/STRUCTURAL/BLOCKED signal found
-    // above.
-    cause = worstCause([cause, 'DATA']);
-  }
+  const cause = deriveCause(result, evidence);
 
   // STRUCTURAL is the only cause decideStructural can turn into REPAIR, and
   // only with a failed canary confirmation alongside the failed structural
@@ -355,6 +372,144 @@ export async function evaluateRunResult(
   return { result, evidence, cause };
 }
 
+/** What one collector's pass decided, in the shape the ledger, the
+ * notifier, and the run summary all read. */
+interface DecisionOutcome {
+  verdict: ReasonCode;
+  cause: Cause;
+  action: Action['type'];
+  evidence: Evidence[];
+}
+
+interface HealResolution {
+  healOutcome?: HealStatus | 'failed';
+  suggestedHealCommand?: string;
+}
+
+/**
+ * Appends this pass's decision to the ledger and returns the outcome as it
+ * was actually recorded.
+ *
+ * A RELEASE with rows to retain goes through `ctx.decisions`, which
+ * preflights the canonical payload and commits this receipt plus its
+ * last-known-good snapshot in one transaction. Never append a standalone
+ * RELEASE first: a downstream consumer must not see a release claim for
+ * rows that Polygraph failed to retain safely. If that transaction fails it
+ * has already rolled back both halves, so we fail closed — the prior
+ * snapshot stands and the returned outcome is downgraded to an auditable
+ * QUARANTINE receipt appended through the ordinary ledger.
+ *
+ * Any non-release action (and every legacy local caller, which supplies no
+ * `ctx.decisions`) records its decision normally. In particular,
+ * QUARANTINE/HOLD/REPAIR paths can never overwrite the last verified
+ * safe-output snapshot.
+ */
+function recordDecision(
+  ctx: RunnerContext,
+  base: Pick<LedgerEventInput, 'ts' | 'tenant' | 'collector' | 'run_id'>,
+  outcome: DecisionOutcome,
+  releaseRows: Record<string, unknown>[] | undefined
+): { row: LedgerEventRow; outcome: DecisionOutcome } {
+  const toInput = (o: DecisionOutcome): LedgerEventInput => ({
+    ...base,
+    verdict: o.verdict,
+    cause: o.cause,
+    evidence: o.evidence,
+    action: o.action,
+  });
+
+  if (outcome.action !== 'RELEASE' || !releaseRows || !ctx.decisions) {
+    return { row: ctx.ledger.append(toInput(outcome)), outcome };
+  }
+
+  try {
+    return { row: ctx.decisions.recordRelease({ event: toInput(outcome), rows: releaseRows }).event, outcome };
+  } catch (err) {
+    const downgraded: DecisionOutcome = {
+      verdict: 'SUSPECT_UNEXPLAINED_ANOMALY',
+      cause: 'DATA',
+      action: 'QUARANTINE',
+      evidence: [
+        ...outcome.evidence,
+        { check: 'safe-output', ok: false, detail: `safe output persistence failed: ${errorMessage(err)}` },
+      ],
+    };
+    return { row: ctx.ledger.append(toInput(downgraded)), outcome: downgraded };
+  }
+}
+
+/**
+ * Task 9 controller ruling (carried from Tasks 6/8): a REPAIR action must
+ * actually trigger a heal cycle when heal is flag-enabled — today
+ * (heal_enabled: false, our default and current reality: the account is
+ * 403-gated on AI features) this is reachable but its `isHealEnabled` check
+ * always routes to the manual-suggestion arm instead, which is exactly what
+ * "print the command a human could run" means in practice right now. NOT a
+ * second governor gate: `decideWithGovernor` already decided whether REPAIR
+ * survives — this only branches on what it already decided, never
+ * re-consults `ctx.governor` itself (see heal.ts's own docstring for why
+ * heal.ts itself deliberately does the same).
+ *
+ * When the governed decision is NOT a REPAIR, the governor may have
+ * downgraded an otherwise REPAIR-eligible one (heal disabled by policy,
+ * cooldown, daily budget, or max attempts per incident already exhausted).
+ * `decideWithGovernor` only ever changes `action`, never
+ * `verdict`/`evidence` — so re-deriving the UNGOVERNED decision from the
+ * exact same cause/evidence this pass already computed is deterministic and
+ * side-effect-free (policy.ts's `decide()` never touches the Governor,
+ * never records an attempt — this is a read, not a second gate). When that
+ * pure decision would have been REPAIR, surface the exact command a human
+ * could run by hand. Never fires for an IDENTITY-caused decision:
+ * `decideIdentity` structurally cannot construct a REPAIR action (see
+ * policy.ts), so `pure.action.type` is never 'REPAIR' in that case.
+ */
+async function resolveHeal(
+  collector: Collector,
+  config: FleetConfig,
+  ctx: RunnerContext,
+  decision: Decision,
+  evaluated: { evidence: Evidence[]; cause: Cause }
+): Promise<HealResolution> {
+  if (decision.action.type !== 'REPAIR') {
+    const pure = decide(evaluated.cause, evaluated.evidence, {
+      entityKeyField: collector.entity_key,
+      now: new Date(nowIso(ctx)),
+    });
+    return pure.action.type === 'REPAIR'
+      ? { suggestedHealCommand: bdataHealCommand(collector.id, pure.action.heal_prompt) }
+      : {};
+  }
+
+  const healPrompt = decision.action.heal_prompt;
+  if (!isHealEnabled(config.policy)) {
+    return { suggestedHealCommand: bdataHealCommand(collector.id, healPrompt) };
+  }
+
+  try {
+    const client = ctx.adapterContext.client;
+    if (!client) {
+      throw new Error('heal requires ctx.adapterContext.client (a BrightDataClient)');
+    }
+    const outcome = await healCollector(collector.id, healPrompt, {
+      client,
+      policy: config.policy,
+      tenant: config.tenant.name,
+      collector,
+      runnerCtx: ctx,
+      webhookUrl: config.alerts.telegram_webhook,
+    });
+    return { healOutcome: outcome.status };
+  } catch {
+    // heal.ts already appended its own terminal RECOVERY_FAILED ledger
+    // event (best-effort, see its "Ledger completeness" docstring section)
+    // before rethrowing — swallow here so one collector's heal attempt
+    // failing can never take the rest of the fleet pass down with it, the
+    // same fault-isolation guarantee runFleet's own try/catch gives a plain
+    // evaluation failure.
+    return { healOutcome: 'failed' };
+  }
+}
+
 /** Runs one verification pass across every collector in `config`,
  * sequentially. Each collector's outcome is appended to the ledger
  * regardless of any other collector's outcome: if `evaluateCollector`
@@ -368,10 +523,7 @@ export async function runFleet(config: FleetConfig, ctx: RunnerContext): Promise
 
   for (const collector of config.collectors) {
     let runId: string;
-    let verdictCode: ReasonCode;
-    let cause: Cause;
-    let actionType: Action['type'];
-    let evidence: Evidence[];
+    let outcome: DecisionOutcome;
     // Both stay undefined on the adapter-threw catch path below — heal
     // wiring only applies to a real decision, never to the fallback
     // SUSPECT/QUARANTINE shape a crashed evaluation produces.
@@ -389,75 +541,34 @@ export async function runFleet(config: FleetConfig, ctx: RunnerContext): Promise
       });
 
       runId = evaluated.result.run_id;
-      verdictCode = decision.verdict.code;
-      cause = decision.verdict.cause;
-      actionType = decision.action.type;
-      evidence = decision.verdict.evidence;
+      outcome = {
+        verdict: decision.verdict.code,
+        cause: decision.verdict.cause,
+        action: decision.action.type,
+        evidence: decision.verdict.evidence,
+      };
     } catch (err) {
       // Fault isolation: this collector never produced a RunResult at all
       // (adapter threw), so there's no Evidence[] to run through decide().
       // Record the failure itself as evidence and fall back to the same
       // "unexplained, needs a human" shape decideData uses when nothing
       // more specific applies — never a raw crash, never PASS by omission.
-      // The error message is the adapter's own Error#message; brightdata.ts
-      // never puts the API key into one (see its own "never logged"
-      // contract), so nothing here needs additional redaction.
       runId = `run_error_${randomUUID()}`;
-      verdictCode = 'SUSPECT_UNEXPLAINED_ANOMALY';
-      cause = 'DATA';
-      actionType = 'QUARANTINE';
-      evidence = [{ check: 'adapter', ok: false, detail: `adapter error: ${(err as Error).message ?? String(err)}` }];
+      outcome = {
+        verdict: 'SUSPECT_UNEXPLAINED_ANOMALY',
+        cause: 'DATA',
+        action: 'QUARANTINE',
+        evidence: [{ check: 'adapter', ok: false, detail: `adapter error: ${errorMessage(err)}` }],
+      };
     }
 
-    const ledgerInput: LedgerEventInput = {
-      ts: nowIso(ctx),
-      tenant: config.tenant.name,
-      collector: collector.id,
-      run_id: runId,
-      verdict: verdictCode,
-      cause,
-      evidence,
-      action: actionType,
-    };
-
-    let ledgerRow: LedgerEventRow;
-    if (actionType === 'RELEASE' && evaluated && ctx.decisions) {
-      try {
-        // `DecisionRecorder` preflights the canonical payload and commits
-        // this receipt plus its snapshot in one transaction. Never append a
-        // standalone RELEASE first: a downstream consumer must not see a
-        // release claim for rows that Polygraph failed to retain safely.
-        ledgerRow = ctx.decisions.recordRelease({ event: ledgerInput, rows: evaluated.result.rows }).event;
-      } catch (err) {
-        // Fail closed. The recorder's transaction has rolled back the
-        // RELEASE and any partial snapshot. Preserve the prior snapshot and
-        // leave an auditable quarantine receipt when the ordinary ledger is
-        // still available.
-        verdictCode = 'SUSPECT_UNEXPLAINED_ANOMALY';
-        cause = 'DATA';
-        actionType = 'QUARANTINE';
-        evidence = [
-          ...evidence,
-          {
-            check: 'safe-output',
-            ok: false,
-            detail: `safe output persistence failed: ${(err as Error).message ?? String(err)}`,
-          },
-        ];
-        ledgerRow = ctx.ledger.append({
-          ...ledgerInput,
-          verdict: verdictCode,
-          cause,
-          evidence,
-          action: actionType,
-        });
-      }
-    } else {
-      // Any non-release action (and every legacy local caller) records its
-      // decision normally. In particular, QUARANTINE/HOLD/REPAIR paths can
-      // never overwrite the last verified safe-output snapshot.
-      ledgerRow = ctx.ledger.append(ledgerInput);
-    }
+    const recorded = recordDecision(
+      ctx,
+      { ts: nowIso(ctx), tenant: config.tenant.name, collector: collector.id, run_id: runId },
+      outcome,
+      evaluated?.result.rows
+    );
+    outcome = recorded.outcome;
 
     // Alerts hook-in (Task 7): fire-and-await, never fire-and-forget — but
     // `AlertNotifier.notify` catches every failure of its own (bad webhook,
@@ -467,90 +578,25 @@ export async function runFleet(config: FleetConfig, ctx: RunnerContext): Promise
     if (ctx.notifier) {
       await ctx.notifier.notify(config.alerts.telegram_webhook, {
         collector: collector.id,
-        verdict: verdictCode,
-        cause,
-        evidence,
-        ts: ledgerRow.ts,
-        ledger_id: ledgerRow.id,
+        verdict: outcome.verdict,
+        cause: outcome.cause,
+        evidence: outcome.evidence,
+        ts: recorded.row.ts,
+        ledger_id: recorded.row.id,
       });
     }
 
-    // Task 9 controller ruling (carried from Tasks 6/8): a REPAIR action
-    // must actually trigger a heal cycle when heal is flag-enabled — today
-    // (heal_enabled: false, our default and current reality: the account is
-    // 403-gated on AI features) this branch is reachable but its
-    // `isHealEnabled` check always routes to the manual-suggestion arm
-    // instead, which is exactly what "print the command a human could run"
-    // means in practice right now. NOT a second governor gate:
-    // `decideWithGovernor` above already decided whether REPAIR survives —
-    // this only branches on what it already decided, never re-consults
-    // `ctx.governor` itself (see heal.ts's own docstring for why heal.ts
-    // itself deliberately does the same).
-    let healOutcome: HealStatus | 'failed' | undefined;
-    let suggestedHealCommand: string | undefined;
-
-    if (decision && evaluated) {
-      if (decision.action.type === 'REPAIR') {
-        if (isHealEnabled(config.policy)) {
-          try {
-            const client = ctx.adapterContext.client;
-            if (!client) {
-              throw new Error('heal requires ctx.adapterContext.client (a BrightDataClient)');
-            }
-            const outcome = await healCollector(collector.id, decision.action.heal_prompt, {
-              client,
-              policy: config.policy,
-              tenant: config.tenant.name,
-              collector,
-              runnerCtx: ctx,
-              webhookUrl: config.alerts.telegram_webhook,
-            });
-            healOutcome = outcome.status;
-          } catch {
-            // heal.ts already appended its own terminal RECOVERY_FAILED
-            // ledger event (best-effort, see its "Ledger completeness"
-            // docstring section) before rethrowing — swallow here so one
-            // collector's heal attempt failing can never take the rest of
-            // the fleet pass down with it, the same fault-isolation
-            // guarantee the outer try/catch above gives a plain evaluation
-            // failure.
-            healOutcome = 'failed';
-          }
-        } else {
-          suggestedHealCommand = bdataHealCommand(collector.id, decision.action.heal_prompt);
-        }
-      } else {
-        // The governor may have downgraded an otherwise REPAIR-eligible
-        // decision (heal disabled by policy, cooldown, daily budget, or max
-        // attempts per incident already exhausted). `decideWithGovernor`
-        // only ever changes `action`, never `verdict`/`evidence` — so
-        // re-deriving the UNGOVERNED decision from the exact same
-        // cause/evidence this pass already computed is deterministic and
-        // side-effect-free (policy.ts's `decide()` never touches the
-        // Governor, never records an attempt — this is a read, not a second
-        // gate). When that pure decision would have been REPAIR, surface
-        // the exact command a human could run by hand. Never fires for an
-        // IDENTITY-caused decision: `decideIdentity` structurally cannot
-        // construct a REPAIR action (see policy.ts), so `pure.action.type`
-        // is never 'REPAIR' in that case.
-        const pure = decide(evaluated.cause, evaluated.evidence, {
-          entityKeyField: collector.entity_key,
-          now: new Date(nowIso(ctx)),
-        });
-        if (pure.action.type === 'REPAIR') {
-          suggestedHealCommand = bdataHealCommand(collector.id, pure.action.heal_prompt);
-        }
-      }
-    }
+    const heal: HealResolution =
+      decision && evaluated ? await resolveHeal(collector, config, ctx, decision, evaluated) : {};
 
     results.push({
       collector: collector.id,
       run_id: runId,
-      verdict: verdictCode,
-      cause,
-      action: actionType,
-      ...(healOutcome !== undefined ? { healOutcome } : {}),
-      ...(suggestedHealCommand !== undefined ? { suggestedHealCommand } : {}),
+      verdict: outcome.verdict,
+      cause: outcome.cause,
+      action: outcome.action,
+      ...(heal.healOutcome !== undefined ? { healOutcome: heal.healOutcome } : {}),
+      ...(heal.suggestedHealCommand !== undefined ? { suggestedHealCommand: heal.suggestedHealCommand } : {}),
     });
   }
 

@@ -89,6 +89,7 @@ import type { Collector, Policy } from '../core/config.js';
 import { evaluateCollector, type RunnerContext } from '../loop/runner.js';
 import { decide } from '../loop/policy.js';
 import type { Ledger, LedgerEventInput, LedgerEventRow } from '../store/ledger.js';
+import type { Cause, Evidence, ReasonCode } from '../core/types.js';
 import { inferFieldsForCollector } from '../tenancy/infer-schema.js';
 
 export class PolygraphHealDisabled extends Error {
@@ -129,6 +130,11 @@ export function mintOwnedFixtureHealPermit(
   return { collectorId, fixtureUrl, [OWNED_FIXTURE_PERMIT]: true };
 }
 
+/** Terminal states accepted as a finished owned-fixture heal. Deliberately
+ * its own set, not client.ts's REFACTOR_SUCCESS_STATES — this path demands a
+ * post-approval completion, and the two lists are not the same. */
+const OWNED_FIXTURE_SUCCESS_STATES = new Set(['done', 'complete', 'completed', 'success', 'succeeded']);
+
 export interface HealOwnedFixtureOptions {
   client: Pick<BrightDataClient, 'refactorTemplate' | 'pollRefactorTemplateProgress' | 'resumeAutomationJob'>;
   policy: Policy;
@@ -152,10 +158,7 @@ export async function healOwnedFixture(
   if (options.permit[OWNED_FIXTURE_PERMIT] !== true) throw new PolygraphHealDisabled('owned fixture permit is invalid');
 
   await options.client.refactorTemplate(collectorId, prompt, [{ url: fixtureUrl }]);
-  const pollOpts: PollOptions = {
-    intervalMs: options.poll?.intervalMs ?? DEFAULT_POLL.intervalMs,
-    deadlineMs: options.poll?.deadlineMs ?? DEFAULT_POLL.deadlineMs,
-  };
+  const pollOpts = resolvePollOptions(options.poll);
   let progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts);
   if (!isAwaitingApproval(progress)) {
     throw new BrightDataError(`owned fixture heal did not stop at the required approval gate (status "${progress.status}")`);
@@ -163,7 +166,7 @@ export async function healOwnedFixture(
   await options.client.resumeAutomationJob(collectorId, { message: true, autoSave: true });
   progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts);
   const status = String(progress.status ?? '').toLowerCase();
-  if (!['done', 'complete', 'completed', 'success', 'succeeded'].includes(status)) {
+  if (!OWNED_FIXTURE_SUCCESS_STATES.has(status)) {
     throw new BrightDataError(`owned fixture heal did not finish successfully (status "${progress.status}")`);
   }
   return progress;
@@ -323,11 +326,44 @@ function judgePromotion(pre: string[] | undefined, post: string[] | undefined): 
   return sameFieldSet(pre, post) ? 'unchanged' : 'confirmed';
 }
 
+/** The `promotion` check's Evidence row, per PromotionStatus. `unchanged` is
+ * the only status that reads as a failure, and it carries the manual next
+ * step (Scraper Studio IDE -> Save to Production). */
+function promotionEvidenceFor(promotion: PromotionCheck, progressStatus: unknown) {
+  if (promotion.status === 'confirmed') {
+    return {
+      check: 'promotion',
+      ok: true,
+      detail: 'production output_schema changed after the heal — promotion confirmed.',
+    };
+  }
+  if (promotion.status === 'unchanged') {
+    return {
+      check: 'promotion',
+      ok: false,
+      detail: `heal reported "${progressStatus}" but the collector's production output_schema is unchanged — the fix was not promoted. Finish it manually: Scraper Studio IDE -> Save to Production. ${promotion.viewUrl}`,
+    };
+  }
+  return {
+    check: 'promotion',
+    ok: true,
+    detail:
+      'could not verify promotion (collectors_list fetch failed, or returned no entry for this collector) — deferring to the re-grade verdict.',
+  };
+}
+
 function collectorViewUrl(collectorId: string): string {
   return `https://brightdata.com/cp/scrapers/${collectorId}`;
 }
 
 const DEFAULT_POLL: Required<PollOptions> = { intervalMs: 10_000, deadlineMs: 20 * 60_000 };
+
+function resolvePollOptions(opts: PollOptions | undefined): PollOptions {
+  return {
+    intervalMs: opts?.intervalMs ?? DEFAULT_POLL.intervalMs,
+    deadlineMs: opts?.deadlineMs ?? DEFAULT_POLL.deadlineMs,
+  };
+}
 
 /**
  * POST refactor_template, retried exactly once on an HTTP 500 specifically.
@@ -399,6 +435,31 @@ function appendBestEffort(ledger: Ledger, event: LedgerEventInput): AppendResult
 }
 
 /**
+ * Task 7: alerts on this heal cycle's terminal RECOVERY_VERIFIED/
+ * RECOVERY_FAILED outcome — never RECOVERY_PENDING, which is a pause. Fires
+ * only when a notifier is wired AND the terminal ledger write actually
+ * landed (`row`), since the alert's `ledger_id` must point at a real row.
+ * Like runner.ts's own hook-in, `AlertNotifier.notify` never throws.
+ */
+async function notifyTerminal(
+  options: HealCollectorOptions,
+  collectorId: string,
+  row: LedgerEventRow | undefined,
+  outcome: { verdict: ReasonCode; cause: Cause; evidence: Evidence[] }
+): Promise<void> {
+  const notifier = options.runnerCtx.notifier;
+  if (!notifier || !row) return;
+  await notifier.notify(options.webhookUrl, {
+    collector: collectorId,
+    verdict: outcome.verdict,
+    cause: outcome.cause,
+    evidence: outcome.evidence,
+    ts: row.ts,
+    ledger_id: row.id,
+  });
+}
+
+/**
  * Drives one heal attempt for `collectorId` to completion: trigger, poll,
  * approve (if `options.autoApprove` and the job halts at the diff-approval
  * gate), then re-run + re-grade to confirm the fix.
@@ -446,10 +507,16 @@ export async function healCollector(
   const ledger = options.runnerCtx.ledger;
   const healJobId = `heal_${randomUUID()}`;
 
-  ledger.append({
+  /** Every event this heal cycle appends shares tenant/collector and stamps
+   * its own `ts` at call time. */
+  const event = (fields: Omit<LedgerEventInput, 'ts' | 'tenant' | 'collector'>): LedgerEventInput => ({
     ts: nowIso(options.runnerCtx),
     tenant: options.tenant,
     collector: collectorId,
+    ...fields,
+  });
+
+  ledger.append(event({
     run_id: healJobId,
     verdict: 'RECOVERY_PENDING',
     // Structurally the only cause a REPAIR heal_prompt can come from — see
@@ -457,7 +524,7 @@ export async function healCollector(
     cause: 'STRUCTURAL',
     action: 'REPAIR',
     heal_job_id: healJobId,
-  });
+  }));
 
   try {
     // Baseline for the promotion check below — taken before the heal ever
@@ -466,10 +533,7 @@ export async function healCollector(
 
     await triggerRefactorWithRetry(options.client, collectorId, prompt);
 
-    const pollOpts: PollOptions = {
-      intervalMs: options.poll?.intervalMs ?? DEFAULT_POLL.intervalMs,
-      deadlineMs: options.poll?.deadlineMs ?? DEFAULT_POLL.deadlineMs,
-    };
+    const pollOpts = resolvePollOptions(options.poll);
     let progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts);
 
     if (isAwaitingApproval(progress)) {
@@ -515,44 +579,29 @@ export async function healCollector(
     // "didn't happen".
     const verified = decision.verdict.code === 'PASS' && promotion.status !== 'unchanged';
 
-    const promotionEvidence = {
-      check: 'promotion',
-      ok: promotion.status !== 'unchanged',
-      detail:
-        promotion.status === 'confirmed'
-          ? 'production output_schema changed after the heal — promotion confirmed.'
-          : promotion.status === 'unchanged'
-            ? `heal reported "${progress.status}" but the collector's production output_schema is unchanged — the fix was not promoted. Finish it manually: Scraper Studio IDE -> Save to Production. ${promotion.viewUrl}`
-            : 'could not verify promotion (collectors_list fetch failed, or returned no entry for this collector) — deferring to the re-grade verdict.',
-    };
+    const promotionEvidence = promotionEvidenceFor(promotion, progress.status);
 
     // Both appends go through appendBestEffort: the heal outcome
     // (status/regrade below) is already fully computed at this point, so a
     // ledger write failing here must surface as `ledgerWriteError` on the
     // returned HealOutcome, never as an opaque thrown sqlite error that
     // masks a heal that actually succeeded (or a real re-grade failure).
-    const firstWrite = appendBestEffort(ledger, {
-      ts: nowIso(options.runnerCtx),
-      tenant: options.tenant,
-      collector: collectorId,
+    const firstWrite = appendBestEffort(ledger, event({
       run_id: evaluated.result.run_id,
       verdict: decision.verdict.code,
       cause: decision.verdict.cause,
       evidence: decision.verdict.evidence,
       action: decision.action.type,
-    });
+    }));
 
-    const secondWrite = appendBestEffort(ledger, {
-      ts: nowIso(options.runnerCtx),
-      tenant: options.tenant,
-      collector: collectorId,
+    const secondWrite = appendBestEffort(ledger, event({
       run_id: evaluated.result.run_id,
       verdict: verified ? 'RECOVERY_VERIFIED' : 'RECOVERY_FAILED',
       cause: decision.verdict.cause,
       evidence: [promotionEvidence],
       action: decision.action.type,
       heal_job_id: healJobId,
-    });
+    }));
     const ledgerWriteError = firstWrite.error ?? secondWrite.error;
 
     // Task 7: alert on the terminal RECOVERY_VERIFIED/RECOVERY_FAILED
@@ -560,16 +609,11 @@ export async function healCollector(
     // since the alert's `ledger_id` must point at a real row. Like
     // runner.ts's own hook-in, `AlertNotifier.notify` never throws, so no
     // extra try/catch is needed around this await.
-    if (options.runnerCtx.notifier && secondWrite.row) {
-      await options.runnerCtx.notifier.notify(options.webhookUrl, {
-        collector: collectorId,
-        verdict: verified ? 'RECOVERY_VERIFIED' : 'RECOVERY_FAILED',
-        cause: decision.verdict.cause,
-        evidence: [decision.verdict.evidence, promotionEvidence].flat(),
-        ts: secondWrite.row.ts,
-        ledger_id: secondWrite.row.id,
-      });
-    }
+    await notifyTerminal(options, collectorId, secondWrite.row, {
+      verdict: verified ? 'RECOVERY_VERIFIED' : 'RECOVERY_FAILED',
+      cause: decision.verdict.cause,
+      evidence: [decision.verdict.evidence, promotionEvidence].flat(),
+    });
 
     return {
       status: verified ? 'verified' : 'failed',
@@ -596,17 +640,14 @@ export async function healCollector(
     const failureEvidence = [
       { check: 'heal', ok: false, detail: `heal attempt failed: ${(err as Error).message ?? String(err)}` },
     ];
-    const ledgerErr = appendBestEffort(ledger, {
-      ts: nowIso(options.runnerCtx),
-      tenant: options.tenant,
-      collector: collectorId,
+    const ledgerErr = appendBestEffort(ledger, event({
       run_id: healJobId,
       verdict: 'RECOVERY_FAILED',
       cause: 'STRUCTURAL',
       evidence: failureEvidence,
       action: 'QUARANTINE',
       heal_job_id: healJobId,
-    });
+    }));
     if (ledgerErr.error !== undefined && err instanceof Error) {
       (err as Error & { ledgerAppendError?: unknown }).ledgerAppendError = ledgerErr.error;
     }
@@ -615,16 +656,11 @@ export async function healCollector(
     // path is just as much a terminal outcome as the regrade-based one
     // above, and must not go unreported. Same "only if the write actually
     // landed" gate, same no-throw guarantee from AlertNotifier.notify.
-    if (options.runnerCtx.notifier && ledgerErr.row) {
-      await options.runnerCtx.notifier.notify(options.webhookUrl, {
-        collector: collectorId,
-        verdict: 'RECOVERY_FAILED',
-        cause: 'STRUCTURAL',
-        evidence: failureEvidence,
-        ts: ledgerErr.row.ts,
-        ledger_id: ledgerErr.row.id,
-      });
-    }
+    await notifyTerminal(options, collectorId, ledgerErr.row, {
+      verdict: 'RECOVERY_FAILED',
+      cause: 'STRUCTURAL',
+      evidence: failureEvidence,
+    });
 
     throw err;
   }

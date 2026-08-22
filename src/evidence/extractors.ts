@@ -137,6 +137,27 @@ function slugify(value: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+/**
+ * The shared shape of the two genuine identity cross-checks below (Ashby,
+ * Fixture Catalog): compare the key the URL requested against the key the
+ * page actually returned, both normalized by `normalize`.
+ *
+ * Returns `null` — "skip this row", never a mismatch — when either side is
+ * missing or unparseable; the requested key echoed back (so checkIdentity's
+ * equality against `actual` passes) on a match; and a `MISMATCH:` sentinel
+ * guaranteed to differ from `actual` on a genuine mismatch, so checkIdentity
+ * flags it.
+ */
+function crossCheckKey(
+  requestedKey: string | undefined,
+  actual: unknown,
+  normalize: (value: string) => string = (value) => value
+): string | null {
+  if (!requestedKey) return null;
+  if (typeof actual !== 'string' || actual.trim() === '') return null;
+  return normalize(actual) === normalize(requestedKey) ? actual : `MISMATCH:${requestedKey}`;
+}
+
 export const COLLECTOR_REGISTRY: Record<string, CollectorDefinition> = {
   'books.toscrape.com': {
     schema: {
@@ -178,20 +199,11 @@ export const COLLECTOR_REGISTRY: Record<string, CollectorDefinition> = {
         apply_url: { type: 'url' },
       },
     },
+    // Genuine cross-check: does the scraped company name normalize to the
+    // same slug the URL requested?
     entityKey: (input, row) => {
       const url = urlOf(input);
-      const requestedSlug = url ? ashbyCompanySlug(url) : undefined;
-      if (!requestedSlug) return null; // can't parse a company slug -> skip, don't false-flag
-
-      const company = row.company;
-      if (typeof company !== 'string' || company.trim() === '') return null; // nothing to compare -> skip
-
-      // Genuine cross-check: does the scraped company name normalize to
-      // the same slug the URL requested? If so, echo row.company back so
-      // checkIdentity's equality passes; if not, return a sentinel that
-      // is guaranteed to differ from row.company so checkIdentity
-      // correctly flags the mismatch.
-      return slugify(company) === slugify(requestedSlug) ? company : `MISMATCH:${requestedSlug}`;
+      return crossCheckKey(url ? ashbyCompanySlug(url) : undefined, row.company, slugify);
     },
   },
 
@@ -202,18 +214,12 @@ export const COLLECTOR_REGISTRY: Record<string, CollectorDefinition> = {
   // data-field names and this schema's field names can never drift apart.
   'Fixture Catalog': {
     schema: FIXTURE_SCHEMA,
+    // Genuine cross-check: did the page actually serve the requested
+    // product? wrong_entity mode (fixture/render.ts) substitutes a DIFFERENT
+    // real product's sku here on purpose.
     entityKey: (input, row) => {
       const url = urlOf(input);
-      const requestedSku = url ? fixtureRequestedSku(url) : undefined;
-      if (!requestedSku) return null; // can't parse a requested sku -> skip, don't false-flag
-
-      const sku = row.sku;
-      if (typeof sku !== 'string' || sku.trim() === '') return null; // nothing to compare -> skip
-
-      // Genuine cross-check: does the page actually served the requested
-      // product? wrong_entity mode (fixture/render.ts) substitutes a
-      // DIFFERENT real product's sku here on purpose.
-      return sku === requestedSku ? sku : `MISMATCH:${requestedSku}`;
+      return crossCheckKey(url ? fixtureRequestedSku(url) : undefined, row.sku);
     },
     extractor: extractFixtureProduct,
   },

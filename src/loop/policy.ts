@@ -100,6 +100,10 @@ function decideNone(): { code: ReasonCode; action: ReleaseAction } {
 // look, even when no single check evidence explains it (e.g. cause=DATA
 // derived from an "unknown" error_code with no per-row evidence at all).
 
+function quarantine(code: ReasonCode, reason: string): { code: ReasonCode; action: QuarantineAction } {
+  return { code, action: { type: 'QUARANTINE', reason } };
+}
+
 function decideData(evidence: Evidence[]): { code: ReasonCode; action: QuarantineAction } {
   // A registration gap (runner.ts's `skippedEvidence`, marked
   // `metrics.skipped === true`) takes priority over the generic
@@ -111,35 +115,20 @@ function decideData(evidence: Evidence[]): { code: ReasonCode; action: Quarantin
   // collector was reporting PASS/RELEASE with nothing actually checked).
   const skipped = evidence.find((e) => e.metrics?.skipped === true);
   if (skipped) {
-    return {
-      code: 'SUSPECT_UNEXPLAINED_ANOMALY',
-      action: {
-        type: 'QUARANTINE',
-        reason: `unverifiable — ${skipped.check} check ${skipped.detail}`,
-      },
-    };
+    return quarantine('SUSPECT_UNEXPLAINED_ANOMALY', `unverifiable — ${skipped.check} check ${skipped.detail}`);
   }
 
   const failedContract = evidence.find((e) => e.check === 'contract' && !e.ok);
   if (failedContract) {
-    return {
-      code: 'FAILED_CONTRACT',
-      action: { type: 'QUARANTINE', reason: `contract violation: ${failedContract.detail}` },
-    };
+    return quarantine('FAILED_CONTRACT', `contract violation: ${failedContract.detail}`);
   }
 
   const failedCoherence = evidence.find((e) => e.check === 'coherence' && !e.ok);
   if (failedCoherence) {
-    return {
-      code: 'SUSPECT_UNEXPLAINED_ANOMALY',
-      action: { type: 'QUARANTINE', reason: `coherence anomaly: ${failedCoherence.detail}` },
-    };
+    return quarantine('SUSPECT_UNEXPLAINED_ANOMALY', `coherence anomaly: ${failedCoherence.detail}`);
   }
 
-  return {
-    code: 'SUSPECT_UNEXPLAINED_ANOMALY',
-    action: { type: 'QUARANTINE', reason: 'data-shaped anomaly with no further explaining evidence' },
-  };
+  return quarantine('SUSPECT_UNEXPLAINED_ANOMALY', 'data-shaped anomaly with no further explaining evidence');
 }
 
 // ---------------------------------------------------------------------------
@@ -164,23 +153,13 @@ function decideIdentity(evidence: Evidence[]): { code: ReasonCode; action: Ident
   const mismatchRate =
     typeof identityEvidence?.metrics?.mismatchRate === 'number' ? identityEvidence.metrics.mismatchRate : 1;
 
-  if (mismatchRate >= REDISCOVER_MISMATCH_THRESHOLD) {
-    return {
-      code: 'FAILED_IDENTITY',
-      action: {
-        type: 'REDISCOVER',
-        reason: `entity_key mismatch on ${(mismatchRate * 100).toFixed(0)}% of comparable rows — selector likely broken`,
-      },
-    };
-  }
+  const mismatch = `entity_key mismatch on ${(mismatchRate * 100).toFixed(0)}% of comparable rows`;
+  const action: IdentityAction =
+    mismatchRate >= REDISCOVER_MISMATCH_THRESHOLD
+      ? { type: 'REDISCOVER', reason: `${mismatch} — selector likely broken` }
+      : { type: 'QUARANTINE', reason: `${mismatch} — needs human review` };
 
-  return {
-    code: 'FAILED_IDENTITY',
-    action: {
-      type: 'QUARANTINE',
-      reason: `entity_key mismatch on ${(mismatchRate * 100).toFixed(0)}% of comparable rows — needs human review`,
-    },
-  };
+  return { code: 'FAILED_IDENTITY', action };
 }
 
 // ---------------------------------------------------------------------------
@@ -190,13 +169,10 @@ function decideIdentity(evidence: Evidence[]): { code: ReasonCode; action: Ident
 
 function decideBlocked(evidence: Evidence[]): { code: ReasonCode; action: QuarantineAction } {
   const failed = evidence.find((e) => !e.ok && !isAdvisoryEvidence(e));
-  return {
-    code: 'FAILED_BLOCKED_RESPONSE',
-    action: {
-      type: 'QUARANTINE',
-      reason: failed ? `blocked/compliance-restricted: ${failed.detail}` : 'blocked/compliance-restricted response',
-    },
-  };
+  return quarantine(
+    'FAILED_BLOCKED_RESPONSE',
+    failed ? `blocked/compliance-restricted: ${failed.detail}` : 'blocked/compliance-restricted response'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -235,15 +211,12 @@ function decideStructural(cause: Cause, evidence: Evidence[], options: DecideOpt
   }
 
   const anyFailed = evidence.find((e) => !e.ok && !isAdvisoryEvidence(e));
-  return {
-    code: 'FAILED_STRUCTURAL',
-    action: {
-      type: 'QUARANTINE',
-      reason: anyFailed
-        ? `structural cause without a confirmed canary+structural pairing: ${anyFailed.detail}`
-        : 'structural cause with no confirming canary or structural evidence yet',
-    },
-  };
+  return quarantine(
+    'FAILED_STRUCTURAL',
+    anyFailed
+      ? `structural cause without a confirmed canary+structural pairing: ${anyFailed.detail}`
+      : 'structural cause with no confirming canary or structural evidence yet'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -339,43 +312,30 @@ function buildHealPromptFromProof(proof: HealProof, options: DecideOptions): str
  * governor gating) — see `decideWithGovernor` for the governed wrapper that
  * downgrades REPAIR to QUARANTINE when heal caps/cooldown/budget disallow it. */
 export function decide(cause: Cause, evidence: Evidence[], options: DecideOptions = {}): Decision {
-  let code: ReasonCode;
-  let action: Action;
-
-  switch (cause) {
-    case 'NONE': {
-      const result = decideNone();
-      code = result.code;
-      action = result.action;
-      break;
-    }
-    case 'DATA': {
-      const result = decideData(evidence);
-      code = result.code;
-      action = result.action;
-      break;
-    }
-    case 'IDENTITY': {
-      const result = decideIdentity(evidence);
-      code = result.code;
-      action = result.action;
-      break;
-    }
-    case 'BLOCKED': {
-      const result = decideBlocked(evidence);
-      code = result.code;
-      action = result.action;
-      break;
-    }
-    case 'STRUCTURAL': {
-      const result = decideStructural(cause, evidence, options);
-      code = result.code;
-      action = result.action;
-      break;
-    }
-  }
-
+  const { code, action } = decideForCause(cause, evidence, options);
   return { verdict: { code, cause, evidence }, action };
+}
+
+/** Routes a cause to the one `decideXxx` allowed to handle it. Exhaustive
+ * over `Cause` with no `default`, so adding a cause is a compile error here
+ * rather than a silent fallthrough. */
+function decideForCause(
+  cause: Cause,
+  evidence: Evidence[],
+  options: DecideOptions
+): { code: ReasonCode; action: Action } {
+  switch (cause) {
+    case 'NONE':
+      return decideNone();
+    case 'DATA':
+      return decideData(evidence);
+    case 'IDENTITY':
+      return decideIdentity(evidence);
+    case 'BLOCKED':
+      return decideBlocked(evidence);
+    case 'STRUCTURAL':
+      return decideStructural(cause, evidence, options);
+  }
 }
 
 // ---------------------------------------------------------------------------

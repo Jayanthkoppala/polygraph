@@ -14,7 +14,7 @@ export interface CanaryOutcome {
   reason?: string;
 }
 
-export interface CanaryMetrics extends Record<string, unknown> {
+interface CanaryMetrics extends Record<string, unknown> {
   outcomes: CanaryOutcome[];
   passCount: number;
   failCount: number;
@@ -23,6 +23,31 @@ export interface CanaryMetrics extends Record<string, unknown> {
 
 function isEmpty(value: unknown): boolean {
   return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0);
+}
+
+/** Why this one canary input failed, or `undefined` when it passed. A rerun
+ * that throws is a failed canary, not a propagated error — one input failing
+ * to load must never abort evaluation of the rest. */
+async function canaryFailureReason(
+  input: string,
+  rerun: RerunFn,
+  requiredFields: string[],
+  entityKeyField?: string
+): Promise<string | undefined> {
+  let row: Record<string, unknown> | undefined;
+  try {
+    row = await rerun(input);
+  } catch (err) {
+    return `rerun threw: ${(err as Error).message}`;
+  }
+
+  if (!row) return 'rerun produced no row';
+  if (entityKeyField && isEmpty(row[entityKeyField])) return `entity_key field "${entityKeyField}" empty`;
+
+  const missing = requiredFields.filter((f) => isEmpty(row[f]));
+  if (missing.length > 0) return `missing required field(s): ${missing.join(', ')}`;
+
+  return undefined;
 }
 
 /**
@@ -49,31 +74,8 @@ export async function checkCanary(
   const outcomes: CanaryOutcome[] = [];
 
   for (const input of canaryInputs) {
-    let row: Record<string, unknown> | undefined;
-    try {
-      row = await rerun(input);
-    } catch (err) {
-      outcomes.push({ input, pass: false, reason: `rerun threw: ${(err as Error).message}` });
-      continue;
-    }
-
-    if (!row) {
-      outcomes.push({ input, pass: false, reason: 'rerun produced no row' });
-      continue;
-    }
-
-    if (entityKeyField && isEmpty(row[entityKeyField])) {
-      outcomes.push({ input, pass: false, reason: `entity_key field "${entityKeyField}" empty` });
-      continue;
-    }
-
-    const missing = requiredFields.filter((f) => isEmpty(row![f]));
-    if (missing.length > 0) {
-      outcomes.push({ input, pass: false, reason: `missing required field(s): ${missing.join(', ')}` });
-      continue;
-    }
-
-    outcomes.push({ input, pass: true });
+    const reason = await canaryFailureReason(input, rerun, requiredFields, entityKeyField);
+    outcomes.push(reason === undefined ? { input, pass: true } : { input, pass: false, reason });
   }
 
   const passCount = outcomes.filter((o) => o.pass).length;

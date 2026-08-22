@@ -1,4 +1,5 @@
 import type { Evidence } from '../../core/types.js';
+import { median } from './stats.js';
 
 /** A same-night summary for one same-purpose collector, as fed to checkPeers. */
 export interface PeerSummary {
@@ -7,7 +8,7 @@ export interface PeerSummary {
   meanFillRate: number;
 }
 
-export interface PeerMetrics extends Record<string, unknown> {
+interface PeerMetrics extends Record<string, unknown> {
   collector: string;
   rowsCount: number;
   meanFillRate: number;
@@ -24,13 +25,6 @@ export interface PeerMetrics extends Record<string, unknown> {
  * same-purpose collectors and a median/MAD would just chase noise. */
 const MIN_PEERS = 3;
 const FLAG_MAD_MULTIPLE = 3;
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-}
 
 /**
  * Compares a collector's fill-rate against its same-purpose peers'

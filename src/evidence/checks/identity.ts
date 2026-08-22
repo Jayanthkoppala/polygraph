@@ -17,7 +17,7 @@ export interface IdentityMismatch {
   extractedKey: string;
 }
 
-export interface IdentityMetrics extends Record<string, unknown> {
+interface IdentityMetrics extends Record<string, unknown> {
   /** Rows where both a requested key and an extracted key were determined. */
   compared: number;
   mismatched: number;

@@ -107,32 +107,33 @@ export function parseFleetConfig(raw: unknown): FleetConfig {
     return collector;
   });
 
-  const policyRaw = (doc.policy as Record<string, unknown> | undefined) ?? {};
-  const policy: Policy = {
-    max_attempts_per_incident: numberOr(
-      policyRaw.max_attempts_per_incident,
-      DEFAULT_POLICY.max_attempts_per_incident
-    ),
-    cooldown_minutes: numberOr(policyRaw.cooldown_minutes, DEFAULT_POLICY.cooldown_minutes),
-    daily_heal_budget: numberOr(policyRaw.daily_heal_budget, DEFAULT_POLICY.daily_heal_budget),
-    heal_enabled: typeof policyRaw.heal_enabled === 'boolean' ? policyRaw.heal_enabled : DEFAULT_POLICY.heal_enabled,
-  };
-
-  const alertsRaw = (doc.alerts as Record<string, unknown> | undefined) ?? {};
-  const alerts: Alerts = {};
-  if (alertsRaw.telegram_webhook !== undefined) {
-    if (typeof alertsRaw.telegram_webhook !== 'string') {
-      throw new ConfigError('alerts.telegram_webhook must be a string');
-    }
-    alerts.telegram_webhook = alertsRaw.telegram_webhook;
-  }
-
   return {
     tenant: { name: tenant.name },
     collectors,
-    policy,
-    alerts,
+    policy: parsePolicy(doc.policy),
+    alerts: parseAlerts(doc.alerts),
   };
+}
+
+/** Every `policy:` key is optional; anything missing, non-numeric, or
+ * non-boolean falls back to DEFAULT_POLICY rather than failing the load. */
+function parsePolicy(raw: unknown): Policy {
+  const policy = (raw as Record<string, unknown> | undefined) ?? {};
+  return {
+    max_attempts_per_incident: numberOr(policy.max_attempts_per_incident, DEFAULT_POLICY.max_attempts_per_incident),
+    cooldown_minutes: numberOr(policy.cooldown_minutes, DEFAULT_POLICY.cooldown_minutes),
+    daily_heal_budget: numberOr(policy.daily_heal_budget, DEFAULT_POLICY.daily_heal_budget),
+    heal_enabled: typeof policy.heal_enabled === 'boolean' ? policy.heal_enabled : DEFAULT_POLICY.heal_enabled,
+  };
+}
+
+function parseAlerts(raw: unknown): Alerts {
+  const alerts = (raw as Record<string, unknown> | undefined) ?? {};
+  if (alerts.telegram_webhook === undefined) return {};
+  if (typeof alerts.telegram_webhook !== 'string') {
+    throw new ConfigError('alerts.telegram_webhook must be a string');
+  }
+  return { telegram_webhook: alerts.telegram_webhook };
 }
 
 function validateCollector(c: unknown, index: number): Collector {
@@ -247,12 +248,9 @@ export async function buildTenantContext(
   const config: FleetConfig = {
     tenant: { name: input.displayName },
     collectors,
-    policy: {
-      max_attempts_per_incident: 2,
-      cooldown_minutes: 30,
-      daily_heal_budget: 10,
-      heal_enabled: input.healEnabled,
-    },
+    // Hosted v1 uses the same governor defaults as a fleet.yaml run with no
+    // `policy:` block — sourced from DEFAULT_POLICY so the two can't drift.
+    policy: { ...DEFAULT_POLICY, heal_enabled: input.healEnabled },
     // Hosted v1 has no per-tenant webhook (tenant-architecture.md §4 —
     // `alerts.telegram_webhook` is a server-side POST to a user-controlled
     // URL, an SSRF primitive not offered in v1).

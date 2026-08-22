@@ -88,7 +88,12 @@ function encodeRows(rows: unknown[]): EncodedRows {
   };
 }
 
-function deserializeSnapshot(db: Database.Database, row: RawSnapshotRow): SafeOutputSnapshot {
+/** Parses the stored payload and re-checks it against both persisted
+ * integrity fields. The snapshot is a verified artifact, not an ordinary
+ * cache read, so this runs on every read: valid-JSON tampering,
+ * truncation, or metadata drift can never be served under the old release
+ * receipt. */
+function parseSnapshotRows(row: RawSnapshotRow): unknown[] {
   let rows: unknown;
   try {
     rows = JSON.parse(row.rows_json);
@@ -98,14 +103,22 @@ function deserializeSnapshot(db: Database.Database, row: RawSnapshotRow): SafeOu
   if (!Array.isArray(rows)) {
     throw new Error('polygraph: stored safe output is corrupt');
   }
-  // The snapshot is a verified artifact, not an ordinary cache read. Check
-  // its canonical payload against both persisted integrity fields on every
-  // read so valid-JSON tampering, truncation, or metadata drift can never be
-  // served under the old release receipt.
+
   const actual = encodeRows(rows);
   if (actual.outputHash !== row.output_hash || actual.rowCount !== row.row_count) {
     throw new Error('polygraph: stored safe output integrity check failed');
   }
+  return rows;
+}
+
+/** Re-verifies the RELEASE receipt this snapshot was written under: that it
+ * still exists in this tenant's chain, still describes this exact
+ * collector/run/payload, still hashes to its own event_hash, and still
+ * links to its current neighbors. A self-consistent rewrite of one event
+ * must still break the chain on at least one side. A complete tail rewrite
+ * remains outside what any local, unsigned hash chain can prove and is
+ * handled by ledger verification and external checkpoints. */
+function assertReleaseProvenance(db: Database.Database, row: RawSnapshotRow): void {
   const release = db
     .prepare(
       `SELECT id, tenant_id, tenant, collector, run_id, ts, verdict, cause, evidence,
@@ -136,11 +149,6 @@ function deserializeSnapshot(db: Database.Database, row: RawSnapshotRow): SafeOu
     throw new Error('polygraph: stored safe output release receipt hash check failed');
   }
 
-  // Bind this receipt to its current neighbors as well as its own hash. A
-  // self-consistent rewrite of one event must still break the chain on at
-  // least one side. A complete tail rewrite remains outside what any local,
-  // unsigned hash chain can prove and is handled by ledger verification and
-  // external checkpoints.
   const predecessor = db
     .prepare('SELECT event_hash FROM events WHERE tenant_id = ? AND id < ? ORDER BY id DESC LIMIT 1')
     .get(row.tenant_id, release.id) as { event_hash: string } | undefined;
@@ -156,6 +164,11 @@ function deserializeSnapshot(db: Database.Database, row: RawSnapshotRow): SafeOu
   if (successor && successor.prev_hash !== release.event_hash) {
     throw new Error('polygraph: stored safe output release chain-link check failed');
   }
+}
+
+function deserializeSnapshot(db: Database.Database, row: RawSnapshotRow): SafeOutputSnapshot {
+  const rows = parseSnapshotRows(row);
+  assertReleaseProvenance(db, row);
   return {
     tenantId: row.tenant_id,
     collectorId: row.collector_id,

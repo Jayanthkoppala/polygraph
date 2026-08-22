@@ -234,45 +234,51 @@ export class Ledger {
     this.tenantId = options.tenantId ?? LOCAL_TENANT_ID;
     this.genesisHash = options.genesisHash ?? GENESIS_HASH;
 
-    if (options.initializeSchema !== false) this.db.exec(`
-      CREATE TABLE IF NOT EXISTS events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ts TEXT NOT NULL,
-        tenant TEXT NOT NULL,
-        collector TEXT NOT NULL,
-        run_id TEXT NOT NULL,
-        verdict TEXT NOT NULL,
-        cause TEXT,
-        evidence TEXT,
-        action TEXT NOT NULL,
-        heal_job_id TEXT,
-        input_hash TEXT,
-        output_hash TEXT,
-        prev_hash TEXT NOT NULL,
-        event_hash TEXT NOT NULL,
-        tenant_id TEXT
-      )
-    `);
-    // `CREATE TABLE IF NOT EXISTS` above is a no-op against a genuinely
-    // pre-existing pre-tenancy `events` table (one created by this same
-    // class before tenant_id existed) — it does NOT retrofit the new
-    // column. Self-heal that case here, unconditionally and idempotently,
-    // so `new Ledger(existingDbPath)` keeps working exactly as documented
-    // in tenant-architecture.md §8 whether or not the caller has also run
-    // src/tenancy/migrate.ts's M003 against this file. Non-destructive
-    // (ADD COLUMN, not a rebuild) and safe to run on every construction:
-    // once the column exists this is a single cheap PRAGMA lookup, no-op.
-    // Always backfills to LOCAL_TENANT_ID regardless of `options.tenantId`
-    // — a legacy single-tenant chain's existing rows are the local tenant's
-    // history by definition, never the tenant this particular instance
-    // happens to be scoped to.
-    if (options.initializeSchema !== false && !columnExists(this.db, 'events', 'tenant_id')) {
-      this.db.exec(`ALTER TABLE events ADD COLUMN tenant_id TEXT`);
-      this.db.prepare(`UPDATE events SET tenant_id = ? WHERE tenant_id IS NULL`).run(LOCAL_TENANT_ID);
-    }
-    // idx_events_tenant_id / idx_events_tenant_coll_id per
-    // tenant-architecture.md §3.
+    // Schema setup is one step, gated once: a caller that passes
+    // `initializeSchema: false` has a proven read-only connection to an
+    // already-migrated database and must not create, alter, or index
+    // anything.
     if (options.initializeSchema !== false) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts TEXT NOT NULL,
+          tenant TEXT NOT NULL,
+          collector TEXT NOT NULL,
+          run_id TEXT NOT NULL,
+          verdict TEXT NOT NULL,
+          cause TEXT,
+          evidence TEXT,
+          action TEXT NOT NULL,
+          heal_job_id TEXT,
+          input_hash TEXT,
+          output_hash TEXT,
+          prev_hash TEXT NOT NULL,
+          event_hash TEXT NOT NULL,
+          tenant_id TEXT
+        )
+      `);
+
+      // `CREATE TABLE IF NOT EXISTS` above is a no-op against a genuinely
+      // pre-existing pre-tenancy `events` table (one created by this same
+      // class before tenant_id existed) — it does NOT retrofit the new
+      // column. Self-heal that case here, unconditionally and idempotently,
+      // so `new Ledger(existingDbPath)` keeps working exactly as documented
+      // in tenant-architecture.md §8 whether or not the caller has also run
+      // src/tenancy/migrate.ts's M003 against this file. Non-destructive
+      // (ADD COLUMN, not a rebuild) and safe to run on every construction:
+      // once the column exists this is a single cheap PRAGMA lookup, no-op.
+      // Always backfills to LOCAL_TENANT_ID regardless of `options.tenantId`
+      // — a legacy single-tenant chain's existing rows are the local
+      // tenant's history by definition, never the tenant this particular
+      // instance happens to be scoped to.
+      if (!columnExists(this.db, 'events', 'tenant_id')) {
+        this.db.exec(`ALTER TABLE events ADD COLUMN tenant_id TEXT`);
+        this.db.prepare(`UPDATE events SET tenant_id = ? WHERE tenant_id IS NULL`).run(LOCAL_TENANT_ID);
+      }
+
+      // idx_events_tenant_id / idx_events_tenant_coll_id per
+      // tenant-architecture.md §3.
       this.db.exec(`CREATE INDEX IF NOT EXISTS idx_events_tenant_id ON events(tenant_id, id)`);
       this.db.exec(`CREATE INDEX IF NOT EXISTS idx_events_tenant_coll_id ON events(tenant_id, collector, id DESC)`);
     }

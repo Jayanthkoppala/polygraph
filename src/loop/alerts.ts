@@ -74,7 +74,7 @@ const DEFAULT_TIMEOUT_MS = 5_000;
  * nothing else. Never an API key, never a raw scraped row: `summary` is
  * built from Evidence[]'s own `detail` strings (rates/counts, per
  * contract.ts/coherence.ts/identity.ts), which never carry row data. */
-export interface AlertPayload {
+interface AlertPayload {
   collector: string;
   verdict: ReasonCode;
   cause: Cause | null;
@@ -278,6 +278,15 @@ export class AlertNotifier {
     }
   }
 
+  /** Sends one alert and records it against the 10-minute (collector,
+   * verdict) debounce. `post` throws before `recordSent` runs, so a failed
+   * delivery is never recorded — a webhook outage must not be mistaken for
+   * "already handled". */
+  private async deliver(webhookUrl: string, ctx: AlertContext, nowIso: string): Promise<void> {
+    await this.post(webhookUrl, this.buildPayload(ctx));
+    this.recordSent(ctx.collector, ctx.verdict, nowIso);
+  }
+
   private buildPayload(ctx: AlertContext): AlertPayload {
     return {
       collector: ctx.collector,
@@ -316,8 +325,7 @@ export class AlertNotifier {
       if (isEventShaped(ctx.verdict)) {
         const nowIso = this.nowFn();
         if (this.isDebounced(ctx.collector, ctx.verdict, nowIso)) return;
-        await this.post(webhookUrl, this.buildPayload(ctx));
-        this.recordSent(ctx.collector, ctx.verdict, nowIso);
+        await this.deliver(webhookUrl, ctx, nowIso);
         return;
       }
 
@@ -337,8 +345,7 @@ export class AlertNotifier {
       const nowIso = this.nowFn();
       if (this.isDebounced(ctx.collector, ctx.verdict, nowIso)) return; // flap guard
 
-      await this.post(webhookUrl, this.buildPayload(ctx));
-      this.recordSent(ctx.collector, ctx.verdict, nowIso);
+      await this.deliver(webhookUrl, ctx, nowIso);
       this.recordState(ctx.collector, ctx.verdict);
     } catch (err) {
       // Never let a broken notifier throw into the verification pipeline.

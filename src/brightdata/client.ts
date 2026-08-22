@@ -109,6 +109,20 @@ export interface BrightDataClientOptions {
   baseDelayMs?: number;
 }
 
+/** Poll cadence defaults, unchanged from the per-method literals they
+ * replaced: dataset/unlocker result polls, and the (much slower) Self-Healing
+ * refactor_template progress poll — Bright Data documents a heal as taking up
+ * to ~15 minutes, so its deadline leaves headroom above that. */
+const DATASET_POLL_DEFAULTS: Required<PollOptions> = { intervalMs: 5000, deadlineMs: 600_000 };
+const REFACTOR_POLL_DEFAULTS: Required<PollOptions> = { intervalMs: 10_000, deadlineMs: 20 * 60_000 };
+
+function resolvePoll(opts: PollOptions, defaults: Required<PollOptions>): Required<PollOptions> {
+  return {
+    intervalMs: opts.intervalMs ?? defaults.intervalMs,
+    deadlineMs: opts.deadlineMs ?? defaults.deadlineMs,
+  };
+}
+
 export interface PollOptions {
   /** Poll interval while the job is still building. Default 5000ms. */
   intervalMs?: number;
@@ -250,19 +264,37 @@ export class BrightDataClient {
             `request to ${path} failed after ${attempt} retr${attempt === 1 ? 'y' : 'ies'}: ${(err as Error).message}`
           );
         }
-        attempt++;
-        await this.sleep(this.baseDelayMs * 2 ** (attempt - 1));
+        await this.backoff(attempt++);
         continue;
       }
 
       if (res.status >= 500 && attempt < this.maxRetries) {
-        attempt++;
-        await this.sleep(this.baseDelayMs * 2 ** (attempt - 1));
+        await this.backoff(attempt++);
         continue;
       }
 
       return res;
     }
+  }
+
+  /** Exponential backoff before retry number `attempt` (0-based). */
+  private async backoff(attempt: number): Promise<void> {
+    await this.sleep(this.baseDelayMs * 2 ** attempt);
+  }
+
+  /** GET `path`, raise on a non-2xx, and parse the body as JSON. Callers
+   * that must tolerate an unparseable body use `safeJson` directly. */
+  private async getJson(path: string, action: string): Promise<unknown> {
+    const res = await this.fetchWithRetry(path);
+    await ensureOk(res, action);
+    return res.json();
+  }
+
+  /** One beat of a poll loop: throw once `deadlineMs` has elapsed since
+   * `start`, otherwise wait `intervalMs` before the next attempt. */
+  private async waitOrTimeout(id: string, start: number, poll: Required<PollOptions>): Promise<void> {
+    if (Date.now() - start >= poll.deadlineMs) throw new BrightDataPollTimeoutError(id, poll.deadlineMs);
+    await this.sleep(poll.intervalMs);
   }
 
   /** POST /dca/trigger?collector={c_id}&queue_next=1 — queues a batch run,
@@ -283,16 +315,14 @@ export class BrightDataClient {
   /** GET /dca/dataset?id={j_id}, polled every `intervalMs` until the job
    * leaves the "building" state (HTTP 202) or `deadlineMs` elapses. */
   async pollDataset(jobId: string, opts: PollOptions = {}): Promise<DatasetPollResult> {
-    const intervalMs = opts.intervalMs ?? 5000;
-    const deadlineMs = opts.deadlineMs ?? 600_000;
+    const poll = resolvePoll(opts, DATASET_POLL_DEFAULTS);
     const start = Date.now();
 
     for (;;) {
       const res = await this.fetchWithRetry(`/dca/dataset?id=${encodeURIComponent(jobId)}`);
 
       if (res.status === 202) {
-        if (Date.now() - start >= deadlineMs) throw new BrightDataPollTimeoutError(jobId, deadlineMs);
-        await this.sleep(intervalMs);
+        await this.waitOrTimeout(jobId, start, poll);
         continue;
       }
 
@@ -308,24 +338,19 @@ export class BrightDataClient {
       // with 200 instead of 202) is treated as still-pending rather than a
       // crash — Bright Data documents 202 for "building", but we don't want
       // a one-off status-code quirk to blow up a poll loop.
-      if (Date.now() - start >= deadlineMs) throw new BrightDataPollTimeoutError(jobId, deadlineMs);
-      await this.sleep(intervalMs);
+      await this.waitOrTimeout(jobId, start, poll);
     }
   }
 
   /** GET /dca/log/{job_id} — job metadata (status, lines, fails, success, pages, ...). */
   async jobLog(jobId: string): Promise<JobLog> {
-    const res = await this.fetchWithRetry(`/dca/log/${encodeURIComponent(jobId)}`);
-    await ensureOk(res, `jobLog(${jobId})`);
-    return (await res.json()) as JobLog;
+    return (await this.getJson(`/dca/log/${encodeURIComponent(jobId)}`, `jobLog(${jobId})`)) as JobLog;
   }
 
   /** GET /dca/jobs/{job_id}/hp_errors — per-input error details. Returns
    * `[]` (rather than throwing) when Bright Data has nothing to report. */
   async hpErrors(jobId: string): Promise<HpErrorRow[]> {
-    const res = await this.fetchWithRetry(`/dca/jobs/${encodeURIComponent(jobId)}/hp_errors`);
-    await ensureOk(res, `hpErrors(${jobId})`);
-    const body = (await res.json()) as unknown;
+    const body = await this.getJson(`/dca/jobs/${encodeURIComponent(jobId)}/hp_errors`, `hpErrors(${jobId})`);
     return Array.isArray(body) ? (body as HpErrorRow[]) : [];
   }
 
@@ -425,11 +450,10 @@ export class BrightDataClient {
    * which polls this to a terminal state; call this directly only when you
    * need a single point-in-time read. */
   async refactorTemplateProgress(collectorId: string): Promise<RefactorProgress> {
-    const res = await this.fetchWithRetry(
-      `/dca/collectors/${encodeURIComponent(collectorId)}/refactor_template/progress`
-    );
-    await ensureOk(res, `refactorTemplateProgress(${collectorId})`);
-    return (await res.json()) as RefactorProgress;
+    return (await this.getJson(
+      `/dca/collectors/${encodeURIComponent(collectorId)}/refactor_template/progress`,
+      `refactorTemplateProgress(${collectorId})`
+    )) as RefactorProgress;
   }
 
   /**
@@ -446,16 +470,14 @@ export class BrightDataClient {
    * deadlineMs (20min) leaves headroom above that.
    */
   async pollRefactorTemplateProgress(collectorId: string, opts: PollOptions = {}): Promise<RefactorProgress> {
-    const intervalMs = opts.intervalMs ?? 10_000;
-    const deadlineMs = opts.deadlineMs ?? 20 * 60_000;
+    const poll = resolvePoll(opts, REFACTOR_POLL_DEFAULTS);
     const start = Date.now();
 
     for (;;) {
       const progress = await this.refactorTemplateProgress(collectorId);
       const status = String(progress.status ?? '').toLowerCase();
 
-      if (REFACTOR_SUCCESS_STATES.has(status)) return progress;
-      if (isAwaitingApproval(progress)) return progress;
+      if (REFACTOR_SUCCESS_STATES.has(status) || isAwaitingApproval(progress)) return progress;
       if (REFACTOR_FAILURE_STATES.has(status)) {
         throw new BrightDataError(
           `refactor_template job for ${collectorId} ended with status "${progress.status}"`,
@@ -464,8 +486,7 @@ export class BrightDataClient {
         );
       }
 
-      if (Date.now() - start >= deadlineMs) throw new BrightDataPollTimeoutError(collectorId, deadlineMs);
-      await this.sleep(intervalMs);
+      await this.waitOrTimeout(collectorId, start, poll);
     }
   }
 
@@ -491,8 +512,7 @@ export class BrightDataClient {
   }
 
   private async pollUnlockerResult(responseId: string, opts: PollOptions): Promise<string> {
-    const intervalMs = opts.intervalMs ?? 5000;
-    const deadlineMs = opts.deadlineMs ?? 600_000;
+    const poll = resolvePoll(opts, DATASET_POLL_DEFAULTS);
     const start = Date.now();
 
     for (;;) {
@@ -501,8 +521,7 @@ export class BrightDataClient {
       );
 
       if (res.status === 202) {
-        if (Date.now() - start >= deadlineMs) throw new BrightDataPollTimeoutError(responseId, deadlineMs);
-        await this.sleep(intervalMs);
+        await this.waitOrTimeout(responseId, start, poll);
         continue;
       }
 
