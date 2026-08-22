@@ -4,6 +4,9 @@ A verification layer for Bright Data scraper fleets: it runs canary checks again
 each collector, tells real breakage apart from noise, and keeps an auditable ledger
 of incidents.
 
+**Read [`AGENTS.md`](AGENTS.md) first** — layout, house rules, and the traps that have
+already cost debugging time. This file is the Bright Data account pin and command list.
+
 ## Collector ID pin
 
 **Reuse these. Do not create a new collector for a task an existing one covers** —
@@ -67,7 +70,8 @@ the CLI falls back to batch mode, so expect a few minutes rather than seconds.
 ## Commands
 
 - `npm test` — run the vitest suite
-- `npm run typecheck` — typecheck src/ and test/
+- `npm run typecheck` — typecheck `src/` and `scripts/test/`
+- `npm run typecheck:all` / `npm run test:all` — both halves, server and front end
 - `npm run build` — compile TypeScript to `dist/`
 - `npx tsx src/index.ts --help` — run the CLI from source without building
 - `polygraph run [--collector <id>]` — run a single verification pass across the
@@ -86,10 +90,12 @@ the CLI falls back to batch mode, so expect a few minutes rather than seconds.
 
 ## Docs
 
-`reference/docs/llms-full.txt` is the offline Bright Data docs — grep it before
-guessing any API shape.
+The offline Bright Data docs are at `~/Documents/OSC/polygraph-reference/docs/llms-full.txt`
+(moved out of this repo) — grep them before guessing any API shape.
+
+`deploy/README.md` is authoritative for how the live instance runs.
 
 ## Config
 
 `fleet.yaml` (see `fleet.example.yaml`) declares the tenant, collectors, policy,
-and alert settings. It is loaded and validated by `src/config.ts`.
+and alert settings. It is loaded and validated by `src/core/config.ts`.
