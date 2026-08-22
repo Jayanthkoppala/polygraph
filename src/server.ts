@@ -45,23 +45,9 @@ export interface ServerDeps {
   config: FleetConfig;
   ledger: Ledger;
   governor: Governor;
-  /** Directory containing the CLASSIC dashboard's index.html (the original
-   * single-page `web/` dashboard). Defaults to the repo's `web/` directory
-   * (resolved relative to this module, so it works identically run via
-   * `tsx src/server.ts` in dev and from compiled `dist/server.js`).
-   * Injectable for tests.
-   *
-   * Passing this explicitly opts OUT of the app/dist SPA resolution below —
-   * it forces classic single-page serving of exactly this directory,
-   * matching this field's original (pre-SPA) behavior. That keeps every
-   * caller that already depends on "webDir means THE dashboard" (this
-   * module's own test suite) working unchanged; only the argument-free
-   * default path (`polygraph demo`/`watch`) picks up the new React app. */
-  webDir?: string;
-  /** Directory containing the built React app (`app/dist`) — the new
-   * dashboard `polygraph demo`/`watch` prefer per docs/demo.md. Defaults to
-   * `../app/dist` resolved relative to this module. Injectable for tests.
-   * Ignored when `webDir` is explicitly set (see its own doc comment). */
+  /** Directory containing the built React app (`app/dist`) — the dashboard
+   * `polygraph demo`/`watch` serve. Defaults to `../app/dist` resolved
+   * relative to this module. Injectable for tests. */
   appDir?: string;
   /** Clock, injectable for tests. Defaults to `() => new Date().toISOString()`. */
   now?: () => string;
@@ -373,53 +359,12 @@ export function ackLedgerEvent(ledger: Ledger, ledgerId: number, nowIso: string)
   });
 }
 
-function defaultWebDir(): string {
-  // src/server.ts (dev, via tsx) and dist/server.js (compiled) both live one
-  // directory below the repo root, same as web/ — so "../web" resolves
-  // correctly from either location.
-  return fileURLToPath(new URL('../web', import.meta.url));
-}
-
 function defaultAppDir(): string {
-  // Same one-directory-below-repo-root resolution as defaultWebDir() above,
-  // mirroring tenancy/serve.ts's own defaultWebDir() for app/dist.
+  // src/server.ts (dev, via tsx) and dist/server.js (compiled) both live one
+  // directory below the repo root, so `../app/dist` resolves from either.
   return fileURLToPath(new URL('../app/dist', import.meta.url));
 }
 
-interface ResolvedDashboardDir {
-  mode: 'spa' | 'classic';
-  dir: string;
-}
-
-/**
- * Picks which directory `GET /` (and, in `spa` mode, every other unmatched
- * GET) serves from, per ServerDeps.webDir/appDir's own doc comments:
- *
- * - `deps.webDir` set explicitly -> always `classic` mode against exactly
- *   that directory (back-compat with every existing caller/test that passes
- *   `webDir` expecting the original single-page behavior).
- * - otherwise, the built React app (`deps.appDir` or `../app/dist`) if it
- *   exists -> `spa` mode.
- * - otherwise (a fresh clone that hasn't run `cd app && npm run build`
- *   yet) -> fall back to the classic `web/` dashboard, which ships in the
- *   repo and always exists, so `polygraph demo`/`watch` never serve a blank
- *   page or crash. One line on stderr says why, so this doesn't look like a
- *   silent regression to whoever's running it.
- */
-function resolveDashboardDir(deps: Pick<ServerDeps, 'webDir' | 'appDir'>): ResolvedDashboardDir {
-  if (deps.webDir) return { mode: 'classic', dir: deps.webDir };
-
-  const appDir = deps.appDir ?? defaultAppDir();
-  if (hasBuiltApp(appDir)) return { mode: 'spa', dir: appDir };
-
-  process.stderr.write(
-    'polygraph: app/dist not found — serving the classic dashboard. Run `cd app && npm run build` for the new UI.\n'
-  );
-  return { mode: 'classic', dir: defaultWebDir() };
-}
-
-/** Exported so tenancy/http-routes.ts's own JSON responses use the exact
- * same content-type/content-length framing as this module's routes. */
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -483,11 +428,11 @@ export function parseLimit(raw: string | null, fallback: number): number {
  * matches how `Ledger`/`Governor`/`AlertNotifier` all leave lifecycle to
  * their caller rather than managing it themselves. */
 export function createServer(deps: ServerDeps): Server {
-  const dashboard = resolveDashboardDir(deps);
+  const appDir = deps.appDir ?? defaultAppDir();
   const nowFn = deps.now ?? (() => new Date().toISOString());
 
   return createHttpServer((req, res) => {
-    void handleRequest(req, res, deps, dashboard, nowFn);
+    void handleRequest(req, res, deps, appDir, nowFn);
   });
 }
 
@@ -495,7 +440,7 @@ async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   deps: ServerDeps,
-  dashboard: ResolvedDashboardDir,
+  appDir: string,
   nowFn: () => string
 ): Promise<void> {
   try {
@@ -576,21 +521,12 @@ async function handleRequest(
       return;
     }
 
-    if (method === 'GET') {
-      if (dashboard.mode === 'spa') {
-        await serveStaticOrSpa(url.pathname, dashboard.dir, res);
-        return;
-      }
-      // Classic mode: exactly one static page at '/', same as this
-      // module's original (pre-SPA) behavior — anything else genuinely 404s
-      // rather than SPA-shelling paths a single-page dashboard never had
-      // client-side routes for.
-      if (url.pathname === '/') {
-        const html = await readFile(join(dashboard.dir, 'index.html'), 'utf8');
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        res.end(html);
-        return;
-      }
+    // Unmatched API paths must stay a real 404 — only app routes fall
+    // through to the SPA shell, or a typo'd endpoint would answer 200 HTML
+    // and look like a working call to whoever wrote it.
+    if (method === 'GET' && !url.pathname.startsWith('/api/')) {
+      await serveStaticOrSpa(url.pathname, appDir, res);
+      return;
     }
 
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });

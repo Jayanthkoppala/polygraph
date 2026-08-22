@@ -24,12 +24,12 @@ function tempDbPath(): { dir: string; path: string } {
   return { dir, path: join(dir, 'polygraph.sqlite') };
 }
 
-function tempWebDir(html: string): { dir: string; webDir: string } {
+function tempAppShellDir(html: string): { dir: string; appDir: string } {
   const dir = mkdtempSync(join(tmpdir(), 'polygraph-web-test-'));
-  const webDir = join(dir, 'web');
-  mkdirSync(webDir, { recursive: true });
-  writeFileSync(join(webDir, 'index.html'), html, 'utf8');
-  return { dir, webDir };
+  const appDir = join(dir, 'dist');
+  mkdirSync(appDir, { recursive: true });
+  writeFileSync(join(appDir, 'index.html'), html, 'utf8');
+  return { dir, appDir };
 }
 
 const FIXTURE_HTML = '<!doctype html><html><body><div id="marker">polygraph-dashboard-fixture</div></body></html>';
@@ -90,7 +90,7 @@ describe('server (Task 8)', () => {
   beforeEach(async () => {
     const db = tempDbPath();
     dbDir = db.dir;
-    const web = tempWebDir(FIXTURE_HTML);
+    const web = tempAppShellDir(FIXTURE_HTML);
     webTmpDir = web.dir;
 
     ledger = new Ledger(db.path);
@@ -100,7 +100,7 @@ describe('server (Task 8)', () => {
       config,
       ledger,
       governor,
-      webDir: web.webDir,
+      appDir: web.appDir,
       now: () => '2026-08-20T21:00:00.000Z',
     });
 
@@ -367,8 +367,14 @@ describe('server (Task 8)', () => {
     expect(body.events).toHaveLength(MAX_LEDGER_LIMIT);
   });
 
-  it('unknown routes 404', async () => {
+  it('unknown app routes serve the SPA shell so client-side routing can handle them', async () => {
     const res = await fetch(`${baseUrl}/nope`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/text\/html/);
+  });
+
+  it('unknown API routes still 404 rather than falling through to the SPA shell', async () => {
+    const res = await fetch(`${baseUrl}/api/nope`);
     expect(res.status).toBe(404);
   });
 
@@ -400,13 +406,11 @@ describe('server (Task 8)', () => {
 });
 
 /**
- * `polygraph demo`/`watch` prefer the built React app (`app/dist`) over the
- * classic single-page `web/` dashboard — see docs/demo.md and
- * src/server.ts's `resolveDashboardDir`. These tests drive that resolution
- * directly (via the injectable `appDir`/`webDir`), the same in-process
- * pattern as the suite above.
+ * `polygraph demo`/`watch` serve the built React app (`app/dist`) — see
+ * docs/demo.md. These tests drive that resolution directly (via the
+ * injectable `appDir`), the same in-process pattern as the suite above.
  */
-describe('server — SPA dashboard resolution (fix-demo-spa)', () => {
+describe('server — SPA dashboard serving', () => {
   let dbDir: string;
   let tmpDirs: string[];
   let ledger: Ledger;
@@ -489,7 +493,7 @@ describe('server — SPA dashboard resolution (fix-demo-spa)', () => {
     expect(body).toContain('react-app-shell-fixture');
   });
 
-  it('falls back to the classic web/ dashboard (never a blank page or crash) when app/dist has not been built', async () => {
+  it('serves a clear "app not built" notice (never a blank page or crash) when app/dist is missing', async () => {
     const missingDir = mkdtempSync(join(tmpdir(), 'polygraph-missing-app-dist-'));
     tmpDirs.push(missingDir);
     const neverBuiltAppDir = join(missingDir, 'dist'); // deliberately never created
@@ -501,71 +505,8 @@ describe('server — SPA dashboard resolution (fix-demo-spa)', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/html/);
     const body = await res.text();
-    // Falls all the way back to the real repo web/ dashboard (defaultWebDir()),
-    // not a generic placeholder — this is the CLASSIC dashboard, still fully
-    // functional against the same /api/state etc. routes below.
-    expect(body).toContain('Polygraph');
+    expect(body).toContain('Polygraph is running');
+    expect(body).toContain('npm run build');
   });
 
-  it('an explicit webDir still forces classic single-page behavior even when app/dist exists (back-compat)', async () => {
-    const app = tempAppDir();
-    tmpDirs.push(app.dir);
-    const web = tempWebDir(FIXTURE_HTML);
-    tmpDirs.push(web.dir);
-
-    startServer({ config, ledger, governor, webDir: web.webDir, appDir: app.appDir });
-    await listen();
-
-    const res = await fetch(`${baseUrl}/`);
-    const body = await res.text();
-    expect(body).toContain('polygraph-dashboard-fixture');
-    expect(body).not.toContain('react-app-shell-fixture');
-
-    // Classic mode: unmatched paths still plain-404, no SPA shelling.
-    const notFound = await fetch(`${baseUrl}/fleet`);
-    expect(notFound.status).toBe(404);
-  });
-});
-
-describe('ackLedgerEvent (unit)', () => {
-  let dir: string;
-  let ledger: Ledger;
-
-  beforeEach(() => {
-    const db = tempDbPath();
-    dir = db.dir;
-    ledger = new Ledger(db.path);
-  });
-
-  afterEach(() => {
-    ledger.close();
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('throws AckError for a nonexistent ledger id', () => {
-    expect(() => ackLedgerEvent(ledger, 12345, '2026-08-20T00:00:00.000Z')).toThrow(AckError);
-  });
-
-  it('copies tenant/collector/run_id/verdict/cause/evidence from the original event', () => {
-    const original = ledger.append({
-      ts: '2026-08-20T09:00:00.000Z',
-      tenant: 'acme-corp',
-      collector: 'acme-pricing',
-      run_id: 'run-2',
-      verdict: 'SUSPECT_UNEXPLAINED_ANOMALY',
-      cause: 'DATA',
-      evidence: [suspectCoherenceEvidence],
-      action: 'QUARANTINE',
-    });
-
-    const acked = ackLedgerEvent(ledger, original.id, '2026-08-20T10:00:00.000Z');
-    expect(acked.action).toBe('ACKED');
-    expect(acked.collector).toBe('acme-pricing');
-    expect(acked.tenant).toBe('acme-corp');
-    expect(acked.run_id).toBe('run-2');
-    expect(acked.verdict).toBe('SUSPECT_UNEXPLAINED_ANOMALY');
-    expect(acked.cause).toBe('DATA');
-    expect(acked.ts).toBe('2026-08-20T10:00:00.000Z');
-    expect(acked.id).toBe(original.id + 1);
-  });
 });

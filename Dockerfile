@@ -41,7 +41,6 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/app/dist ./app/dist
 COPY package.json ./
-COPY web ./web
 
 # The volume mount point, owned by the unprivileged `node` user BEFORE the
 # volume is mounted — otherwise Fly's volume mount creates it root-owned and

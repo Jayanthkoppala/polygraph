@@ -29,7 +29,6 @@
   },
   "files": [
     "dist/",
-    "web/",
     "app/dist/",
     "docs/AI-ASSISTANCE.md",
     "docs/MCP.md",
