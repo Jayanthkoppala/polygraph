@@ -10,7 +10,7 @@ interface ConnectionShellProps {
 }
 
 const steps = [
-  { label: 'Google account', detail: 'Private workspace' },
+  { label: 'Local workspace', detail: 'This browser' },
   { label: 'Bright Data', detail: 'Verify API token' },
   { label: 'Collector', detail: 'Choose what to watch' },
   { label: 'Delivery', detail: 'Receive finished runs' },

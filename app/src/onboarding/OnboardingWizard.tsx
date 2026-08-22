@@ -3,17 +3,16 @@
  * between steps on `state.stage`. The customer journey has four visible
  * stages: Google identity, Bright Data token, collector, and delivery.
  *
- * The pre-step is Google Identity Services. Its signed credential is
- * verified server-side and exchanged for Polygraph's HttpOnly session,
- * then the browser navigates to `/app`. Whichever route mounts this wizard
- * after that redirect passes `initialStage="key-paste"` so a returning,
- * authenticated-but-keyless tenant resumes at Bright Data connection.
+ * The pre-step creates an anonymous browser workspace through the existing
+ * one-time server exchange. The opaque tenant marker is retained locally;
+ * the real HttpOnly session and every Bright Data secret remain server-side.
  */
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { onboardingReducer, initialOnboardingState, type OnboardingStage } from './machine';
 import { connectCollector } from './api';
 import { ConnectionShell } from './ConnectionShell';
-import { GoogleAuthStep } from './steps/GoogleAuthStep';
+import { exchangeTokenUrl } from './api';
+import { LocalWorkspaceStep } from './steps/LocalWorkspaceStep';
 import { KeyPasteStep } from './steps/KeyPasteStep';
 import { CollectorsFoundStep, CollectorsFallbackStep } from './steps/CollectorsStep';
 import { FirstVerdictStep } from './steps/FirstVerdictStep';
@@ -113,10 +112,23 @@ export function OnboardingWizard({ initialStage, onComplete }: OnboardingWizardP
   }, [state]);
 
   if (state.stage === 'signup') {
-    // Google authentication creates the session and renders stage one of the
-    // same four-stage visual journey.
+    // A one-click browser workspace keeps hackathon access open to judges;
+    // only an opaque tenant id is written locally. The capability token is
+    // immediately exchanged for the real HttpOnly session.
     return (
-      <GoogleAuthStep onAuthenticated={() => window.location.assign('/app')} />
+      <LocalWorkspaceStep
+        onWorkspaceCreated={({ token, tenantId }) => {
+          try {
+            window.localStorage.setItem(
+              'polygraph.workspace',
+              JSON.stringify({ tenantId, createdAt: new Date().toISOString() }),
+            );
+          } catch {
+            // Local storage can be disabled. The HttpOnly session still works.
+          }
+          window.location.assign(exchangeTokenUrl(token));
+        }}
+      />
     );
   }
 

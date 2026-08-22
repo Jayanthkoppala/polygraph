@@ -2,8 +2,8 @@
  * OnboardingEntry — mounted at `/signup` and `/login` (the landing nav's
  * two real links, `app/src/landing/LandingPage.tsx`). Both routes resolve
  * to the same question — "does this browser already have a session?" An
- * anonymous visitor sees Google sign-in; a returning user resumes exactly
- * where their Bright Data connection stopped.
+ * anonymous visitor sees a one-click local workspace; a returning user
+ * resumes exactly where their Bright Data connection stopped.
  *
  * A returning, authenticated-but-keyless tenant (closed the tab mid-
  * onboarding, then clicked "Sign in" or revisited /signup) must resume at

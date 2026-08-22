@@ -144,6 +144,26 @@
 .google-auth-card-body > p:not(.google-auth-kicker) { margin: 13px 0 0; color: var(--ga-muted); font-size: 14px; line-height: 1.6; }
 .google-auth-button-frame { position: relative; display: grid; min-height: 54px; margin-top: 30px; place-items: center; border-radius: 28px; }
 .google-auth-button-frame > div { min-height: 44px; }
+.google-auth-local-button {
+  display: flex;
+  width: 100%;
+  height: 52px;
+  margin-top: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid rgba(196, 181, 253, .24);
+  border-radius: 26px;
+  background: linear-gradient(135deg, #7c3aed, #6940d8);
+  box-shadow: 0 16px 42px rgba(76, 29, 149, .3), inset 0 1px rgba(255, 255, 255, .15);
+  color: #fff;
+  font: 600 13px/1 ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+  transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease;
+}
+.google-auth-local-button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 20px 48px rgba(76, 29, 149, .42), inset 0 1px rgba(255, 255, 255, .17); }
+.google-auth-local-button:active:not(:disabled) { transform: translateY(1px); }
+.google-auth-local-button:disabled { cursor: wait; opacity: .68; }
 .google-auth-loading { position: absolute; inset: 0; display: grid; place-items: center; border: 1px solid var(--ga-line); border-radius: 28px; background: #15131b; color: #b9b5bf; font-size: 13px; }
 .google-auth-error { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; padding: 12px 14px; border: 1px solid rgba(248, 113, 113, .28); border-radius: 12px; background: rgba(127, 29, 29, .12); color: #fecaca; font-size: 12px; }
 .google-auth-error button { border: 0; background: none; color: #fff; font: inherit; text-decoration: underline; cursor: pointer; }
@@ -158,4 +178,7 @@
   .google-auth-story { display: none; }
   .google-auth-card { padding: 28px 24px; }
 }
-@media (prefers-reduced-motion: reduce) { .google-auth-card-glow { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .google-auth-card-glow { animation: none; }
+  .google-auth-local-button { transition: none; }
+}
