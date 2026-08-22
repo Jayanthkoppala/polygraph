@@ -16,7 +16,7 @@ export function readDemoMissionConfig(env: NodeJS.ProcessEnv = process.env): Dem
   if (Object.values(values).some((value) => !value || value.trim() === '')) return undefined;
   const requestedMax = Number(env.POLYGRAPH_DEMO_MAX_MISSIONS ?? '2');
   const freshProofToken = env.POLYGRAPH_DEMO_FRESH_PROOF_TOKEN?.trim();
-  return { ...values as Omit<DemoMissionConfig, 'maxMissions'>, maxMissions: Number.isInteger(requestedMax) && requestedMax > 0 ? Math.min(requestedMax, 3) : 2, ...(freshProofToken ? { freshProofToken } : {}) };
+  return { ...values as Omit<DemoMissionConfig, 'maxMissions'>, maxMissions: Number.isInteger(requestedMax) && requestedMax > 0 ? Math.min(requestedMax, 2) : 2, ...(freshProofToken ? { freshProofToken } : {}) };
 }
 export function createDemoMissionService(config: DemoMissionConfig, store?: DemoMissionStore): DemoMissionService { const github = new GithubFixtureClient({ config }); const brightData: DemoBrightDataClient = new BrightDataClient({ apiKey: config.brightDataApiKey }); return new DemoMissionService({ config, github, brightData, store }); }
 function sendJson(res: ServerResponse, status: number, body: unknown): void { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); }

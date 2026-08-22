@@ -29,11 +29,11 @@ afterEach(() => {
   const restore = (key: string, value: string | undefined) => { if (value === undefined) delete process.env[key]; else process.env[key] = value; };
   restore('POLYGRAPH_HEAL_ENABLED', savedGateEnv.heal); restore('POLYGRAPH_DEMO_LIVE', savedGateEnv.live); restore('POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE', savedGateEnv.autosave); restore('POLYGRAPH_DEMO_COLLECTOR_ID', savedGateEnv.collector); restore('POLYGRAPH_DEMO_FIXTURE_URL', savedGateEnv.fixture);
 });
-function fakes(options: { brokenRow?: Record<string, unknown>; healthyRow?: Record<string, unknown>; recoveredRow?: Record<string, unknown>; rows?: Record<string, unknown>[]; maxMissions?: number; store?: DemoMissionStore } = {}) {
-  const calls: string[] = []; let dataset = 0; let ids = 0; let generation = 100; let healPolls = 0;
+function fakes(options: { brokenRow?: Record<string, unknown>; healthyRow?: Record<string, unknown>; recoveredRow?: Record<string, unknown>; rows?: Record<string, unknown>[]; jobIds?: string[]; idOffset?: number; maxMissions?: number; store?: DemoMissionStore } = {}) {
+  const calls: string[] = []; let dataset = 0; let ids = options.idOffset ?? 0; let generation = 100; let healPolls = 0;
   const github: DemoGithubClient = { workflowUrl: 'https://github.test/workflow', async dispatch(version, value, missionId) { calls.push(`dispatch:${version}:${value}:${missionId}`); }, async waitForMarker(version, value, missionId) { calls.push(`marker:${version}:${value}:${missionId}`); } };
   const brightData: DemoBrightDataClient = {
-    async trigger() { dataset++; calls.push(`trigger:${dataset}`); return `job-${dataset}`; },
+    async trigger() { dataset++; calls.push(`trigger:${dataset}`); return options.jobIds?.[dataset - 1] ?? `job-${dataset}`; },
     async pollDataset() { calls.push(`poll:${dataset}`); const phase = (dataset - 1) % 3; const row = options.rows?.[dataset - 1] ?? (phase === 0 ? options.healthyRow ?? HEALTHY_ROW : phase === 1 ? options.brokenRow ?? BROKEN_ROW : options.recoveredRow ?? options.healthyRow ?? HEALTHY_ROW); return { rows: [row], ambiguous: false }; },
     async refactorTemplate() { calls.push('heal:start'); return {}; }, async pollRefactorTemplateProgress() { calls.push('heal:poll'); healPolls++; return healPolls % 2 === 0 ? { status: 'completed', id: 'heal-1' } : { status: 'pending_answer', id: 'heal-1' }; }, async resumeAutomationJob(_id, opts) { calls.push(`heal:resume:${opts.message}:${opts.autoSave}`); },
   };
@@ -82,6 +82,13 @@ describe('demo mission sequence', () => {
     const mission = service.create(); await service.whenSettled(mission.id); service.shift(mission.id); await service.whenSettled(mission.id);
     expect(service.current(mission.id)).toMatchObject({ status: 'error', scene: 'broken_v2' });
     expect(service.current(mission.id)?.last_error).toMatch(/wrong product identity/);
+    expect(calls).not.toContain('heal:start');
+  });
+  it('rejects a reused Bright Data scrape job before it can become a false proof', async () => {
+    const { calls, service } = fakes({ jobIds: ['job-1', 'job-1'] });
+    const mission = service.create(); await service.whenSettled(mission.id); service.shift(mission.id); await service.whenSettled(mission.id);
+    expect(service.current(mission.id)).toMatchObject({ status: 'error', scene: 'broken_v2' });
+    expect(service.current(mission.id)?.last_error).toMatch(/reused Bright Data job id job-1/);
     expect(calls).not.toContain('heal:start');
   });
   it('describes the exact three-field regression while availability remains healthy', async () => {
@@ -133,16 +140,18 @@ describe('demo mission sequence', () => {
     const mission = service.create(); await service.whenSettled(mission.id);
     expect(service.current(mission.id)?.last_error).toMatch(/finite numeric price\.value/);
   });
-  it('rejects C when any recovered field still differs from the V1 baseline', async () => {
+  it('rejects C when any recovered field still differs from the healthy baseline', async () => {
     const { service } = fakes({ recoveredRow: { ...HEALTHY_ROW, title: `${PRODUCT_TITLE} (wrong)` } });
     const mission = service.create(); await service.whenSettled(mission.id); service.shift(mission.id); await service.whenSettled(mission.id);
-    expect(service.current(mission.id)?.last_error).toMatch(/still differs from the V1 contract on title/);
+    expect(service.current(mission.id)?.last_error).toMatch(/still differs from the healthy baseline on title/);
   });
-  it('reset confirms V1 without scraping, releases lease, and gives the next mission fresh caps', async () => {
+  it('resets a healed fixture without mutating or removing its receipt', async () => {
     const { calls, service } = fakes(); const first = service.create(); await service.whenSettled(first.id); service.shift(first.id); await service.whenSettled(first.id);
+    const receiptBeforeReset = structuredClone(service.current(first.id));
     calls.length = 0; service.reset(first.id); await service.whenSettled(first.id);
     expect(calls).toEqual(['dispatch:v1:103:mission-1', 'marker:v1:103:mission-1']);
-    const second = service.create(); await service.whenSettled(second.id); expect(second.id).toBe('mission-2'); expect(calls.slice(-4)).toEqual(['dispatch:v1:104:mission-2', 'marker:v1:104:mission-2', 'trigger:4', 'poll:4']);
+    expect(service.current(first.id)).toEqual(receiptBeforeReset);
+    expect(service.acquire()).toMatchObject({ reused: true, mission: { id: first.id, status: 'healed', scene: 'receipt' } });
   });
 
   it('keeps the first receipt immutable while a token-gated second mission advances V2 to V3', async () => {
@@ -207,6 +216,19 @@ describe('demo mission sequence', () => {
     expect(calls).toContain('dispatch:v3:104:mission-2');
   });
 
+  it('allows a failed fresh mission fixture reset without changing the public replay receipt', async () => {
+    const { calls, service } = fakes({ maxMissions: 2, rows: [HEALTHY_ROW, BROKEN_ROW, HEALTHY_ROW, HEALTHY_ROW, { ...BROKEN_ROW, product_code: 'Product/Code-999' }] });
+    const first = service.startFresh(); await service.whenSettled(first.id); service.shift(first.id); await service.whenSettled(first.id);
+    const second = service.startFresh(); await service.whenSettled(second.id); service.shift(second.id); await service.whenSettled(second.id);
+    expect(service.current(second.id)?.status).toBe('error');
+    calls.length = 0;
+    expect(() => service.reset(second.id)).not.toThrow();
+    await service.whenSettled(second.id);
+    expect(calls).toEqual(['dispatch:v2:105:mission-2', 'marker:v2:105:mission-2']);
+    expect(service.current(second.id)).toMatchObject({ status: 'error' });
+    expect(service.acquire()).toMatchObject({ reused: true, mission: { id: first.id, status: 'healed' } });
+  });
+
   it('persists a completed proof and rehydrates it after restart without scheduling provider work', async () => {
     const db = new Database(':memory:');
     migrate(db, ':memory:');
@@ -226,6 +248,37 @@ describe('demo mission sequence', () => {
       expect.objectContaining({ id: mission.id, status: 'verified', changed_fields: ['product_code', 'title', 'price'] }),
     ]);
     expect(() => restarted.service.startFresh()).toThrow(/budget allows 1 mission/);
+    db.close();
+  });
+
+  it('quarantines a fresh mission when Bright Data returns a job id already recorded by a loaded receipt', async () => {
+    const db = new Database(':memory:');
+    migrate(db, ':memory:');
+    const store = new SqliteDemoMissionStore(db);
+    const first = fakes({ maxMissions: 2, store });
+    const receipt = first.service.startFresh(); await first.service.whenSettled(receipt.id); first.service.shift(receipt.id); await first.service.whenSettled(receipt.id);
+    const restarted = fakes({ maxMissions: 2, store, jobIds: ['job-3'], idOffset: 10 });
+    const duplicate = restarted.service.startFresh();
+    await restarted.service.whenSettled(duplicate.id);
+    expect(restarted.service.current(duplicate.id)).toMatchObject({ status: 'error', last_error: expect.stringMatching(/reused Bright Data job id job-3/) });
+    expect(restarted.calls).toEqual(['dispatch:v2:101:mission-11', 'marker:v2:101:mission-11', 'trigger:1']);
+    db.close();
+  });
+
+  it('rehydrates two completed receipts newest-first, refuses the bounded fresh budget, and replays the newest without provider work', async () => {
+    const db = new Database(':memory:');
+    migrate(db, ':memory:');
+    const store = new SqliteDemoMissionStore(db);
+    const first = fakes({ maxMissions: 2, store });
+    const v1 = first.service.startFresh(); await first.service.whenSettled(v1.id); first.service.shift(v1.id); await first.service.whenSettled(v1.id);
+    const v2 = first.service.startFresh(); await first.service.whenSettled(v2.id); first.service.shift(v2.id); await first.service.whenSettled(v2.id);
+    expect(first.service.repairReceipts()).toMatchObject([{ id: v2.id }, { id: v1.id }]);
+
+    const restarted = fakes({ maxMissions: 2, store });
+    expect(restarted.service.repairReceipts()).toMatchObject([{ id: v2.id }, { id: v1.id }]);
+    expect(() => restarted.service.startFresh()).toThrow(/budget allows 2 mission/);
+    expect(restarted.service.acquire()).toMatchObject({ reused: true, mission: { id: v2.id, status: 'healed', scene: 'receipt' } });
+    expect(restarted.calls).toEqual([]);
     db.close();
   });
 });
@@ -264,7 +317,7 @@ describe('demo mission HTTP API', () => {
 
     expect(replay.status).toBe(200);
     expect(await replay.json()).toMatchObject({ id: first.id, reused: true });
-    expect(service.current(first.id)).toMatchObject({ scene: 'landing', status: 'idle' });
+    expect(service.current(first.id)).toMatchObject({ scene: 'receipt', status: 'healed' });
     expect(calls).toEqual(callsBeforeReplay);
   });
 
@@ -322,5 +375,9 @@ describe('demo mission configuration', () => {
   });
   it('loads the fresh-proof token only from the server environment', () => {
     expect(readDemoMissionConfig({ ...env, POLYGRAPH_DEMO_FRESH_PROOF_TOKEN: 'operator-proof-token-which-is-long-and-random' })?.freshProofToken).toBe('operator-proof-token-which-is-long-and-random');
+  });
+  it('hard-caps fresh proof configuration at two missions', () => {
+    expect(readDemoMissionConfig({ ...env, POLYGRAPH_DEMO_MAX_MISSIONS: '3' })?.maxMissions).toBe(2);
+    expect(readDemoMissionConfig({ ...env, POLYGRAPH_DEMO_MAX_MISSIONS: '999' })?.maxMissions).toBe(2);
   });
 });

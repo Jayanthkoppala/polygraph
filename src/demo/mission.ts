@@ -119,7 +119,7 @@ function assertRecoveredRow(result: DatasetPollResult, label: string, config: De
   if (typeof row.product_code !== 'string' || !row.product_code.trim()) throw new Error(`${label} did not return the required literal product_code field`);
   assertMoneyShape(row.price, label, config);
   const changedFields = changedFixtureFields(baseline, observation);
-  if (changedFields.length > 0) throw new Error(`${label} still differs from the V1 contract on ${humanList(changedFields)}`);
+  if (changedFields.length > 0) throw new Error(`${label} still differs from the healthy baseline on ${humanList(changedFields)}`);
   return observation;
 }
 function humanList(values: string[]): string {
@@ -161,12 +161,12 @@ export class DemoMissionService {
   repairReceipts(limit = 100): DemoRepairReceipt[] {
     return [...this.missions.values()]
       .filter((mission) => mission.status === 'healed' && mission.scene === 'receipt')
-      .flatMap((mission) => {
+      .flatMap((mission, order) => {
         const difference = mission.events.find((event) => event.step === 'difference');
         const prompt = mission.events.find((event) => event.step === 'healing_prompt');
         const receipt = mission.events.find((event) => event.step === 'receipt');
         if (!difference || !prompt || !receipt) return [];
-        return [{
+        return [{ receipt: {
           id: mission.id,
           source: 'demo' as const,
           mission_id: mission.id,
@@ -186,14 +186,16 @@ export class DemoMissionService {
           proof_run_id: mission.evidence.proof_run_id,
           terminal_ledger_id: null,
           event_hash: null,
-        }];
+        }, order }];
       })
-      .sort((a, b) => b.completed_at.localeCompare(a.completed_at))
-      .slice(0, Math.max(1, Math.floor(limit)));
+      .sort((a, b) => b.receipt.completed_at.localeCompare(a.receipt.completed_at)
+        || Number(b.receipt.id === this.lastReceiptId) - Number(a.receipt.id === this.lastReceiptId)
+        || b.order - a.order)
+      .slice(0, Math.max(1, Math.floor(limit)))
+      .map(({ receipt }) => receipt);
   }
   whenSettled(id: string): Promise<void> { const runtime = this.runtimes.get(id); if (!runtime) return Promise.reject(new DemoMissionNotFoundError(id)); return runtime.settled; }
   acquire(): { mission: DemoMission; reused: boolean } {
-    if (this.activeId) return { mission: this.require(this.activeId), reused: true };
     if (this.lastReceiptId) {
       return { mission: this.require(this.lastReceiptId), reused: true };
     }
@@ -203,7 +205,7 @@ export class DemoMissionService {
   startFresh(): DemoMission {
     const active = this.activeId ? this.require(this.activeId) : undefined;
     if (active && (active.status === 'running' || active.status === 'waiting')) throw new DemoMissionLeaseError();
-    const maxMissions = this.deps.config.maxMissions ?? 2;
+    const maxMissions = Math.min(this.deps.config.maxMissions ?? 2, 2);
     // Hydrated durable receipts plus fresh attempts started in this process.
     // A completed same-process attempt is already represented by createdMissions.
     if (this.completedMissions + this.createdMissions >= maxMissions) throw new DemoMissionBudgetError(maxMissions);
@@ -222,11 +224,19 @@ export class DemoMissionService {
   }
   reset(id: string): DemoMission {
     const mission = this.require(id);
-    if (this.activeId !== id || mission.status === 'running') throw new DemoMissionConflictError('reset is unavailable while the mission is running');
+    if (mission.status === 'running') throw new DemoMissionConflictError('reset is unavailable while the mission is running');
+    // A receipt is immutable evidence. Resetting the live fixture must never
+    // turn it back into an idle mission or erase its replay target. The same
+    // rule lets an operator reset a failed fresh mission without promoting it.
+    if (mission.status === 'healed' || mission.status === 'error') {
+      this.scheduleFixtureReset(mission);
+      return mission;
+    }
+    if (this.activeId !== id) throw new DemoMissionConflictError('reset is unavailable for an inactive mission');
     mission.status = 'running'; mission.scene = 'landing'; mission.activeStep = 0; mission.last_error = null; this.schedule(mission, () => this.runReset(mission)); return mission;
   }
   private schedule(mission: DemoMission, work: () => Promise<void>): void { const runtime = this.runtime(mission.id); runtime.settled = Promise.resolve().then(work).catch((error) => { this.fail(mission, error); }); }
-  private async runCreate(mission: DemoMission): Promise<void> { const baselineVersion = this.baselineVersion(mission); await this.deploy(baselineVersion, mission); const baseline = await this.scrape(mission, 'A baseline'); const observation = assertBaselineRow(baseline.result, 'A baseline', this.deps.config); mission.evidence.run_id = baseline.jobId; mission.evidence.baseline_run_id = baseline.jobId; mission.evidence.baseline_result = observation; this.event(mission, 'baseline_a', `Bright Data A proved product code ${observation.product_code}, title, price ${this.deps.config.expectedSymbol}${this.deps.config.expectedPrice}, and availability from live ${baselineVersion.toUpperCase()}.`); mission.scene = 'v1_baseline'; mission.status = 'waiting'; mission.activeStep = 1; }
+  private async runCreate(mission: DemoMission): Promise<void> { const baselineVersion = this.baselineVersion(mission); await this.deploy(baselineVersion, mission); const baseline = await this.scrape(mission, 'A baseline'); const observation = assertBaselineRow(baseline.result, 'A baseline', this.deps.config); this.assertMatchesPriorProof(baselineVersion, observation); mission.evidence.run_id = baseline.jobId; mission.evidence.baseline_run_id = baseline.jobId; mission.evidence.baseline_result = observation; this.event(mission, 'baseline_a', `Bright Data A proved product code ${observation.product_code}, title, price ${this.deps.config.expectedSymbol}${this.deps.config.expectedPrice}, and availability from live ${baselineVersion.toUpperCase()}.`); mission.scene = 'v1_baseline'; mission.status = 'waiting'; mission.activeStep = 1; }
   private async runShift(mission: DemoMission): Promise<void> {
     const baselineVersion = this.baselineVersion(mission); const changedVersion = this.changedVersion(mission);
     await this.deploy(changedVersion, mission); mission.evidence.v2_url = this.sourceUrl(changedVersion); mission.scene = 'broken_v2'; mission.activeStep = 3;
@@ -241,8 +251,14 @@ export class DemoMissionService {
     this.event(mission, 'receipt', `Bright Data C re-proved all four fields for ${proofObservation.product_code} at ${this.deps.config.expectedSymbol}${this.deps.config.expectedPrice} after the ${changedVersion.toUpperCase()} repair.`); mission.scene = 'receipt'; mission.status = 'healed'; this.lastReceiptId = mission.id; this.deps.store?.saveCompleted(mission);
   }
   private async runReset(mission: DemoMission): Promise<void> { const baselineVersion = this.baselineVersion(mission); await this.deploy(baselineVersion, mission); this.event(mission, `reset_${baselineVersion}`, `${baselineVersion.toUpperCase()} live marker confirmed; reset performs no additional Bright Data scrape.`); const runtime = this.runtime(mission.id); runtime.scrapes = 0; runtime.heals = 0; mission.status = 'idle'; this.activeId = undefined; }
-  private async deploy(version: DemoFixtureVersion, mission: DemoMission): Promise<void> { const generation = this.newGeneration(); this.event(mission, `dispatch_${version}`, `Dispatched fixture workflow for ${version.toUpperCase()} generation ${generation}.`); await this.deps.github.dispatch(version, generation, mission.id); await this.deps.github.waitForMarker(version, generation, mission.id); mission.evidence.marker_url = this.markerUrl(generation); this.event(mission, `marker_${version}`, `Live version.json confirmed ${version.toUpperCase()} generation ${generation} for this mission.`); }
-  private async scrape(mission: DemoMission, label: string): Promise<{ jobId: string; result: DatasetPollResult }> { const runtime = this.runtime(mission.id); if (runtime.scrapes >= 3) throw new Error('demo scrape limit reached (maximum 3)'); runtime.scrapes++; const jobId = await this.deps.brightData.trigger(this.deps.config.collectorId, [{ url: this.deps.config.fixtureUrl }]); const result = await this.deps.brightData.pollDataset(jobId); assertRows(result, label); return { jobId, result }; }
+  private scheduleFixtureReset(mission: DemoMission): void {
+    const runtime = this.runtime(mission.id);
+    // Do not use schedule(): its failure path would mutate a completed receipt
+    // into an error. A reset is operational cleanup, not receipt evidence.
+    runtime.settled = Promise.resolve().then(() => this.deploy(this.baselineVersion(mission), mission, false));
+  }
+  private async deploy(version: DemoFixtureVersion, mission: DemoMission, recordEvidence = true): Promise<void> { const generation = this.newGeneration(); if (recordEvidence) this.event(mission, `dispatch_${version}`, `Dispatched fixture workflow for ${version.toUpperCase()} generation ${generation}.`); await this.deps.github.dispatch(version, generation, mission.id); await this.deps.github.waitForMarker(version, generation, mission.id); if (recordEvidence) { mission.evidence.marker_url = this.markerUrl(generation); this.event(mission, `marker_${version}`, `Live version.json confirmed ${version.toUpperCase()} generation ${generation} for this mission.`); } }
+  private async scrape(mission: DemoMission, label: string): Promise<{ jobId: string; result: DatasetPollResult }> { const runtime = this.runtime(mission.id); if (runtime.scrapes >= 3) throw new Error('demo scrape limit reached (maximum 3)'); runtime.scrapes++; const jobId = await this.deps.brightData.trigger(this.deps.config.collectorId, [{ url: this.deps.config.fixtureUrl }]); this.assertFreshScrapeJobId(mission, jobId, label); const result = await this.deps.brightData.pollDataset(jobId); assertRows(result, label); return { jobId, result }; }
   private async heal(mission: DemoMission, prompt: string): Promise<void> {
     const runtime = this.runtime(mission.id);
     if (runtime.heals >= 1) throw new Error('demo heal limit reached (maximum 1)');
@@ -257,6 +273,24 @@ export class DemoMissionService {
   private newGeneration(): string { const raw = this.nextGeneration(); if (!/^\d+$/.test(raw) || Number(raw) <= this.lastGeneration) throw new Error('demo generation must be a positive monotonically increasing integer'); this.lastGeneration = Number(raw); return raw; }
   private markerUrl(generation: string): string { const url = new URL('version.json', this.deps.config.fixtureUrl.endsWith('/') ? this.deps.config.fixtureUrl : `${this.deps.config.fixtureUrl}/`); url.searchParams.set('generation', generation); return url.toString(); }
   private baselineVersion(mission: DemoMission): DemoFixtureVersion { return mission.evidence.baseline_version ?? 'v1'; }
+  private lastVerifiedReceipt(): DemoMission | undefined { return this.lastReceiptId ? this.missions.get(this.lastReceiptId) : undefined; }
+  private assertMatchesPriorProof(baselineVersion: DemoFixtureVersion, observation: DemoProductObservation): void {
+    if (baselineVersion !== 'v2') return;
+    const previousProof = this.lastVerifiedReceipt()?.evidence.proof_result;
+    if (!previousProof) return; // Older persisted receipts did not always retain this evidence.
+    const differences = changedFixtureFields(previousProof, observation);
+    if (differences.length > 0) throw new Error(`A baseline does not match the prior verified proof on ${humanList(differences)}`);
+  }
+  private assertFreshScrapeJobId(mission: DemoMission, jobId: string, label: string): void {
+    if (!jobId.trim()) throw new Error(`${label} did not return a Bright Data job id`);
+    const priorJobIds = new Set<string>();
+    for (const candidate of this.missions.values()) {
+      for (const id of [candidate.evidence.baseline_run_id, candidate.evidence.broken_run_id, candidate.evidence.proof_run_id]) {
+        if (id) priorJobIds.add(id);
+      }
+    }
+    if (priorJobIds.has(jobId)) throw new Error(`${label} reused Bright Data job id ${jobId}; a fresh proof requires distinct A, B, and C jobs`);
+  }
   private hasCompletedReceipt(): boolean { return [...this.missions.values()].some((mission) => mission.status === 'healed' && mission.scene === 'receipt'); }
   private changedVersion(mission: DemoMission): DemoFixtureVersion { return mission.evidence.changed_version ?? 'v2'; }
   private repairPrompt(baselineVersion: DemoFixtureVersion, changedVersion: DemoFixtureVersion, fields: string[]): string {

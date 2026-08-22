@@ -362,7 +362,7 @@ function ProofBootScene({ reducedMotion }: { reducedMotion: boolean }) {
   return (
     <ConversationScene state="state-v1" activeStage={0} reducedMotion={reducedMotion} visual={<div className="pg-visual-wait">Opening the live version-shift mission.</div>}>
       <StoryLine>We’re preparing the version-shifting store and its real Bright Data collector.</StoryLine>
-      <StoryLine quiet>The Collect chapter will begin when the backend returns the live V1 mission.</StoryLine>
+      <StoryLine quiet>The Collect chapter will begin when the backend returns the live baseline mission.</StoryLine>
     </ConversationScene>
   );
 }
@@ -381,7 +381,7 @@ export function MissionExperience({ mode = 'landing' }: { mode?: ExperienceMode 
   const routeBootstrapped = useRef(false);
   const bootPromise = useRef<Promise<void> | null>(null);
   const mounted = useRef(true);
-  const resetConfirmed = Boolean(mission?.status === 'idle' && eventFor(mission, 'reset_v1'));
+  const resetConfirmed = Boolean(mission?.status === 'idle' && mission && eventFor(mission, `reset_${mission.evidence.baselineVersion}`));
   const receiptReady = Boolean(mission?.status === 'healed' && eventFor(mission, 'receipt'));
   const differenceReady = Boolean(eventFor(mission, 'difference'));
   const terminal = Boolean(mission && (receiptReady || mission.status === 'error' || resetConfirmed));
