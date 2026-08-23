@@ -139,7 +139,42 @@ export interface HealOwnedFixtureOptions {
   client: Pick<BrightDataClient, 'refactorTemplate' | 'pollRefactorTemplateProgress' | 'resumeAutomationJob'>;
   policy: Policy;
   permit: OwnedFixtureHealPermit;
+  /** The exact single-row contract a candidate repair must prove before the
+   * disposable fixture is allowed to save it automatically. */
+  previewContract: OwnedFixturePreviewContract;
   poll?: PollOptions;
+}
+
+export interface OwnedFixturePreviewContract {
+  productCode: string;
+  title: string;
+  price: { value: number; currency: string; symbol: string };
+  availability: string;
+}
+
+function previewContractError(progress: RefactorProgress, contract: OwnedFixturePreviewContract): string | undefined {
+  const rows = progress.preview_result;
+  if (!Array.isArray(rows) || rows.length !== 1) return 'the pending preview did not contain exactly one fixture row';
+  const row = rows[0];
+  if (!row || typeof row !== 'object') return 'the pending preview row was not an object';
+  const productCode = typeof row.product_code === 'string' ? row.product_code.trim() : '';
+  const title = typeof row.title === 'string' ? row.title.trim() : '';
+  const availability = typeof row.availability === 'string' ? row.availability.trim() : '';
+  const price = row.price;
+  if (!price || typeof price !== 'object' || Array.isArray(price)) return 'the pending preview did not contain structured price data';
+  const money = price as Record<string, unknown>;
+  if (productCode !== contract.productCode) return `the pending preview returned product_code ${JSON.stringify(productCode)} instead of ${JSON.stringify(contract.productCode)}`;
+  if (title !== contract.title) return 'the pending preview returned a different product title';
+  if (availability !== contract.availability) return 'the pending preview changed the stable availability control field';
+  if (money.value !== contract.price.value || money.currency !== contract.price.currency) {
+    return 'the pending preview did not restore the exact price value and currency';
+  }
+  // Bright Data's candidate preview currently omits `symbol`, while a fresh
+  // production result contains it. C remains the full money-shape authority.
+  if (money.symbol !== undefined && money.symbol !== contract.price.symbol) {
+    return 'the pending preview returned the wrong price symbol';
+  }
+  return undefined;
 }
 
 /**
@@ -163,6 +198,13 @@ export async function healOwnedFixture(
   if (!isAwaitingApproval(progress)) {
     throw new BrightDataError(`owned fixture heal did not stop at the required approval gate (status "${progress.status}")`);
   }
+  const invalidPreview = previewContractError(progress, options.previewContract);
+  if (invalidPreview) {
+    // Explicitly reject the candidate: an owned-fixture permit authorizes
+    // one proven repair, never a best-effort draft save.
+    await options.client.resumeAutomationJob(collectorId, { message: false, autoSave: false });
+    throw new BrightDataError(`owned fixture heal rejected before approval: ${invalidPreview}`);
+  }
   await options.client.resumeAutomationJob(collectorId, { message: true, autoSave: true });
   // Bright Data preserves step="user_approval" after resume, including on
   // its terminal done envelope. Approval has already happened here, so this
@@ -172,6 +214,9 @@ export async function healOwnedFixture(
   const status = String(progress.status ?? '').toLowerCase();
   if (!OWNED_FIXTURE_SUCCESS_STATES.has(status)) {
     throw new BrightDataError(`owned fixture heal did not finish successfully (status "${progress.status}")`);
+  }
+  if (Array.isArray(progress.completed_steps) && !progress.completed_steps.includes('save_new_template')) {
+    throw new BrightDataError('owned fixture heal completed without save_new_template evidence after approval');
   }
   return progress;
 }

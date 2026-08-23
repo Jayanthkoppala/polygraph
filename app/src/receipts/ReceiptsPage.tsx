@@ -135,7 +135,13 @@ export function ReceiptsPage() {
                       </div>
                     </TableCell>
                     <TableCell className="whitespace-normal">
-                      <p className="max-w-72 line-clamp-2 text-sm text-[#A1A1AA]" title={receipt.repair_prompt ?? undefined}>{receipt.repair_prompt ?? 'Repair prompt was not retained for this older receipt.'}</p>
+                      <div className="max-w-72 space-y-1.5">
+                        {receipt.baseline_generation && receipt.changed_generation && <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[#818CF8]">Generation {receipt.baseline_generation} → {receipt.changed_generation}</p>}
+                        <p className="line-clamp-2 text-sm text-[#A1A1AA]" title={receipt.repair_prompt ?? undefined}>{receipt.repair_prompt ?? 'Repair prompt was not retained for this older receipt.'}</p>
+                        {receipt.fixture_workflow_run_url
+                          ? <a className="inline-block font-mono text-[10px] text-[#A5B4FC] hover:underline" href={receipt.fixture_workflow_run_url} target="_blank" rel="noreferrer">Workflow {receipt.fixture_workflow_run_id ?? 'run'} ↗</a>
+                          : receipt.fixture_commit_sha && <p className="font-mono text-[10px] text-[#62626A]">Commit {compactHash(receipt.fixture_commit_sha)}</p>}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="space-y-1.5">

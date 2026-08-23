@@ -67,6 +67,10 @@ const evidence: MissionState['evidence'] = {
   brokenResult: null,
   proofResult: null,
   changedFields: [],
+  generationManifest: {
+    baseline: { version: 'evolving', generation: '41', parentGeneration: '40', seed: 'pg_41_test', sourceUrl: null, markerUrl: 'https://fixture.example/version.json?generation=41' },
+    changed: { version: 'evolving', generation: '42', parentGeneration: '41', seed: 'pg_42_test', sourceUrl: null, markerUrl: 'https://fixture.example/version.json?generation=42' },
+  },
 };
 
 function event(step: string, detail: string, second: number): MissionEvent {
@@ -131,11 +135,6 @@ const recoveredMission: MissionState = {
   events: [...healingMission.events, event('receipt', 'Bright Data C re-proved all four fields for Product/Code-123 at £51.77 after the repair.', 11)],
 };
 
-const replayMission: MissionState = {
-  ...recoveredMission,
-  replay: true,
-};
-
 const healedWithoutReceipt: MissionState = {
   ...healingMission,
   status: 'healed',
@@ -154,7 +153,7 @@ describe('MissionExperience live mission story', () => {
   it('shows the switch-version recovery artifact without starting a live mission', () => {
     renderMission();
 
-    expect(screen.getByTestId('landing-scene')).toHaveTextContent(/we built a version-shifting store for this test/i);
+    expect(screen.getByTestId('landing-scene')).toHaveTextContent(/we built a live evolving store for this test/i);
     expect(screen.getByText('VALIDATE')).toBeInTheDocument();
     expect(missionApi.createMission).not.toHaveBeenCalled();
   });
@@ -183,22 +182,23 @@ describe('MissionExperience live mission story', () => {
     missionApi.resetMission.mockResolvedValue({ ...recoveredMission, status: 'running', scene: 'landing' });
     renderMission('proof');
 
-    expect(await screen.findByText(/for this test, we built a live version-shifting store/i)).toBeInTheDocument();
+    expect(await screen.findByText(/for this test, we built a live evolving store/i)).toBeInTheDocument();
     expect(missionApi.createMission).toHaveBeenCalledOnce();
     expect(screen.getAllByText(/product\/code-123/i).length).toBeGreaterThan(0);
-    expect(screen.getByTitle(/live product page — v1 reference/i)).toHaveAttribute('src', 'https://fixture.example/versions/v1');
-    expect(screen.getByTitle(/live product page — v2 switched/i)).toHaveAttribute('src', 'https://fixture.example/versions/v2');
-    expect(screen.getByTitle(/live product page — v1 reference/i).closest('.pg-magic-safari')).not.toBeNull();
+    expect(screen.getByTitle(/live product page — generation 41/i)).toHaveAttribute('src', 'https://fixture.example/');
+    expect(screen.getByTitle(/live product page — generation 41/i).closest('.pg-magic-safari')).not.toBeNull();
     expect(screen.getByLabelText(/mission progress: collect/i)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId('proof-route')).toHaveTextContent('/live-proof?stage=collect&mission=mission-1'));
-    expect(screen.getByRole('button', { name: /change the store to v2/i })).toBeEnabled();
-    expect(screen.getByText(/polygraph guides the self-healing loop/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /evolve the live store/i })).toBeEnabled();
+    expect(screen.getByText(/polygraph then runs compare, repair, and proof automatically/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /github/i })).toHaveAttribute('href', 'https://github.com/Jayanthkoppala/polygraph-version-shift-store');
     expect(screen.getByRole('link', { name: /live store/i })).toHaveAttribute('href', 'https://fixture.example/');
     expect(screen.queryByRole('heading')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('shift-v2-btn'));
-    expect(await screen.findByLabelText(/publishing v2/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/generating new anchors/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/publishing generation 42/i)).toBeInTheDocument();
+    expect(screen.queryByTitle(/live product page/i)).not.toBeInTheDocument();
     expect(missionApi.shiftMission).toHaveBeenCalledWith('mission-1');
     expect(screen.getByText(/no more clicks/i)).toBeInTheDocument();
 
@@ -241,35 +241,19 @@ describe('MissionExperience live mission story', () => {
     expect(screen.getByText(/bright data c re-proved/i)).toBeInTheDocument();
   }, 26_000);
 
-  it('replays a completed receipt through all four chapters without another provider mutation', async () => {
-    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })));
-    missionApi.createMission.mockResolvedValue(replayMission);
+  it('opens completed evidence directly instead of replaying it as a new live proof', async () => {
+    missionApi.createMission.mockResolvedValue(recoveredMission);
     renderMission('proof');
 
-    expect(await screen.findByText(/verified receipt replay/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/mission progress: collect/i)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /change the store to v2/i })).not.toBeInTheDocument();
-
-    expect(await screen.findByText(/replaying the verified v2 deployment/i, {}, { timeout: 4_200 })).toBeInTheDocument();
-    expect(await screen.findByLabelText(/returned json comparison/i, {}, { timeout: 3_200 })).toBeInTheDocument();
-    expect(await screen.findByText(/here is what polygraph found/i, {}, { timeout: 5_200 })).toBeInTheDocument();
-    expect(await screen.findByLabelText(/mission progress: repair/i, {}, { timeout: 5_200 })).toBeInTheDocument();
-    expect(await screen.findByLabelText(/mission progress: prove/i, {}, { timeout: 4_400 })).toBeInTheDocument();
+    expect(await screen.findByText(/third production run is back/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/mission progress: prove/i)).toBeInTheDocument();
     expect(screen.getByText(/4 of 4 fields verified/i)).toBeInTheDocument();
+    expect(screen.queryByText(/replay/i)).not.toBeInTheDocument();
 
     expect(missionApi.createMission).toHaveBeenCalledOnce();
     expect(missionApi.shiftMission).not.toHaveBeenCalled();
     expect(missionApi.resetMission).not.toHaveBeenCalled();
-  }, 25_000);
+  });
 
   it('keeps polling when healed status arrives before the receipt event', async () => {
     missionApi.createMission.mockResolvedValue(baselineMission);

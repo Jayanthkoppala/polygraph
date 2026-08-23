@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 
 /**
- * M012 — durable persistence for automatic collector recovery.
+ * M013 — durable persistence for automatic collector recovery.
  *
  * Five tables plus one column added to M010's ingest tokens:
  *
@@ -73,7 +73,7 @@ function quotedList(values: string[]): string {
   return values.map((v) => `'${v}'`).join(', ');
 }
 
-export function up012DeliveryRecovery(db: Database.Database): void {
+export function up013DeliveryRecovery(db: Database.Database): void {
   // -------------------------------------------------------------------------
   // Accepted deliveries.
   //
@@ -273,7 +273,7 @@ export function up012DeliveryRecovery(db: Database.Database): void {
   // NO `tableExists` guard around it: `collector_ingest_tokens` is created by
   // M010, and the runner applies migrations in registry order, so the only way
   // for it to be missing here is a database whose migration chain is already
-  // broken — or a caller invoking `up012DeliveryRecovery` directly instead of
+  // broken — or a caller invoking `up013DeliveryRecovery` directly instead of
   // through `migrate()`, which is not a supported entry point.
   //
   // Skipping the ALTER in that case would turn a loud, immediate failure into

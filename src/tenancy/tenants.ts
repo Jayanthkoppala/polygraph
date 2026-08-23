@@ -78,7 +78,7 @@ export function createTenant(db: Database.Database, input: CreateTenantInput): I
  *
  * ## Tenants that hold repair receipts
  *
- * M012's `repair_receipts` is insert-only, enforced by a `BEFORE DELETE`
+ * M013's `repair_receipts` is insert-only, enforced by a `BEFORE DELETE`
  * trigger that fires for cascaded deletes too. A tenant with even one verified
  * repair therefore cannot be hard-deleted: the `DELETE FROM tenants` above
  * would abort, and `POST /api/tenant/delete` would 500 with the customer's

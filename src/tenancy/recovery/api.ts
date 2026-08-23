@@ -205,7 +205,7 @@ export function listRecoveryCollectors(
       name: collector.name,
       ...view,
       // A collector with no state row has never been through recovery, and the
-      // switch defaults on (M012's DEFAULT 1) — reporting `false` here would
+      // switch defaults on (M013's DEFAULT 1) — reporting `false` here would
       // tell the operator auto-heal is off when the first delivery will turn
       // it on.
       auto_heal: state ? state.auto_heal === 1 : true,

@@ -20,11 +20,16 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    // This is deliberately an opt-in frontend-only development server. The
+    // supported local product is `npm run local` at :8080.
+    port: 5174,
+    strictPort: true,
+    host: '127.0.0.1',
     proxy: {
-      // Dev-only: reach a local `polygraph watch` (default port 4141).
-      // Production is same-origin, so no proxy there.
+      // Dev-only: reach the hosted Polygraph product server. Production is
+      // same-origin because `polygraph serve` serves app/dist itself.
       '/api': {
-        target: 'http://localhost:4141',
+        target: 'http://127.0.0.1:8080',
         changeOrigin: true,
       },
     },

@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { GENESIS_HASH } from '../store/ledger.js';
 import { LOCAL_TENANT_ID } from './genesis.js';
-import { up012DeliveryRecovery } from './migrations/012-delivery-recovery.js';
+import { up013DeliveryRecovery } from './migrations/013-delivery-recovery.js';
 
 /**
  * The migration runner, per tenant-architecture.md §8. Idempotent and
@@ -16,8 +16,8 @@ import { up012DeliveryRecovery } from './migrations/012-delivery-recovery.js';
  * adding the column and backfilling it does not change a single
  * `event_hash`, and a migrated chain verifies exactly as it did before.
  *
- * File layout: M001-M011 are `upNNN` functions defined inline below, in
- * version order. From M012 onwards each migration lives in its own file under
+ * File layout: M001-M012 are `upNNN` functions defined inline below, in
+ * version order. From M013 onwards each migration lives in its own file under
  * `./migrations/NNN-<slug>.ts` and is imported here — the inline ones grew
  * this file past 400 lines and a multi-table migration would double it. The
  * registry at the bottom stays the single source of truth for order and for
@@ -429,6 +429,38 @@ function up011(db: Database.Database): void {
     ON demo_mission_receipts(completed_at DESC)`);
 }
 
+// ---------------------------------------------------------------------------
+// M012 — durable public-demo mission state. The owned-fixture proof is a
+// process that can take minutes (GitHub deploy + three Bright Data runs), so
+// an in-memory Map is not an authority after a server restart. This table is
+// deliberately outside tenant tables: it contains only the public fixture.
+
+function up012(db: Database.Database): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS demo_missions (
+    id                TEXT PRIMARY KEY,
+    idempotency_key   TEXT NOT NULL UNIQUE,
+    state             TEXT NOT NULL,
+    phase             TEXT NOT NULL,
+    status            TEXT NOT NULL,
+    mission_json      TEXT NOT NULL,
+    lease_owner       TEXT,
+    lease_expires_at  TEXT,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    completed_at      TEXT
+  )`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_demo_missions_active
+    ON demo_missions(status, lease_expires_at, updated_at DESC)`);
+
+  db.exec(`CREATE TABLE IF NOT EXISTS demo_repair_receipts (
+    mission_id        TEXT PRIMARY KEY REFERENCES demo_missions(id) ON DELETE CASCADE,
+    completed_at      TEXT NOT NULL,
+    receipt_json      TEXT NOT NULL
+  )`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_demo_repair_receipts_completed
+    ON demo_repair_receipts(completed_at DESC)`);
+}
+
 const MIGRATIONS: Migration[] = [
   { version: 1, destructive: false, up: up001 },
   { version: 2, destructive: false, up: up002 },
@@ -441,13 +473,14 @@ const MIGRATIONS: Migration[] = [
   { version: 9, destructive: false, up: up009 },
   { version: 10, destructive: false, up: up010 },
   { version: 11, destructive: false, up: up011 },
-  // M012 — automatic collector recovery: deliveries, encrypted verification
+  { version: 12, destructive: false, up: up012 },
+  // M013 — automatic collector recovery: deliveries, encrypted verification
   // inputs, per-collector recovery state, cycles, append-only repair
   // receipts. Non-destructive: CREATE ... IF NOT EXISTS plus one guarded
   // ALTER TABLE ADD COLUMN, so nothing is dropped or rewritten and no
   // pre-migration snapshot is taken. Defined in ./migrations/ per the file
   // layout note at the top of this file.
-  { version: 12, destructive: false, up: up012DeliveryRecovery },
+  { version: 13, destructive: false, up: up013DeliveryRecovery },
 ];
 
 /** One consistent snapshot before the first destructive step. VACUUM INTO

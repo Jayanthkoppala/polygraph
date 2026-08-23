@@ -9,7 +9,7 @@ import { createTenant } from '../../../src/tenancy/tenants.js';
 import { scopeFor } from '../../../src/tenancy/scope.js';
 
 /**
- * Shared setup for the M012 persistence tests. Deliberately a real
+ * Shared setup for the M013 persistence tests. Deliberately a real
  * file-backed database driven by the real `migrate()` — the first draft of
  * these tests hand-built the two tables it needed, which meant every
  * constraint, index and trigger the migration actually creates went

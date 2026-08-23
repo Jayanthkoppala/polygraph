@@ -4,7 +4,9 @@ import type { AddressInfo, Server } from 'node:net';
 import { createDemoMissionServer, readDemoMissionConfig } from '../../../src/demo/server.js';
 import { DemoMissionService, type DemoBrightDataClient, type DemoGithubClient, type DemoMissionConfig, type DemoMissionStore } from '../../../src/demo/mission.js';
 import { SqliteDemoMissionStore } from '../../../src/tenancy/demo-receipt-store.js';
+import { SqliteDemoMissionStateStore } from '../../../src/tenancy/demo-mission-store.js';
 import { migrate } from '../../../src/tenancy/migrate.js';
+import type { FailureAdvisor } from '../../../src/ai/gemini-advisor.js';
 
 const PRODUCT_CODE = 'Product/Code-123';
 const PRODUCT_TITLE = 'Aster QuietWave Wireless Noise-Cancelling Headphones, 40-hour Battery, Midnight Blue';
@@ -29,15 +31,26 @@ afterEach(() => {
   const restore = (key: string, value: string | undefined) => { if (value === undefined) delete process.env[key]; else process.env[key] = value; };
   restore('POLYGRAPH_HEAL_ENABLED', savedGateEnv.heal); restore('POLYGRAPH_DEMO_LIVE', savedGateEnv.live); restore('POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE', savedGateEnv.autosave); restore('POLYGRAPH_DEMO_COLLECTOR_ID', savedGateEnv.collector); restore('POLYGRAPH_DEMO_FIXTURE_URL', savedGateEnv.fixture);
 });
-function fakes(options: { brokenRow?: Record<string, unknown>; healthyRow?: Record<string, unknown>; recoveredRow?: Record<string, unknown>; rows?: Record<string, unknown>[]; jobIds?: string[]; idOffset?: number; maxMissions?: number; store?: DemoMissionStore } = {}) {
-  const calls: string[] = []; let dataset = 0; let ids = options.idOffset ?? 0; let generation = 100; let healPolls = 0;
-  const github: DemoGithubClient = { workflowUrl: 'https://github.test/workflow', async dispatch(version, value, missionId) { calls.push(`dispatch:${version}:${value}:${missionId}`); }, async waitForMarker(version, value, missionId) { calls.push(`marker:${version}:${value}:${missionId}`); } };
+function fakes(options: { brokenRow?: Record<string, unknown>; healthyRow?: Record<string, unknown>; recoveredRow?: Record<string, unknown>; rows?: Record<string, unknown>[]; jobIds?: string[]; idOffset?: number; maxMissions?: number; store?: DemoMissionStore; stateStore?: SqliteDemoMissionStateStore; advisor?: FailureAdvisor } = {}) {
+  const calls: string[] = []; let dataset = 0; let ids = options.idOffset ?? 0; let healPolls = 0;
+  let liveManifest = { version: 'evolving', generation: '100', parent_generation: '99', seed: 'seed-100', mission_id: 'prior', anchors: { product_code: '[data-old-code]', title: '.old-title', price: '.old-price', availability: '.stock-status' } };
+  let pendingManifest = liveManifest;
+  const github: DemoGithubClient = {
+    workflowUrl: 'https://github.test/workflow',
+    async dispatch(_version, value, missionId, evolution) {
+      if (!evolution) throw new Error('missing evolution contract');
+      calls.push(`dispatch:${evolution.parentGeneration}->${value}:${missionId}`);
+      pendingManifest = { version: 'evolving', generation: value, parent_generation: evolution.parentGeneration, seed: evolution.seed, mission_id: missionId, anchors: { product_code: `[data-code-${value}]`, title: `.title-${value}`, price: `.price-${value}`, availability: '.stock-status' } };
+    },
+    async waitForMarker(_version, value, missionId) { calls.push(`marker:${value}:${missionId}`); liveManifest = pendingManifest; },
+    async readCurrentManifest() { return liveManifest; },
+  };
   const brightData: DemoBrightDataClient = {
     async trigger() { dataset++; calls.push(`trigger:${dataset}`); return options.jobIds?.[dataset - 1] ?? `job-${dataset}`; },
     async pollDataset() { calls.push(`poll:${dataset}`); const phase = (dataset - 1) % 3; const row = options.rows?.[dataset - 1] ?? (phase === 0 ? options.healthyRow ?? HEALTHY_ROW : phase === 1 ? options.brokenRow ?? BROKEN_ROW : options.recoveredRow ?? options.healthyRow ?? HEALTHY_ROW); return { rows: [row], ambiguous: false }; },
-    async refactorTemplate() { calls.push('heal:start'); return {}; }, async pollRefactorTemplateProgress() { calls.push('heal:poll'); healPolls++; return healPolls % 2 === 0 ? { status: 'completed', id: 'heal-1' } : { status: 'pending_answer', id: 'heal-1' }; }, async resumeAutomationJob(_id, opts) { calls.push(`heal:resume:${opts.message}:${opts.autoSave}`); },
+    async refactorTemplate() { calls.push('heal:start'); return {}; }, async pollRefactorTemplateProgress() { calls.push('heal:poll'); healPolls++; return healPolls % 2 === 0 ? { status: 'completed', id: 'heal-1', completed_steps: ['user_approval', 'save_new_template'] } : { status: 'pending_answer', id: 'heal-1', preview_result: [HEALTHY_ROW] }; }, async resumeAutomationJob(_id, opts) { calls.push(`heal:resume:${opts.message}:${opts.autoSave}`); },
   };
-  const service = new DemoMissionService({ config: { ...config, maxMissions: options.maxMissions }, github, brightData, store: options.store, now: () => '2026-08-22T00:00:00.000Z', id: () => `mission-${++ids}`, nextGeneration: () => String(++generation) });
+  const service = new DemoMissionService({ config, github, brightData, advisor: options.advisor, store: options.store, stateStore: options.stateStore, now: () => '2026-08-22T00:00:00.000Z', id: () => `mission-${++ids}`, workerId: `worker-${ids}` });
   return { calls, service };
 }
 
@@ -49,12 +62,16 @@ describe('demo mission sequence', () => {
     service.shift(mission.id); await service.whenSettled(mission.id);
     expect(service.current(mission.id)?.status).toBe('healed');
     expect(calls).toEqual([
-      'dispatch:v1:101:mission-1', 'marker:v1:101:mission-1', 'trigger:1', 'poll:1',
-      'dispatch:v2:102:mission-1', 'marker:v2:102:mission-1', 'trigger:2', 'poll:2',
+      'trigger:1', 'poll:1',
+      'dispatch:100->101:mission-1', 'marker:101:mission-1', 'trigger:2', 'poll:2',
       'heal:start', 'heal:poll', 'heal:resume:true:true', 'heal:poll', 'trigger:3', 'poll:3',
     ]);
     expect(service.current(mission.id)?.events.filter((event) => ['difference', 'incident_memory', 'healing_prompt'].includes(event.step))).toHaveLength(3);
     expect(service.current(mission.id)?.evidence).toMatchObject({
+      generation_manifest: {
+        baseline: { version: 'evolving', generation: '100', source_url: 'https://github.com/owner/fixture/blob/main/index.html' },
+        changed: { version: 'evolving', generation: '101', source_url: 'https://github.com/owner/fixture/blob/main/index.html' },
+      },
       baseline_result: HEALTHY_ROW,
       broken_result: { ...BROKEN_ROW, product_code: null, title: null },
       proof_result: HEALTHY_ROW,
@@ -97,6 +114,35 @@ describe('demo mission sequence', () => {
     expect(difference?.detail).toMatch(/product_code, title, and price/i);
     expect(difference?.detail).toMatch(/1 of 4 monitored fields stayed healthy/i);
   });
+  it('records Gemini advice as advisory while C remains the authoritative promotion proof', async () => {
+    const advisor: FailureAdvisor = { advise: async () => ({ explanation: 'The anchor moved.', failure_family: 'selector_anchor_moved', heal_prompt: 'Repair only the three moved selectors.' }) };
+    const { service } = fakes({ advisor });
+    const mission = service.create(); await service.whenSettled(mission.id); service.shift(mission.id); await service.whenSettled(mission.id);
+    expect(service.current(mission.id)?.evidence.advice).toMatchObject({ failure_family: 'selector_anchor_moved' });
+    expect(service.current(mission.id)?.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ step: 'ai_advice' }),
+      expect.objectContaining({ step: 'proof_authority' }),
+    ]));
+    const prompt = service.current(mission.id)?.events.find((event) => event.step === 'healing_prompt')?.detail ?? '';
+    expect(prompt).toContain('Repair only the three moved selectors.');
+    expect(prompt).toContain('The required product is product_code "Product/Code-123"');
+    expect(prompt).toContain('Authoritative scope: change only product_code, title, and price');
+  });
+  it('tries one additional generated structure when the collector survives the first evolution', async () => {
+    const { calls, service } = fakes({ rows: [HEALTHY_ROW, HEALTHY_ROW, BROKEN_ROW, HEALTHY_ROW] });
+    const mission = service.create(); await service.whenSettled(mission.id); service.shift(mission.id); await service.whenSettled(mission.id);
+    expect(service.current(mission.id)).toMatchObject({ status: 'healed', scene: 'receipt' });
+    expect(service.current(mission.id)?.evidence.generation_manifest?.changed?.generation).toBe('102');
+    expect(service.current(mission.id)?.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ step: 'collector_survived', detail: expect.stringContaining('job-2') }),
+    ]));
+    expect(calls).toEqual([
+      'trigger:1', 'poll:1',
+      'dispatch:100->101:mission-1', 'marker:101:mission-1', 'trigger:2', 'poll:2',
+      'dispatch:101->102:mission-1', 'marker:102:mission-1', 'trigger:3', 'poll:3',
+      'heal:start', 'heal:poll', 'heal:resume:true:true', 'heal:poll', 'trigger:4', 'poll:4',
+    ]);
+  });
   it('refuses a partial B regression before Self-Healing', async () => {
     const { calls, service } = fakes({ brokenRow: { ...HEALTHY_ROW, price: { value: 0, currency: 'GBP', symbol: '£' } } });
     const mission = service.create(); await service.whenSettled(mission.id); service.shift(mission.id); await service.whenSettled(mission.id);
@@ -117,11 +163,14 @@ describe('demo mission sequence', () => {
   it('keeps the healthy availability selector out of the repair target list', async () => {
     const { service } = fakes(); const mission = service.create(); await service.whenSettled(mission.id); service.shift(mission.id); await service.whenSettled(mission.id);
     const prompt = service.current(mission.id)?.events.find((event) => event.step === 'healing_prompt')?.detail ?? '';
-    expect(prompt).toMatch(/data-product-ref to data-catalog-key/i);
-    expect(prompt).toMatch(/\.product-title to \.catalog-heading/i);
-    expect(prompt).toMatch(/\.money-widget__value to \.commerce-amount/i);
+    expect(prompt).toMatch(/\[data-old-code\] -> \[data-code-101\]/i);
+    expect(prompt).toMatch(/\.old-title -> \.title-101/i);
+    expect(prompt).toMatch(/\.old-price -> \.price-101/i);
     expect(prompt).not.toMatch(/availability from h2 to \.stock-status/i);
     expect(prompt).toMatch(/availability extraction untouched/i);
+    expect(prompt).toContain(`title ${JSON.stringify(PRODUCT_TITLE)}`);
+    expect(prompt).toContain('price £51.77 GBP');
+    expect(prompt).toContain('stable availability "In stock"');
   });
   it('rejects an otherwise equal A price in the wrong currency', async () => {
     const { service } = fakes({ healthyRow: { ...HEALTHY_ROW, price: { value: 51.77, currency: 'USD', symbol: '$' } } });
@@ -144,17 +193,18 @@ describe('demo mission sequence', () => {
     const { service } = fakes({ recoveredRow: { ...HEALTHY_ROW, title: `${PRODUCT_TITLE} (wrong)` } });
     const mission = service.create(); await service.whenSettled(mission.id); service.shift(mission.id); await service.whenSettled(mission.id);
     expect(service.current(mission.id)?.last_error).toMatch(/still differs from the healthy baseline on title/);
+    expect(service.current(mission.id)?.evidence.proof_run_id).toBe('job-3');
   });
-  it('resets a healed fixture without mutating or removing its receipt', async () => {
+  it('keeps the evolving fixture append-only without mutating or removing its receipt', async () => {
     const { calls, service } = fakes(); const first = service.create(); await service.whenSettled(first.id); service.shift(first.id); await service.whenSettled(first.id);
     const receiptBeforeReset = structuredClone(service.current(first.id));
-    calls.length = 0; service.reset(first.id); await service.whenSettled(first.id);
-    expect(calls).toEqual(['dispatch:v1:103:mission-1', 'marker:v1:103:mission-1']);
+    calls.length = 0;
+    expect(() => service.reset(first.id)).toThrow(/append-only/);
+    expect(calls).toEqual([]);
     expect(service.current(first.id)).toEqual(receiptBeforeReset);
-    expect(service.acquire()).toMatchObject({ reused: true, mission: { id: first.id, status: 'healed', scene: 'receipt' } });
   });
 
-  it('keeps the first receipt immutable while a token-gated second mission advances V2 to V3', async () => {
+  it('keeps the first receipt immutable while a second mission evolves the next generation', async () => {
     const { calls, service } = fakes({ maxMissions: 2 });
     const first = service.startFresh();
     await service.whenSettled(first.id);
@@ -167,19 +217,19 @@ describe('demo mission sequence', () => {
     expect(service.current(first.id)).toEqual(firstReceipt);
     await service.whenSettled(second.id);
 
-    expect(calls.slice(-4)).toEqual(['dispatch:v2:103:mission-2', 'marker:v2:103:mission-2', 'trigger:4', 'poll:4']);
+    expect(calls.slice(-2)).toEqual(['trigger:4', 'poll:4']);
     expect(service.current(second.id)).toMatchObject({ status: 'waiting', scene: 'v1_baseline' });
-    expect(service.current(second.id)?.evidence).toMatchObject({ baseline_version: 'v2', changed_version: 'v3' });
+    expect(service.current(second.id)?.evidence.generation_manifest?.baseline.generation).toBe('101');
     expect(service.repairReceipts()).toEqual([expect.objectContaining({ id: first.id })]);
 
     service.shift(second.id);
     await service.whenSettled(second.id);
     expect(service.current(second.id)).toMatchObject({ status: 'healed', scene: 'receipt', last_error: null });
-    expect(calls).toEqual(expect.arrayContaining(['dispatch:v3:104:mission-2', 'marker:v3:104:mission-2']));
+    expect(calls).toEqual(expect.arrayContaining(['dispatch:101->102:mission-2', 'marker:102:mission-2']));
     const prompt = service.current(second.id)?.events.find((event) => event.step === 'healing_prompt')?.detail ?? '';
-    expect(prompt).toContain('data-catalog-key to data-listing-id');
-    expect(prompt).toContain('.catalog-heading to .listing-headline');
-    expect(prompt).toContain('.commerce-amount to .listing-price__amount');
+    expect(prompt).toContain('[data-code-101] -> [data-code-102]');
+    expect(prompt).toContain('.title-101 -> .title-102');
+    expect(prompt).toContain('.price-101 -> .price-102');
     expect(service.repairReceipts()).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: second.id, status: 'verified' }),
       expect.objectContaining({ id: first.id, status: 'verified' }),
@@ -196,11 +246,11 @@ describe('demo mission sequence', () => {
     const mission = failed.service.startFresh();
     await failed.service.whenSettled(mission.id);
     expect(failed.service.current(mission.id)).toMatchObject({ status: 'error', scene: 'v1_baseline' });
-    expect(failed.calls).toEqual(['dispatch:v1:101:mission-1', 'marker:v1:101:mission-1', 'trigger:1', 'poll:1']);
+    expect(failed.calls).toEqual(['trigger:1', 'poll:1']);
     expect(failed.calls).not.toContain('heal:start');
   });
 
-  it('keeps the last verified receipt as ordinary replay after a fresh second attempt fails', async () => {
+  it('keeps the last verified receipt as durable evidence after a fresh second attempt fails', async () => {
     const { calls, service } = fakes({ maxMissions: 2, rows: [HEALTHY_ROW, BROKEN_ROW, HEALTHY_ROW, HEALTHY_ROW, { ...BROKEN_ROW, product_code: 'Product/Code-999' }] });
     const first = service.startFresh();
     await service.whenSettled(first.id);
@@ -212,21 +262,20 @@ describe('demo mission sequence', () => {
     service.shift(second.id);
     await service.whenSettled(second.id);
     expect(service.current(second.id)).toMatchObject({ status: 'error', last_error: expect.stringMatching(/wrong product identity/) });
-    expect(service.acquire()).toMatchObject({ reused: true, mission: { id: first.id, status: 'healed' } });
-    expect(calls).toContain('dispatch:v3:104:mission-2');
+    expect(service.current(first.id)).toMatchObject({ status: 'healed', scene: 'receipt' });
+    expect(calls).toContain('dispatch:101->102:mission-2');
   });
 
-  it('allows a failed fresh mission fixture reset without changing the public replay receipt', async () => {
+  it('refuses to reset a failed mission and preserves prior verified evidence', async () => {
     const { calls, service } = fakes({ maxMissions: 2, rows: [HEALTHY_ROW, BROKEN_ROW, HEALTHY_ROW, HEALTHY_ROW, { ...BROKEN_ROW, product_code: 'Product/Code-999' }] });
     const first = service.startFresh(); await service.whenSettled(first.id); service.shift(first.id); await service.whenSettled(first.id);
     const second = service.startFresh(); await service.whenSettled(second.id); service.shift(second.id); await service.whenSettled(second.id);
     expect(service.current(second.id)?.status).toBe('error');
     calls.length = 0;
-    expect(() => service.reset(second.id)).not.toThrow();
-    await service.whenSettled(second.id);
-    expect(calls).toEqual(['dispatch:v2:105:mission-2', 'marker:v2:105:mission-2']);
+    expect(() => service.reset(second.id)).toThrow(/append-only/);
+    expect(calls).toEqual([]);
     expect(service.current(second.id)).toMatchObject({ status: 'error' });
-    expect(service.acquire()).toMatchObject({ reused: true, mission: { id: first.id, status: 'healed' } });
+    expect(service.current(first.id)).toMatchObject({ status: 'healed', scene: 'receipt' });
   });
 
   it('persists a completed proof and rehydrates it after restart without scheduling provider work', async () => {
@@ -240,14 +289,28 @@ describe('demo mission sequence', () => {
     await first.service.whenSettled(mission.id);
 
     const restarted = fakes({ maxMissions: 1, store });
-    const acquired = restarted.service.acquire();
-
-    expect(acquired).toMatchObject({ reused: true, mission: { id: mission.id, status: 'healed', scene: 'receipt' } });
     expect(restarted.calls).toEqual([]);
     expect(restarted.service.repairReceipts()).toEqual([
       expect.objectContaining({ id: mission.id, status: 'verified', changed_fields: ['product_code', 'title', 'price'] }),
     ]);
-    expect(() => restarted.service.startFresh()).toThrow(/budget allows 1 mission/);
+    db.close();
+  });
+
+  it('atomically persists the verified mission evidence used by the public receipts read model', async () => {
+    const db = new Database(':memory:');
+    migrate(db, ':memory:');
+    const store = new SqliteDemoMissionStore(db);
+    const stateStore = new SqliteDemoMissionStateStore(db);
+    const first = fakes({ store, stateStore });
+    const mission = first.service.startFresh('browser-request-1');
+    await first.service.whenSettled(mission.id);
+    first.service.shift(mission.id);
+    await first.service.whenSettled(mission.id);
+
+    expect(stateStore.loadReceipt<{ proof_run_id: string }>(mission.id)).toMatchObject({ proof_run_id: 'job-3' });
+    const restarted = fakes({ store, stateStore, idOffset: 10 });
+    expect(restarted.service.repairReceipts()).toEqual([expect.objectContaining({ id: mission.id, baseline_generation: '100', changed_generation: '101', proof_run_id: 'job-3' })]);
+    expect(restarted.calls).toEqual([]);
     db.close();
   });
 
@@ -261,11 +324,11 @@ describe('demo mission sequence', () => {
     const duplicate = restarted.service.startFresh();
     await restarted.service.whenSettled(duplicate.id);
     expect(restarted.service.current(duplicate.id)).toMatchObject({ status: 'error', last_error: expect.stringMatching(/reused Bright Data job id job-3/) });
-    expect(restarted.calls).toEqual(['dispatch:v2:101:mission-11', 'marker:v2:101:mission-11', 'trigger:1']);
+    expect(restarted.calls).toEqual(['trigger:1']);
     db.close();
   });
 
-  it('rehydrates two completed receipts newest-first, refuses the bounded fresh budget, and replays the newest without provider work', async () => {
+  it('rehydrates two completed receipts newest-first without scheduling provider work', async () => {
     const db = new Database(':memory:');
     migrate(db, ':memory:');
     const store = new SqliteDemoMissionStore(db);
@@ -276,8 +339,6 @@ describe('demo mission sequence', () => {
 
     const restarted = fakes({ maxMissions: 2, store });
     expect(restarted.service.repairReceipts()).toMatchObject([{ id: v2.id }, { id: v1.id }]);
-    expect(() => restarted.service.startFresh()).toThrow(/budget allows 2 mission/);
-    expect(restarted.service.acquire()).toMatchObject({ reused: true, mission: { id: v2.id, status: 'healed', scene: 'receipt' } });
     expect(restarted.calls).toEqual([]);
     db.close();
   });
@@ -293,51 +354,67 @@ describe('demo mission HTTP API', () => {
     await new Promise<void>((resolve) => server?.close(() => resolve())); server = undefined;
     const { service } = fakes(); server = createDemoMissionServer({ service, appDir: '/definitely-unbuilt' }); await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
     const livePort = (server.address() as AddressInfo).port;
-    expect((await fetch(`http://127.0.0.1:${livePort}/api/demo/missions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' })).status).toBe(400);
+    expect((await fetch(`http://127.0.0.1:${livePort}/api/demo/missions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(415);
+    expect((await fetch(`http://127.0.0.1:${livePort}/api/demo/missions`, { method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' }, body: '{' })).status).toBe(400);
   });
 
-  it('reuses the last verified receipt after the live mission budget is spent without scheduling more provider work', async () => {
-    const { calls, service } = fakes({ maxMissions: 1 });
+  it('starts a new leased mission after a completed receipt rather than replaying old evidence', async () => {
+    const { calls, service } = fakes({ maxMissions: 2 });
     const first = service.create();
     await service.whenSettled(first.id);
     service.shift(first.id);
     await service.whenSettled(first.id);
-    service.reset(first.id);
-    await service.whenSettled(first.id);
-    const callsBeforeReplay = [...calls];
+    const callsBeforeStart = calls.length;
 
     server = createDemoMissionServer({ service, appDir: '/definitely-unbuilt' });
     await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
-    const replay = await fetch(`http://127.0.0.1:${port}/api/demo/missions`, {
+    const started = await fetch(`http://127.0.0.1:${port}/api/demo/missions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
       body: '{}',
     });
 
-    expect(replay.status).toBe(200);
-    expect(await replay.json()).toMatchObject({ id: first.id, reused: true });
+    expect(started.status).toBe(201);
+    expect(await started.json()).toMatchObject({ id: 'mission-2', reused: false });
+    await service.whenSettled('mission-2');
     expect(service.current(first.id)).toMatchObject({ scene: 'receipt', status: 'healed' });
-    expect(calls).toEqual(callsBeforeReplay);
+    expect(calls.length).toBeGreaterThan(callsBeforeStart);
   });
 
-  it('keeps the ordinary POST replay-only and requires the fresh-proof token before provider work', async () => {
+  it('lets the ordinary public start create the first real leased mission', async () => {
     const { calls, service } = fakes({ maxMissions: 2 });
     server = createDemoMissionServer({ service, config: { ...config, freshProofToken: 'operator-proof-token-which-is-long-and-random' }, appDir: '/definitely-unbuilt' });
     await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
     const base = `http://127.0.0.1:${port}/api/demo/missions`;
 
-    expect((await fetch(base, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(409);
-    expect((await fetch(`${base}/fresh`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(403);
-    expect((await fetch(`${base}/fresh`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-polygraph-demo-fresh-proof-token': 'wrong' }, body: '{}' })).status).toBe(403);
-    expect(calls).toEqual([]);
-
-    const fresh = await fetch(`${base}/fresh`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-polygraph-demo-fresh-proof-token': 'operator-proof-token-which-is-long-and-random' }, body: '{}' });
+    const fresh = await fetch(base, { method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' }, body: '{}' });
     expect(fresh.status).toBe(201);
-    const { id } = await fresh.json() as { id: string };
+    const { id, reused } = await fresh.json() as { id: string; reused: boolean };
+    expect(reused).toBe(false);
     await service.whenSettled(id);
-    expect(calls).toEqual(['dispatch:v1:101:mission-1', 'marker:v1:101:mission-1', 'trigger:1', 'poll:1']);
+    expect(calls).toEqual(['trigger:1', 'poll:1']);
+  });
+
+  it('returns the same live mission for an idempotent browser retry without scheduling another A run', async () => {
+    const db = new Database(':memory:');
+    migrate(db, ':memory:');
+    const stateStore = new SqliteDemoMissionStateStore(db);
+    const { calls, service } = fakes({ stateStore });
+    server = createDemoMissionServer({ service, appDir: '/definitely-unbuilt' });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const request = () => fetch(`http://127.0.0.1:${port}/api/demo/missions`, { method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' }, body: JSON.stringify({ idempotency_key: 'browser-request-1' }) });
+
+    const first = await request();
+    const retry = await request();
+    expect(first.status).toBe(201);
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ id: 'mission-1', reused: true });
+    await service.whenSettled('mission-1');
+    expect(calls.filter((call) => call === 'trigger:1')).toHaveLength(1);
+    db.close();
   });
 
   it('exposes completed demo receipts through the public demo read model', async () => {
@@ -376,8 +453,8 @@ describe('demo mission configuration', () => {
   it('loads the fresh-proof token only from the server environment', () => {
     expect(readDemoMissionConfig({ ...env, POLYGRAPH_DEMO_FRESH_PROOF_TOKEN: 'operator-proof-token-which-is-long-and-random' })?.freshProofToken).toBe('operator-proof-token-which-is-long-and-random');
   });
-  it('hard-caps fresh proof configuration at two missions', () => {
-    expect(readDemoMissionConfig({ ...env, POLYGRAPH_DEMO_MAX_MISSIONS: '3' })?.maxMissions).toBe(2);
-    expect(readDemoMissionConfig({ ...env, POLYGRAPH_DEMO_MAX_MISSIONS: '999' })?.maxMissions).toBe(2);
+  it('ignores the removed legacy mission-cap environment variable', () => {
+    expect(readDemoMissionConfig({ ...env, POLYGRAPH_DEMO_MAX_MISSIONS: '3' })).toBeDefined();
+    expect(readDemoMissionConfig({ ...env, POLYGRAPH_DEMO_MAX_MISSIONS: '999' })).toBeDefined();
   });
 });

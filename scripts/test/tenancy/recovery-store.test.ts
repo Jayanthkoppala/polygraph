@@ -526,7 +526,7 @@ describe('RepairReceiptStore', () => {
     ).toBe(receipt.receipt_sha256);
   });
 
-  it('is insert-only — the M012 triggers abort any UPDATE or DELETE', () => {
+  it('is insert-only — the M013 triggers abort any UPDATE or DELETE', () => {
     const h = harness();
     const receipt = verifiedReceipt(h);
 

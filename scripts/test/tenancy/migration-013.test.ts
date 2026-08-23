@@ -21,7 +21,7 @@ afterEach(() => {
   while (dirs.length > 0) rmSync(dirs.pop()!, { recursive: true, force: true });
 });
 
-const M012_TABLES = [
+const M013_TABLES = [
   'collector_deliveries',
   'collector_verification_inputs',
   'collector_recovery_state',
@@ -38,27 +38,27 @@ function tableNames(db: Database.Database): string[] {
 }
 
 /**
- * Reverses M012 on an already-migrated database to reconstruct the exact
- * shape a production database had at M011, with its M001-M011 data intact.
+ * Reverses M013 on an already-migrated database to reconstruct the exact
+ * shape a production database had at M012, with its M001-M012 data intact.
  * Replaying `migrate()` over that is the real "upgrade an existing database"
  * path — running the migration on an empty file only ever proves the fresh
  * install case.
  */
-function rewindToM011(db: Database.Database): void {
+function rewindToM012(db: Database.Database): void {
   db.exec(`DROP TRIGGER IF EXISTS trg_repair_receipts_no_update`);
   db.exec(`DROP TRIGGER IF EXISTS trg_repair_receipts_no_delete`);
-  for (const table of [...M012_TABLES].reverse()) db.exec(`DROP TABLE IF EXISTS ${table}`);
+  for (const table of [...M013_TABLES].reverse()) db.exec(`DROP TABLE IF EXISTS ${table}`);
   db.exec(`ALTER TABLE collector_ingest_tokens DROP COLUMN revoked_at`);
-  db.prepare(`DELETE FROM schema_migrations WHERE version = 12`).run();
+  db.prepare(`DELETE FROM schema_migrations WHERE version = 13`).run();
 }
 
-describe('M012 — delivery + recovery schema', () => {
+describe('M013 — delivery + recovery schema', () => {
   it('applies on a fresh database, creating all five tables and the insert-only triggers', () => {
     const { db, path } = tempDb();
     migrate(db, path);
 
     const tables = tableNames(db);
-    for (const table of M012_TABLES) expect(tables).toContain(table);
+    for (const table of M013_TABLES) expect(tables).toContain(table);
 
     const triggers = (
       db.prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger'`).all() as Array<{
@@ -91,13 +91,13 @@ describe('M012 — delivery + recovery schema', () => {
       canaryInputs: ['SKU-1'],
     });
 
-    rewindToM011(db);
+    rewindToM012(db);
     expect(tableNames(db)).not.toContain('recovery_cycles');
     const before = db.prepare(`SELECT COUNT(*) AS n FROM tenant_collectors`).get() as { n: number };
 
     migrate(db, path);
 
-    for (const table of M012_TABLES) expect(tableNames(db)).toContain(table);
+    for (const table of M013_TABLES) expect(tableNames(db)).toContain(table);
     const after = db.prepare(`SELECT COUNT(*) AS n FROM tenant_collectors`).get() as { n: number };
     expect(after.n).toBe(before.n);
     expect(
@@ -112,12 +112,12 @@ describe('M012 — delivery + recovery schema', () => {
     migrate(db, path);
     // M004 is the destructive one and takes its own backup on any database,
     // fresh included, so the baseline here is whatever it already left — what
-    // matters is that replaying M012 adds nothing to it.
+    // matters is that replaying M013 adds nothing to it.
     const backupsAfterFirstMigrate = readdirSync(dir).filter((f) =>
       f.includes('.pre-migration-')
     ).length;
 
-    rewindToM011(db);
+    rewindToM012(db);
     migrate(db, path);
 
     expect(readdirSync(dir).filter((f) => f.includes('.pre-migration-')).length).toBe(
@@ -133,7 +133,7 @@ describe('M012 — delivery + recovery schema', () => {
     const versions = db.prepare(`SELECT COUNT(*) AS n FROM schema_migrations`).get() as {
       n: number;
     };
-    expect(versions.n).toBe(12);
+    expect(versions.n).toBe(13);
     db.close();
   });
 

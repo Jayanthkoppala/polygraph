@@ -23,9 +23,18 @@ export class SqliteDemoMissionStore implements DemoMissionStore {
 
   loadCompleted(): DemoMission[] {
     const rows = this.db
-      .prepare('SELECT mission_json FROM demo_mission_receipts ORDER BY completed_at DESC, rowid DESC')
+      .prepare(`SELECT mission_json FROM (
+        SELECT mission_json, completed_at, rowid AS insertion_order FROM demo_mission_receipts
+        UNION ALL
+        SELECT mission_json, completed_at, rowid AS insertion_order FROM demo_missions WHERE status = 'verified'
+      ) ORDER BY completed_at DESC, insertion_order DESC`)
       .all() as StoredMissionRow[];
-    return rows.map((row) => parseMission(row.mission_json));
+    const seen = new Set<string>();
+    return rows.map((row) => parseMission(row.mission_json)).filter((mission) => {
+      if (seen.has(mission.id)) return false;
+      seen.add(mission.id);
+      return true;
+    });
   }
 
   saveCompleted(mission: DemoMission): void {

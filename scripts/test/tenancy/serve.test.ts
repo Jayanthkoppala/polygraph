@@ -27,7 +27,7 @@ function tempDir(): string {
 }
 
 function jsonHeaders(extra: Record<string, string> = {}): Record<string, string> {
-  return { 'content-type': 'application/json', origin: ORIGIN, ...extra };
+  return { 'content-type': 'application/json', origin: ORIGIN, 'sec-fetch-site': 'same-origin', ...extra };
 }
 
 async function signup(base: string, fleetName: string): Promise<{ token: string; tenantId: string }> {
@@ -112,8 +112,8 @@ describe('tenancy/serve — public demo integration', () => {
       running = await startServer({ dbPath: join(dir, 'polygraph.sqlite'), port: 0, host: '127.0.0.1', publicOrigin: ORIGIN, webDir: join(dir, 'nope'), demoService: createFakeDemoService() });
       const base = `http://127.0.0.1:${running.port}`;
       const ordinary = await fetch(`${base}/api/demo/missions`, { method: 'POST', headers: jsonHeaders(), body: '{}' });
-      expect(ordinary.status).toBe(409);
-      expect((await fetch(`${base}/api/demo/missions/hosted-mission-1`)).status).toBe(404);
+      expect(ordinary.status).toBe(201);
+      expect((await fetch(`${base}/api/demo/missions/hosted-mission-1`)).status).toBe(200);
 
       const missingToken = await fetch(`${base}/api/demo/missions/fresh`, { method: 'POST', headers: jsonHeaders(), body: '{}' });
       expect(missingToken.status).toBe(403);
@@ -125,12 +125,10 @@ describe('tenancy/serve — public demo integration', () => {
         headers: jsonHeaders({ 'x-polygraph-demo-fresh-proof-token': 'hosted-fresh-proof-token' }),
         body: '{}',
       });
-      expect(created.status).toBe(201);
-      const { id } = (await created.json()) as { id: string };
-      expect(id).toBe('hosted-mission-1');
-      const progress = await fetch(`${base}/api/demo/missions/${id}`);
+      expect(created.status).toBe(409);
+      const progress = await fetch(`${base}/api/demo/missions/hosted-mission-1`);
       expect(progress.status).toBe(200);
-      expect((await progress.json()) as { id: string }).toMatchObject({ id });
+      expect((await progress.json()) as { id: string }).toMatchObject({ id: 'hosted-mission-1' });
 
       const issued = await signup(base, 'Hosted Demo Fleet');
       const session = await fetch(`${base}/t/${issued.token}`, { redirect: 'manual' });

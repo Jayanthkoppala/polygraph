@@ -8,7 +8,7 @@ This document is the operator's reference: what is on by default, what the
 shows, and the guarantees the implementation makes.
 
 Code: `src/tenancy/delivery.ts` (ingest), `src/tenancy/recovery/` (policy,
-worker, provider adapter, stores, read API), `src/tenancy/migrations/012-delivery-recovery.ts`.
+worker, provider adapter, stores, read API), `src/tenancy/migrations/013-delivery-recovery.ts`.
 
 ## What changes even when the flag is unset
 

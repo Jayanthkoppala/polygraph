@@ -8,7 +8,7 @@ and the fleet dashboard. `npm run build` emits `dist/`, which the Node server
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Vite dev server; `/api` proxies to a local `polygraph watch` on port 4141 |
+| `npm run dev` | Optional frontend-only Vite server fixed to `127.0.0.1:5174`; `/api` proxies to the hosted product on port 8080. It fails if the port is occupied rather than selecting another port. |
 | `npm run build` | `tsc -b` then `vite build` into `dist/` |
 | `npm run typecheck` | Project-references typecheck, no emit |
 | `npm test` | Vitest (jsdom) over `tests/` |
@@ -23,3 +23,7 @@ and the fleet dashboard. `npm run build` emits `dist/`, which the Node server
 - `src/app.css` — Tailwind entry and the only place design tokens are declared,
   copied from `docs/design/ui-system.md`; `tests/theme/tokens.smoke.test.ts` asserts them
 - `src/components/ui/` — shadcn/ui components (`components.json`, new-york style)
+
+For normal product development, use the repository-root `npm run local` and open
+`http://127.0.0.1:8080`. It builds this app and serves it with the tenant API from
+one process. Do not use this Vite server as a second product runtime.

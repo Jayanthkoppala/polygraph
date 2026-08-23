@@ -67,7 +67,7 @@ export type CycleStatus =
   | 'HELD_BUDGET';
 
 /** Statuses that still hold the one-cycle-per-collector slot. Mirrors the
- * `NON_TERMINAL` list in migrations/012-delivery-recovery.ts, which builds
+ * `NON_TERMINAL` list in migrations/013-delivery-recovery.ts, which builds
  * the partial unique index that enforces it. */
 export const NON_TERMINAL_CYCLE_STATUSES: readonly CycleStatus[] = [
   'PENDING',
@@ -597,7 +597,7 @@ export function receiptDigest(input: InsertReceiptInput): string {
 }
 
 /**
- * Verified-repair receipts. Insert-only: the M012 triggers refuse UPDATE and
+ * Verified-repair receipts. Insert-only: the M013 triggers refuse UPDATE and
  * DELETE at the database, so this class exposes no method that could attempt
  * either, and any SQL elsewhere that tries throws.
  */
