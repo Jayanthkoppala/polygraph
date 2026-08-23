@@ -41,9 +41,46 @@ export function issueDeliveryToken(
      ON CONFLICT(tenant_id, collector_id) DO UPDATE SET
        token_sha256 = excluded.token_sha256,
        created_at = excluded.created_at,
-       last_seen_at = NULL`
+       last_seen_at = NULL,
+       revoked_at = NULL`
   ).run(tenantId, collectorId, tokenHash(token), nowIso);
   return { token, createdAt: nowIso };
+}
+
+/** Issuing and rotating are the same operation — one live capability per
+ * collector, replaced in place — so rotation is a named alias rather than a
+ * second code path that could drift from it. Named separately because the
+ * caller's intent differs: `/ingest-token/rotate` is an operator invalidating
+ * a leaked URL, not onboarding creating a first one. */
+export function rotateDeliveryToken(
+  db: Database.Database,
+  tenantId: string,
+  collectorId: string,
+  nowIso = new Date().toISOString()
+): IssuedDeliveryToken {
+  return issueDeliveryToken(db, tenantId, collectorId, nowIso);
+}
+
+/**
+ * Turns a collector's ingress off without issuing a replacement. The row and
+ * its digest stay — a revoked capability that is still recorded is what lets
+ * a later delivery attempt on the dead URL be recognised as a revoked token
+ * rather than an unknown one. Returns false when the collector had no token.
+ *
+ * `resolveDeliveryTarget` requires `revoked_at IS NULL`, so revocation takes
+ * effect on the very next request with no cache to invalidate.
+ */
+export function revokeDeliveryToken(
+  db: Database.Database,
+  tenantId: string,
+  collectorId: string,
+  nowIso = new Date().toISOString()
+): boolean {
+  const result = db.prepare(
+    `UPDATE collector_ingest_tokens SET revoked_at = ?
+      WHERE tenant_id = ? AND collector_id = ? AND revoked_at IS NULL`
+  ).run(nowIso, tenantId, collectorId);
+  return result.changes > 0;
 }
 
 interface DeliveryTarget {
@@ -54,8 +91,8 @@ interface DeliveryTarget {
 }
 
 /** Resolves a delivery capability without accepting a tenant id or
- * collector id from the request. Unknown, rotated, deleted, and unfinished
- * collectors all collapse to the same undefined result. */
+ * collector id from the request. Unknown, rotated, revoked, deleted, and
+ * unfinished collectors all collapse to the same undefined result. */
 export function resolveDeliveryTarget(db: Database.Database, token: string): DeliveryTarget | undefined {
   if (!token.startsWith(DELIVERY_PREFIX)) return undefined;
   const row = db.prepare(
@@ -66,7 +103,7 @@ export function resolveDeliveryTarget(db: Database.Database, token: string): Del
          ON c.tenant_id = i.tenant_id
         AND c.collector_id = i.collector_id
         AND c.setup_state = 'confirmed'
-      WHERE i.token_sha256 = ?`
+      WHERE i.token_sha256 = ? AND i.revoked_at IS NULL`
   ).get(tokenHash(token)) as
     | { tenant_id: string; display_name: string; genesis_hash: string; collector_id: string }
     | undefined;

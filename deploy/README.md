@@ -22,11 +22,95 @@ divergent hash chains. **Never run two.**
 | TLS | Caddy, hostname via [sslip.io](https://sslip.io) so the IP resolves |
 | Health | `GET /healthz` → `{"ok":true}` |
 
-> **TODO — fill in from the box.** Two things are not in this repo yet:
-> the Caddyfile, and whatever supervises the node process (systemd unit or
-> `docker run` invocation — the `Dockerfile` here is kept and builds, but has
-> not been verified against the live VM). Copy them in so a rebuild does not
-> depend on one person's memory.
+## Infrastructure (GCE)
+
+Project `boss-media-505616`, zone `us-central1-a`.
+
+| Resource | Prod (`polygraph-fifteenth-morning`) | Staging (`polygraph-staging`) |
+|---|---|---|
+| Machine type | `e2-small` | `e2-small` |
+| Boot disk | 25GB pd-standard, debian-12 | 25GB pd-standard, debian-12 |
+| Data disk | `polygraph-data`, 10GB pd-standard, device-name `polygraph-data`, mounted `/data` (autoDelete: false) | `polygraph-staging-data`, 10GB pd-standard, same device-name |
+| Network tags | `polygraph-web` (opens 80/443 via `polygraph-allow-web` firewall rule) | same tag, same rule |
+| Service account | `polygraph-runtime@boss-media-505616.iam.gserviceaccount.com` (cloud-platform scope, used only to read Secret Manager on cold boot) | Compute Engine default service account — staging never touches Secret Manager |
+| External IP | static `polygraph-web-ip` (35.193.31.253), hostname `35.193.31.253.sslip.io` | reserve a static IP, hostname `<ip>.sslip.io` |
+
+**Both VMs run exactly one `polygraph` container plus one `polygraph-caddy`
+container, on `--network host`, never anything else.** The container runtime
+shape (learned from `docker inspect polygraph` on prod, names only — see
+Secrets note below):
+
+```
+docker run -d --name polygraph --restart unless-stopped --network host \
+  --env-file /etc/polygraph.env \       # or ~/polygraph-runtime-<vm>.env, see deploy.sh
+  -v /data:/data \
+  polygraph:<git-sha-short>
+```
+
+```
+docker run -d --name polygraph-caddy --restart unless-stopped --network host \
+  -v /etc/polygraph/Caddyfile:/etc/caddy/Caddyfile:ro \
+  -v /var/lib/polygraph-caddy:/data \
+  -v /var/lib/polygraph-caddy-config:/config \
+  caddy:2-alpine
+```
+
+Caddyfile (`/etc/polygraph/Caddyfile` on the box):
+
+```
+<hostname> {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:8080
+}
+```
+
+### Prod's self-healing startup script
+
+Prod's GCE instance metadata carries a `startup-script` that runs on every
+boot (cold start, reboot, or auto-recovery). It:
+
+1. Installs docker, mounts the `polygraph-data` disk at `/data` by UUID via
+   `/etc/fstab`, and provisions a 1GB swapfile (the e2-small needs it for a
+   local `docker build`).
+2. Writes `/etc/polygraph.env`. If a previous env file with the secret keys
+   already exists on disk it reuses those values (survives reboots without
+   Secret Manager); otherwise it fetches `polygraph-master-key`,
+   `polygraph-brightdata-api-key`, and `polygraph-demo-github-token` from
+   Secret Manager using the instance's own service-account token.
+3. Builds `polygraph-source:<short-sha>` from a fresh `git clone` of
+   `polygraph-source-repo`/`polygraph-source-ref` (instance metadata keys) if
+   that image doesn't already exist, then replaces the running `polygraph`
+   container with it, health-checks `/healthz`, and rolls back to the
+   previous image on failure.
+4. Renders `/etc/polygraph/Caddyfile` from `polygraph-hostname` metadata and
+   (re)starts `polygraph-caddy`.
+
+This is prod's **crash-recovery path**, not the normal deploy path — normal
+deploys go through `deploy.sh` below and push a pre-built image, they don't
+wait for a git clone + build on every boot. Staging's startup script (below)
+intentionally drops the Secret Manager section: staging's env file is put in
+place once by `deploy.sh` via `remote.sh put`, and the startup script only
+handles disk/swap/docker/caddy bootstrapping.
+
+### Release layout
+
+Manual/CI deploys (what `deploy.sh` automates) land each release under
+`~/polygraph-releases/<short-sha>/` on the VM — a full checkout of the repo
+at that ref (produced by `git archive <ref> | tar -x` on the box, not a
+clone) — then `docker build -t polygraph:<short-sha> ~/polygraph-releases/<short-sha>`.
+Containers from prior releases are kept, stopped, and renamed
+`polygraph-pre-<short-sha>` as a rollback target instead of being removed.
+
+### Secrets — how this doc was written
+
+Container env values were **never** dumped in bulk. Variable *names* only
+were read with `docker inspect polygraph --format '{{json .Config.Env}}'` /
+`sed 's/=.*//' ~/polygraph-runtime-<sha>.env`. One earlier `docker inspect
+polygraph` call (before this convention was applied) did print full env
+values including `POLYGRAPH_MASTER_KEY`, `BRIGHTDATA_API_KEY`, and
+`POLYGRAPH_DEMO_GITHUB_TOKEN` into an agent's tool output — nothing was
+written to a file or committed, but Jay should decide whether those three
+values warrant rotation out of caution.
 
 ## Build and run
 
@@ -66,6 +150,47 @@ current fixture identity is a product code and new deployments must use
 authorise Bright Data mutations **for the owned fixture collector only**. The
 customer scheduler strips that authority, so a connected customer collector can
 never inherit it.
+
+## Redeploying
+
+```bash
+# one-time, once GCP billing is reopened (see deploy/provision-staging.sh):
+bash deploy/provision-staging.sh
+# then write ~/polygraph-runtime-polygraph-staging.env on the box (0600, via
+# `remote.sh put` from a scratch temp file — see Staging env file below)
+
+# every deploy, either VM:
+bash deploy/deploy.sh polygraph-staging <git-ref>
+bash deploy/deploy.sh polygraph-fifteenth-morning <git-ref>   # prod — confirm with Jay first
+
+# backups:
+bash deploy/backup-db.sh polygraph-staging
+```
+
+`deploy.sh` builds fresh from a `git archive` of `<git-ref>` (uncommitted
+changes are never deployed), keeps the previous container as
+`polygraph-pre-<sha>` for manual rollback, and auto-rolls-back if
+`/healthz` doesn't come up healthy within 2 minutes.
+
+### Staging env file
+
+`~/polygraph-runtime-polygraph-staging.env` (0600, root of `$HOME` on the
+VM, never committed):
+
+```
+NODE_ENV=production
+PORT=8080
+POLYGRAPH_DB=/data/polygraph.sqlite
+POLYGRAPH_PUBLIC_ORIGIN=https://<staging-ip>.sslip.io
+POLYGRAPH_CONCURRENCY=2
+POLYGRAPH_MASTER_KEY=<fresh, openssl rand -base64 32 — never reuse prod's>
+BRIGHTDATA_API_KEY=<from ~/.brightdata_admin_key>
+POLYGRAPH_AUTO_RECOVERY=1
+POLYGRAPH_HEAL_ENABLED=0
+```
+
+No `POLYGRAPH_DEMO_*` variables on staging — the demo mission and its Bright
+Data mutation authority stay prod-only.
 
 ## Rules
 

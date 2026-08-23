@@ -197,7 +197,9 @@ function ShellHeader({
   );
 }
 
-function AddCollectorDialog({
+/** Exported so other surfaces (e.g. the recovery workspace at `/app`) can reuse the
+ *  exact same "pick a named Bright Data collector" flow — never a manual ID field. */
+export function AddCollectorDialog({
   onClose,
   onAddCollector,
   onListCollectors,

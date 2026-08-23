@@ -3,11 +3,12 @@
 import { Navigate } from 'react-router-dom';
 import { FleetApp } from '@/fleet/FleetApp';
 import { ReceiptsPage } from '@/receipts/ReceiptsPage';
+import { RecoveryWorkspace } from '@/recovery/RecoveryWorkspace';
 import { OnboardingWizard } from '@/onboarding/OnboardingWizard';
 import { SessionLoading, SessionUnavailable } from './SessionLoading';
 import { useSessionStatus } from './useSessionStatus';
 
-export function AppGate({ surface = 'fleet' }: { surface?: 'fleet' | 'receipts' }) {
+export function AppGate({ surface = 'fleet' }: { surface?: 'fleet' | 'receipts' | 'recovery' }) {
   const { status, retry } = useSessionStatus();
 
   if (status === 'loading') return <SessionLoading />;
@@ -16,7 +17,9 @@ export function AppGate({ surface = 'fleet' }: { surface?: 'fleet' | 'receipts' 
   if (status === 'unknown') return <SessionUnavailable onRetry={retry} />;
   if (status === 'anonymous') return <Navigate to="/" replace />;
   // `keyless` uses the wizard's default onComplete (navigate to /fleet, re-running this
-  // gate). `demo` falls through to FleetApp: its seeded /api/state is real, like 'ready'.
+  // gate). `demo` falls through to the surface below: its seeded state is real, like 'ready'.
   if (status === 'keyless') return <OnboardingWizard initialStage="key-paste" />;
-  return surface === 'receipts' ? <ReceiptsPage /> : <FleetApp />;
+  if (surface === 'receipts') return <ReceiptsPage />;
+  if (surface === 'recovery') return <RecoveryWorkspace />;
+  return <FleetApp />;
 }

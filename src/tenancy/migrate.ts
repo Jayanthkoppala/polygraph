@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { GENESIS_HASH } from '../store/ledger.js';
 import { LOCAL_TENANT_ID } from './genesis.js';
+import { up012DeliveryRecovery } from './migrations/012-delivery-recovery.js';
 
 /**
  * The migration runner, per tenant-architecture.md §8. Idempotent and
@@ -14,6 +15,14 @@ import { LOCAL_TENANT_ID } from './genesis.js';
  * hashed payload (see ledger.ts's `EventPayload`/`normalizePayload`), so
  * adding the column and backfilling it does not change a single
  * `event_hash`, and a migrated chain verifies exactly as it did before.
+ *
+ * File layout: M001-M011 are `upNNN` functions defined inline below, in
+ * version order. From M012 onwards each migration lives in its own file under
+ * `./migrations/NNN-<slug>.ts` and is imported here — the inline ones grew
+ * this file past 400 lines and a multi-table migration would double it. The
+ * registry at the bottom stays the single source of truth for order and for
+ * the `destructive` flag either way; a migration is not applied because its
+ * file exists, only because it appears in `MIGRATIONS`.
  */
 
 interface Migration {
@@ -432,6 +441,13 @@ const MIGRATIONS: Migration[] = [
   { version: 9, destructive: false, up: up009 },
   { version: 10, destructive: false, up: up010 },
   { version: 11, destructive: false, up: up011 },
+  // M012 — automatic collector recovery: deliveries, encrypted verification
+  // inputs, per-collector recovery state, cycles, append-only repair
+  // receipts. Non-destructive: CREATE ... IF NOT EXISTS plus one guarded
+  // ALTER TABLE ADD COLUMN, so nothing is dropped or rewritten and no
+  // pre-migration snapshot is taken. Defined in ./migrations/ per the file
+  // layout note at the top of this file.
+  { version: 12, destructive: false, up: up012DeliveryRecovery },
 ];
 
 /** One consistent snapshot before the first destructive step. VACUUM INTO

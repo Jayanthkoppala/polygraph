@@ -145,6 +145,19 @@ export type DatasetPollResult =
  * plus whatever else Bright Data includes (passed through untyped). */
 export interface JobLog {
   status: string;
+  /** The collector id this job ran under (`c_...`). */
+  collector?: string;
+  /**
+   * The template VERSION this job actually executed, as `t_<id>.<n>` (e.g.
+   * `t_mt1dx3c2j5cygm92m.1`). This is the only production-effect signal
+   * Bright Data exposes: there is no versions/template/rollback endpoint
+   * (both 404), so "did the healed template reach production?" is answered
+   * by triggering a fresh job and comparing this string's trailing version
+   * number against a pre-heal job's. Use `parseTemplateVersion` to split it.
+   */
+  template?: string;
+  /** Deliveries that failed for this job (webhook delivery errors). */
+  deliver_fails?: number;
   inputs?: number;
   dup_inputs?: number;
   lines: number;
@@ -172,6 +185,99 @@ export interface HpErrorRow {
   status_code?: number;
 }
 
+/** A `t_<id>.<version>` template string split into its parts. */
+export interface TemplateVersion {
+  /** The template id without the version suffix, e.g. `t_mt1dx3c2j5cygm92m`. */
+  templateId: string;
+  /** The trailing integer version, e.g. `1`. Monotonically increasing per save. */
+  version: number;
+}
+
+/**
+ * Splits a `JobLog.template` string (`t_<id>.<version>`) into its id and
+ * numeric version. Returns `undefined` for anything that doesn't match —
+ * a missing field, an unversioned id, or a non-numeric suffix — so callers
+ * comparing two jobs land on "can't tell" rather than a false verdict.
+ * Ids may themselves contain no dots; the version is taken from the LAST
+ * dot so a future dotted id doesn't silently mis-parse.
+ */
+export function parseTemplateVersion(template: unknown): TemplateVersion | undefined {
+  if (typeof template !== 'string') return undefined;
+  const dot = template.lastIndexOf('.');
+  if (dot <= 0 || dot === template.length - 1) return undefined;
+  const templateId = template.slice(0, dot);
+  const raw = template.slice(dot + 1);
+  if (!/^\d+$/.test(raw)) return undefined;
+  return { templateId, version: Number(raw) };
+}
+
+/** Delivery configuration for a collector, as accepted by POST /dca/collector.
+ * `api_pull` means "results stay on Bright Data, fetch them with
+ * /dca/dataset"; `webhook` POSTs each finished batch to `endpoint`. */
+export type CollectorDeliver =
+  | { type: 'api_pull'; format?: string; [key: string]: unknown }
+  | {
+      type: 'webhook';
+      endpoint: string;
+      format?: string;
+      filename?: { template: string; extension: string };
+      [key: string]: unknown;
+    };
+
+export interface CreateCollectorOptions {
+  name: string;
+  deliver: CollectorDeliver;
+}
+
+/** POST /dca/collector response. Only `id` is relied on; Bright Data
+ * returns a fuller (undocumented) collector object, passed through. */
+export interface CreatedCollector {
+  id: string;
+  name?: string;
+  created?: string;
+  active?: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * Body for POST /dca/collectors/{id}/automate_template — the AI
+ * template-generation step that turns a bare collector stub into a working
+ * scraper. Field names confirmed against the official `@brightdata/cli`'s
+ * own `build_ai_request` (`{description, urls: [url]}`); Bright Data's REST
+ * reference does not publish this body.
+ */
+export interface AutomateTemplateOptions {
+  /** Plain-language description of what to scrape. */
+  description: string;
+  /** Example URL(s) the generator works from. */
+  urls: string[];
+}
+
+/** GET /dca/collectors/{id}/automate_template/progress — same envelope
+ * shape as the refactor_template progress endpoint. */
+export type AutomateProgress = RefactorProgress;
+
+/** One row of GET /dca/collector/jobs. */
+export interface CollectorJob {
+  id: string;
+  status?: string;
+  queued?: string;
+  started?: string;
+  finished?: string;
+  inputs?: number;
+  page_loads?: number;
+  failed_pages?: number;
+  data_lines?: number;
+  trigger?: { type?: string; user?: string; ip?: string; [key: string]: unknown };
+  expired?: boolean;
+  [key: string]: unknown;
+}
+
+export interface CollectorJobsPage {
+  total?: number;
+  data: CollectorJob[];
+}
+
 export interface ScrapeUnlockerOptions extends PollOptions {
   /** Web Unlocker zone name. Falls back to BRIGHTDATA_UNLOCKER_ZONE. When
    * neither is set, scrapeUnlocker falls back to the `bdata scrape` CLI. */
@@ -190,6 +296,7 @@ export interface RefactorProgress {
   status: string;
   step?: string;
   id?: string;
+  success?: boolean;
   completed_steps?: string[];
   preview_result?: Record<string, unknown>[];
   diff?: { title?: string; [key: string]: unknown };
@@ -352,6 +459,97 @@ export class BrightDataClient {
   async hpErrors(jobId: string): Promise<HpErrorRow[]> {
     const body = await this.getJson(`/dca/jobs/${encodeURIComponent(jobId)}/hp_errors`, `hpErrors(${jobId})`);
     return Array.isArray(body) ? (body as HpErrorRow[]) : [];
+  }
+
+  /**
+   * ⚠️ LIVE-MUTATING. POST /dca/collector — creates an EMPTY collector
+   * (a stub with no template; `active:false`). The returned `id` is the
+   * `c_...` collector id; `automateTemplate` is the required second step
+   * before it can run anything.
+   */
+  async createCollector(opts: CreateCollectorOptions): Promise<CreatedCollector> {
+    const res = await this.fetchWithRetry('/dca/collector', {
+      method: 'POST',
+      body: JSON.stringify({ name: opts.name, deliver: opts.deliver }),
+    });
+    await ensureOk(res, `createCollector(${opts.name})`);
+    const body = (await res.json()) as CreatedCollector;
+    if (!body?.id) {
+      throw new BrightDataError(`createCollector(${opts.name}) response missing id`, res.status, body);
+    }
+    return body;
+  }
+
+  /**
+   * ⚠️ PAID, LIVE-MUTATING. POST /dca/collectors/{id}/automate_template —
+   * asks Bright Data's AI to generate this collector's scraping template
+   * from a description plus example URL(s). Subject to the same AI-Flow
+   * concurrent-job cap as `refactorTemplate` (429 → back off). Returns the
+   * accepted envelope as-is; poll `pollAutomateTemplateProgress` for the
+   * outcome.
+   */
+  async automateTemplate(collectorId: string, opts: AutomateTemplateOptions): Promise<unknown> {
+    const res = await this.fetchWithRetry(
+      `/dca/collectors/${encodeURIComponent(collectorId)}/automate_template`,
+      { method: 'POST', body: JSON.stringify({ description: opts.description, urls: opts.urls }) }
+    );
+    await ensureOk(res, `automateTemplate(${collectorId})`);
+    return safeJson(res);
+  }
+
+  /** GET /dca/collectors/{id}/automate_template/progress — one snapshot. */
+  async automateTemplateProgress(collectorId: string): Promise<AutomateProgress> {
+    return (await this.getJson(
+      `/dca/collectors/${encodeURIComponent(collectorId)}/automate_template/progress`,
+      `automateTemplateProgress(${collectorId})`
+    )) as AutomateProgress;
+  }
+
+  /**
+   * Polls automate_template/progress to a terminal state. Same state
+   * vocabulary as the refactor poll (`done`/`failed`/...); generation has
+   * no approval gate, so unlike `pollRefactorTemplateProgress` this never
+   * stops early — it either returns a success envelope or throws.
+   */
+  async pollAutomateTemplateProgress(collectorId: string, opts: PollOptions = {}): Promise<AutomateProgress> {
+    const poll = resolvePoll(opts, REFACTOR_POLL_DEFAULTS);
+    const start = Date.now();
+
+    for (;;) {
+      const progress = await this.automateTemplateProgress(collectorId);
+      const status = String(progress.status ?? '').toLowerCase();
+
+      if (REFACTOR_SUCCESS_STATES.has(status)) return progress;
+      if (REFACTOR_FAILURE_STATES.has(status)) {
+        throw new BrightDataError(
+          `automate_template job for ${collectorId} ended with status "${progress.status}"`,
+          undefined,
+          progress
+        );
+      }
+
+      await this.waitOrTimeout(collectorId, start, poll);
+    }
+  }
+
+  /**
+   * GET /dca/collector/jobs?collector={id}&from_date=&to_date= — the run
+   * history for one collector. BOTH dates are required by the API (omitting
+   * either is a 4xx), so they are required parameters here; pass ISO dates
+   * (`YYYY-MM-DD`) or full ISO timestamps. Returns `{total, data}` with
+   * `data` normalized to `[]` when Bright Data returns an unexpected shape.
+   */
+  async listJobs(collectorId: string, fromDate: string, toDate: string): Promise<CollectorJobsPage> {
+    const query = new URLSearchParams({
+      collector: collectorId,
+      from_date: fromDate,
+      to_date: toDate,
+    });
+    const body = (await this.getJson(
+      `/dca/collector/jobs?${query.toString()}`,
+      `listJobs(${collectorId})`
+    )) as { total?: number; data?: unknown };
+    return { total: body?.total, data: Array.isArray(body?.data) ? (body.data as CollectorJob[]) : [] };
   }
 
   /** DELETE /dca/collector/{scraper_id}. */

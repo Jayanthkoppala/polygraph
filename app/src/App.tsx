@@ -18,7 +18,7 @@ export function AppRoutes() {
         <Route path="/live-proof" element={<LandingPage mode="proof" />} />
         <Route path="/signup" element={<OnboardingEntry />} />
         <Route path="/login" element={<OnboardingEntry />} />
-        <Route path="/app" element={<AppGate />} />
+        <Route path="/app" element={<AppGate surface="recovery" />} />
         <Route path="/fleet" element={<AppGate />} />
         <Route path="/receipts" element={<ReceiptsPage />} />
         <Route path="/legal/privacy" element={<PrivacyPage />} />
