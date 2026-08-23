@@ -1440,6 +1440,7 @@ body.polygraph-landing-lock .global-chrome {
 }
 
 .pg-conversation-stage {
+  position: relative;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   width: min(1480px, 100%);
@@ -1463,6 +1464,29 @@ body.polygraph-landing-lock .global-chrome {
 .pg-conversation-visual {
   min-width: 0;
   min-height: 0;
+}
+
+.pg-live-generation {
+  position: absolute;
+  z-index: 2;
+  top: clamp(28px, 4vh, 52px);
+  right: clamp(28px, 4vw, 64px);
+  display: inline-flex;
+  align-items: center;
+  min-height: 25px;
+  padding: 0 10px;
+  border: 1px solid rgb(179 186 255 / .36);
+  border-radius: 999px;
+  background: rgb(18 19 34 / .78);
+  box-shadow: 0 8px 24px rgb(0 0 0 / .14);
+  color: rgb(222 225 255 / .92);
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: .1em;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .pg-conversation:has(.pg-kickoff-action) { padding-right: clamp(230px, 25vw, 390px); }
@@ -1761,6 +1785,7 @@ body.polygraph-landing-lock .global-chrome {
   .pg-conversation-app { min-height: auto; height: auto; }
   .pg-conversation-stage { min-height: calc(100svh - var(--poly-chrome-offset, 0px)); }
   .pg-conversation { width: 100%; }
+  .pg-live-generation { display: none; }
   .pg-conversation:has(.pg-kickoff-action) { padding-right: 0; }
   .pg-conversation:has(.pg-proof-actions) { padding-right: 0; }
   .pg-kickoff-action { position: static; justify-self: start; margin: 8px 0 0 22px; }

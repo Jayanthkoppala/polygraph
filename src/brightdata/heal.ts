@@ -215,7 +215,7 @@ export async function healOwnedFixture(
   if (!OWNED_FIXTURE_SUCCESS_STATES.has(status)) {
     throw new BrightDataError(`owned fixture heal did not finish successfully (status "${progress.status}")`);
   }
-  if (Array.isArray(progress.completed_steps) && !progress.completed_steps.includes('save_new_template')) {
+  if (!Array.isArray(progress.completed_steps) || !progress.completed_steps.includes('save_new_template')) {
     throw new BrightDataError('owned fixture heal completed without save_new_template evidence after approval');
   }
   return progress;

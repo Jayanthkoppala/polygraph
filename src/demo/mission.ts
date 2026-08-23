@@ -142,8 +142,12 @@ function inspectBrokenRow(result: DatasetPollResult, label: string, baseline: De
 }
 function assertExpectedBrokenRow(regression: { observation: DemoProductObservation; changedFields: string[] }, label: string, baseline: DemoProductObservation): void {
   if (regression.observation.product_code && regression.observation.product_code !== baseline.product_code) throw new Error(`${label} returned the wrong product identity; expected ${baseline.product_code}`);
-  const expectedRegression = ['product_code', 'title', 'price'];
-  if (regression.changedFields.join('|') !== expectedRegression.join('|')) throw new Error(`${label} did not reproduce the expected product_code, title, and price regression while preserving availability; observed ${humanList(regression.changedFields) || 'no changed fields'}`);
+  if (regression.observation.title && regression.observation.title !== baseline.title) throw new Error(`${label} returned a different non-empty product title; Polygraph will not blindly heal an ambiguous identity`);
+  if (regression.changedFields.includes('availability')) throw new Error(`${label} changed the stable availability control field; the incident is not a bounded extraction-anchor regression`);
+  const healableFields = new Set(['product_code', 'title', 'price']);
+  if (regression.changedFields.length === 0 || regression.changedFields.some((field) => !healableFields.has(field))) {
+    throw new Error(`${label} did not produce a bounded regression in product_code, title, or price; observed ${humanList(regression.changedFields) || 'no changed fields'}`);
+  }
 }
 function assertRecoveredRow(result: DatasetPollResult, label: string, config: DemoMissionConfig, baseline: DemoProductObservation): DemoProductObservation {
   const { row, observation } = oneFixtureObservation(result, label);
@@ -399,12 +403,13 @@ export class DemoMissionService {
   }
   private snapshotFromManifest(manifest: DemoFixtureManifest): DemoGenerationSnapshot {
     if (!/^\d+$/.test(manifest.generation)) throw new Error('fixture manifest generation must be numeric');
+    const sourceRef = manifest.commit_sha ?? this.deps.config.githubRef ?? 'main';
     return {
       version: manifest.version ?? 'evolving',
       generation: manifest.generation,
       parent_generation: manifest.parent_generation ?? String(Math.max(0, Number(manifest.generation) - 1)),
       seed: manifest.seed ?? 'legacy-baseline',
-      source_url: `https://github.com/${this.deps.config.fixtureRepo}/blob/${encodeURIComponent(this.deps.config.githubRef ?? 'main')}/index.html`,
+      source_url: `https://github.com/${this.deps.config.fixtureRepo}/blob/${encodeURIComponent(sourceRef)}/index.html`,
       marker_url: this.markerUrl(manifest.generation),
       commit_sha: manifest.commit_sha,
       workflow_run_id: manifest.workflow_run_id,
