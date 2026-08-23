@@ -1,0 +1,71 @@
+{
+  "purpose": "working demo collector for the production demo",
+  "finishedAt": "2026-08-23T11:14:10.281Z",
+  "targetUrl": "https://news.ycombinator.com",
+  "acceptance": {
+    "requiredPopulatedFields": [
+      "title",
+      "points"
+    ],
+    "minPopulatedRatio": 0.5,
+    "rationale": "output_schema is generated from the intent, not from what the code extracts, so a populated schema does not prove extraction works. Only a real triggered run does."
+  },
+  "winner": {
+    "attempt": 1,
+    "collectorId": "c_mt5pg1nc278ge4iitq",
+    "name": "polygraph-demo-1787483366",
+    "accepted": true,
+    "jobId": "j_mt5pkbmw2jkbeot95m",
+    "template": "t_mt5pk4na23pzcvwrz0.1",
+    "rowCount": 60,
+    "fields": [
+      "author",
+      "comment_count",
+      "input",
+      "points",
+      "title",
+      "url"
+    ],
+    "sampleRow": {
+      "title": "Munder Difflin – Agent harness to run an office of your clones munderdiffl.in",
+      "url": "https://munderdiffl.in/",
+      "points": 285,
+      "author": "simonpure",
+      "comment_count": 1123,
+      "input": {
+        "url": "https://news.ycombinator.com"
+      }
+    },
+    "populatedRows": 60
+  },
+  "attempts": [
+    {
+      "attempt": 1,
+      "collectorId": "c_mt5pg1nc278ge4iitq",
+      "name": "polygraph-demo-1787483366",
+      "accepted": true,
+      "jobId": "j_mt5pkbmw2jkbeot95m",
+      "template": "t_mt5pk4na23pzcvwrz0.1",
+      "rowCount": 60,
+      "fields": [
+        "author",
+        "comment_count",
+        "input",
+        "points",
+        "title",
+        "url"
+      ],
+      "sampleRow": {
+        "title": "Munder Difflin – Agent harness to run an office of your clones munderdiffl.in",
+        "url": "https://munderdiffl.in/",
+        "points": 285,
+        "author": "simonpure",
+        "comment_count": 1123,
+        "input": {
+          "url": "https://news.ycombinator.com"
+        }
+      },
+      "populatedRows": 60
+    }
+  ]
+}

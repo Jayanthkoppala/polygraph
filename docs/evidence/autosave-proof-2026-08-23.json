@@ -1,16 +1,214 @@
 {
   "proof": "brightdata-auto_save-promotion",
-  "outcome": "FAIL",
-  "startedAt": "2026-08-23T04:02:36.773Z",
-  "finishedAt": "2026-08-23T04:02:40.220Z",
-  "totalElapsedMs": 3447,
+  "outcome": "PASS",
+  "startedAt": "2026-08-23T04:50:58.417Z",
+  "finishedAt": "2026-08-23T05:08:53.491Z",
+  "totalElapsedMs": 1075074,
   "targetUrl": "https://news.ycombinator.com",
-  "healPrompt": "add a numeric field named rank",
-  "collectorsCreated": [],
-  "treatmentCollector": null,
-  "controlCollector": null,
-  "fatal": "createCollector(polygraph-proof-autosave-1787457756) failed: HTTP 400",
+  "healPrompt": "add a text field named site containing the domain shown next to each story title",
+  "healField": "site",
+  "refactorCalls": {
+    "thisRun": 2,
+    "previouslySpent": 1,
+    "total": 3,
+    "budget": 6
+  },
+  "collectorsCreated": [
+    "c_mt5bxc3f1ul647jkq0",
+    "c_mt5c7ij91jxqfjvutj"
+  ],
+  "notes": [],
+  "fatal": null,
   "assertions": [
+    {
+      "name": "baseline production rows do NOT already contain \"site\"",
+      "arm": "treatment",
+      "ok": true,
+      "expected": "site absent",
+      "actual": [
+        "author",
+        "comment_count",
+        "input",
+        "points",
+        "title",
+        "url"
+      ]
+    },
+    {
+      "name": "heal halted at the diff-approval gate",
+      "arm": "treatment",
+      "ok": true,
+      "expected": "status pending_answer or step user_approval",
+      "actual": {
+        "status": "pending_answer",
+        "step": "user_approval"
+      }
+    },
+    {
+      "name": "heal satisfied the prompt before the gate (success !== false)",
+      "arm": "treatment",
+      "ok": true,
+      "expected": "success not false",
+      "actual": {
+        "success": true,
+        "preview_result": {
+          "title": "MartyPC is a cross-platform emulator of early PCs written in Rust",
+          "url": "https://martypc.net/",
+          "site": "martypc.net",
+          "points": 22,
+          "author": "boilerupnc",
+          "comment_count": 1
+        }
+      }
+    },
+    {
+      "name": "completed_steps contains save_new_template (auto_save:true)",
+      "arm": "treatment",
+      "ok": true,
+      "expected": "save_new_template present",
+      "actual": {
+        "verdict": "success",
+        "status": "done",
+        "completed_steps": [
+          "planner",
+          "control_preview_runner",
+          "step_advance",
+          "control_preview_runner",
+          "code_fixer",
+          "step_preview_runner",
+          "request_fulfillment_validator",
+          "step_advance",
+          "user_approval",
+          "save_new_template"
+        ]
+      }
+    },
+    {
+      "name": "heal state is readable and identical from a fresh process (idempotent)",
+      "arm": "treatment",
+      "ok": true,
+      "expected": {
+        "status": "done",
+        "completed_steps": [
+          "planner",
+          "control_preview_runner",
+          "step_advance",
+          "control_preview_runner",
+          "code_fixer",
+          "step_preview_runner",
+          "request_fulfillment_validator",
+          "step_advance",
+          "user_approval",
+          "save_new_template"
+        ]
+      },
+      "actual": {
+        "status": "done",
+        "completed_steps": [
+          "planner",
+          "control_preview_runner",
+          "step_advance",
+          "control_preview_runner",
+          "code_fixer",
+          "step_preview_runner",
+          "request_fulfillment_validator",
+          "step_advance",
+          "user_approval",
+          "save_new_template"
+        ]
+      }
+    },
+    {
+      "name": "template VERSION increased after auto_save:true",
+      "arm": "treatment",
+      "ok": true,
+      "expected": "> 1 (from t_mt5c2eq9hs3vjdfvl.1)",
+      "actual": "2 (from t_mt5c2eq9hs3vjdfvl.2)"
+    },
+    {
+      "name": "production rows now contain the healed field \"site\"",
+      "arm": "treatment",
+      "ok": true,
+      "expected": "site present",
+      "actual": [
+        "author",
+        "comment_count",
+        "input",
+        "points",
+        "site",
+        "title",
+        "url"
+      ]
+    },
+    {
+      "name": "heal halted at the diff-approval gate",
+      "arm": "control",
+      "ok": true,
+      "expected": "status pending_answer or step user_approval",
+      "actual": {
+        "status": "pending_answer",
+        "step": "user_approval"
+      }
+    },
+    {
+      "name": "heal satisfied the prompt before the gate (success !== false)",
+      "arm": "control",
+      "ok": true,
+      "expected": "success not false",
+      "actual": {
+        "success": true,
+        "preview_result": {
+          "title": "MartyPC is a cross-platform emulator of early PCs written in Rust",
+          "url": "https://martypc.net/",
+          "points": 30,
+          "author": "boilerupnc",
+          "comment_count": 0,
+          "site": "martypc.net"
+        }
+      }
+    },
+    {
+      "name": "completed_steps does NOT contain save_new_template (auto_save:false)",
+      "arm": "control",
+      "ok": true,
+      "expected": "save_new_template absent",
+      "actual": {
+        "verdict": "success",
+        "status": "done",
+        "completed_steps": [
+          "planner",
+          "control_preview_runner",
+          "step_advance",
+          "control_preview_runner",
+          "code_fixer",
+          "step_preview_runner",
+          "request_fulfillment_validator",
+          "step_advance",
+          "user_approval"
+        ]
+      }
+    },
+    {
+      "name": "template VERSION unchanged without auto_save",
+      "arm": "control",
+      "ok": true,
+      "expected": "1 (unchanged)",
+      "actual": "1 (from t_mt5cco582gmd45j6uk.1)"
+    },
+    {
+      "name": "production rows still do NOT contain \"site\" without auto_save",
+      "arm": "control",
+      "ok": true,
+      "expected": "site absent",
+      "actual": [
+        "author",
+        "comment_count",
+        "input",
+        "points",
+        "title",
+        "url"
+      ]
+    },
     {
       "name": "every disposable collector is gone from collectors_list",
       "arm": "cleanup",
@@ -19,19 +217,1843 @@
       "actual": []
     }
   ],
+  "rejectProbe": {
+    "ran": false
+  },
   "deletion": {
+    "c_mt5bxc3f1ul647jkq0": "deleted",
+    "c_mt5c7ij91jxqfjvutj": "deleted",
     "confirmedGone": true,
     "survivors": []
   },
   "steps": [
     {
-      "step": "create collector \"polygraph-proof-autosave-1787457756\"",
+      "step": "create collector \"polygraph-proof-autosave-1787460658\"",
       "arm": "treatment",
-      "startedAt": "2026-08-23T04:02:36.773Z",
-      "elapsedMs": 2331,
+      "startedAt": "2026-08-23T04:50:58.417Z",
+      "elapsedMs": 3572,
       "detail": {
-        "ok": false,
-        "error": "createCollector(polygraph-proof-autosave-1787457756) failed: HTTP 400"
+        "ok": true,
+        "result": {
+          "name": "polygraph-proof-autosave-1787460658",
+          "deliver": {
+            "type": "api_pull",
+            "flatten_csv": false,
+            "delivery_type": "deliver_results"
+          },
+          "active": false,
+          "created": "2026-08-23T04:50:59.835Z",
+          "user": "<REDACTED_EMAIL>",
+          "customer": "hl_b71e73bf",
+          "customer_id": "hl_b71e73bf",
+          "output_format_ver": 1,
+          "require_all_success": false,
+          "default_queue_behavior": "parallel",
+          "strict_input_normalize": true,
+          "request_cmd_behavior": "send_ajax_request",
+          "strict_url_validate": true,
+          "no_strange_input_normalize": true,
+          "allow_wait_ms": false,
+          "id": "c_mt5bxc3f1ul647jkq0",
+          "zone": "v__dca_polygraph_proof_autos_3",
+          "notifications": {
+            "success_rate": {
+              "addresses": "<REDACTED_EMAIL>",
+              "frequency": 1
+            }
+          },
+          "history": [
+            {
+              "date": "2026-08-23T04:50:59.842Z",
+              "user": "Fakename",
+              "comment": "Collector was created"
+            }
+          ],
+          "output_fields": [],
+          "fields": {},
+          "template": {
+            "stub": true
+          },
+          "has_output_fields_mapping": false,
+          "account_id": "hl_b71e73bf",
+          "is_under_dataset_migration": false,
+          "under_sla": false,
+          "output_schema_incompatible": false,
+          "beta_output_schema_incompatible": false,
+          "is_scheduled": false
+        }
+      }
+    },
+    {
+      "step": "POST automate_template",
+      "arm": "treatment",
+      "startedAt": "2026-08-23T04:51:01.990Z",
+      "elapsedMs": 2078,
+      "detail": {
+        "ok": true,
+        "result": {
+          "id": "ia_mt5bxfak2nut8s77o4",
+          "queued": false
+        }
+      }
+    },
+    {
+      "step": "poll automate_template to done",
+      "arm": "treatment",
+      "startedAt": "2026-08-23T04:51:04.068Z",
+      "elapsedMs": 236971,
+      "detail": {
+        "ok": true,
+        "result": {
+          "step": "collector_mainatiner",
+          "completed_steps": [
+            "prepare_intent_analyzer",
+            "planner",
+            "discovery",
+            "collector_mainatiner",
+            "output_schema_generator",
+            "code_generator",
+            "input_schema_generator",
+            "preview_runner",
+            "preview_picker"
+          ],
+          "status": "done"
+        }
+      }
+    },
+    {
+      "step": "trigger + read dataset (baseline)",
+      "arm": "treatment",
+      "startedAt": "2026-08-23T04:55:01.040Z",
+      "elapsedMs": 81446,
+      "detail": {
+        "ok": true,
+        "result": {
+          "jobId": "j_mt5c2j2h1cgqn6skyi",
+          "log": {
+            "id": "j_mt5c2j2h1cgqn6skyi",
+            "status": "done",
+            "collector": "c_mt5bxc3f1ul647jkq0",
+            "template": "t_mt5c2eq9hs3vjdfvl.1",
+            "inputs": 1,
+            "dup_inputs": 0,
+            "lines": 59,
+            "fails": 1,
+            "pages": 62,
+            "pages_left": 0,
+            "success": 61,
+            "navigations": 61,
+            "created": "2026-08-23T04:55:02.220Z",
+            "started": "2026-08-23T04:55:02.295Z",
+            "finished": "2026-08-23T04:56:04.643Z",
+            "trigger": "<REDACTED_EMAIL>",
+            "success_rate": 0.9833333333333333,
+            "job_time": 62348,
+            "queue_time": 75
+          },
+          "template": "t_mt5c2eq9hs3vjdfvl.1",
+          "version": 1,
+          "rowFields": [
+            "author",
+            "comment_count",
+            "input",
+            "points",
+            "title",
+            "url"
+          ],
+          "rowCount": 59,
+          "sampleRow": {
+            "title": "How a Texas student blew the whistle on a rogue AI hacking attempt",
+            "url": "https://www.reuters.com/world/how-texas-student-blew-whistle-rogue-ai-hacking-attempt-2026-08-20/",
+            "points": 132,
+            "author": "olalonde",
+            "comment_count": 1245,
+            "input": {
+              "url": "https://news.ycombinator.com"
+            }
+          },
+          "ambiguousEmpty": false
+        }
+      }
+    },
+    {
+      "step": "POST refactor_template",
+      "arm": "treatment",
+      "startedAt": "2026-08-23T04:56:22.486Z",
+      "elapsedMs": 412,
+      "detail": {
+        "ok": true,
+        "result": {
+          "id": "ia_mt5c499v2hx5pbl7de",
+          "queued": false
+        }
+      }
+    },
+    {
+      "step": "poll refactor progress to approval gate",
+      "arm": "treatment",
+      "startedAt": "2026-08-23T04:56:22.898Z",
+      "elapsedMs": 78926,
+      "detail": {
+        "ok": true,
+        "result": {
+          "id": "ia_mt5c499v2hx5pbl7de",
+          "step": "user_approval",
+          "completed_steps": [
+            "planner",
+            "control_preview_runner",
+            "step_advance",
+            "control_preview_runner",
+            "code_fixer",
+            "step_preview_runner",
+            "request_fulfillment_validator",
+            "step_advance"
+          ],
+          "status": "pending_answer",
+          "diff": {
+            "template_a": {
+              "_id": "6a8a7d20a860466520a364bf",
+              "name": "New ide-automation template",
+              "steps": [
+                {
+                  "name": "New ide-automation template",
+                  "code": "// Navigate to the provided URL\nconst url = new URL(input.url);\n\n// Navigate to the URL\nnavigate(url.href);\n\n\n// Parse the current page to get story URLs\nconst { urls } = parse();\n\n// Handle pagination - only on first run (not on reruns)\nif (!input.is_rerun) {\n    // Default to 2 pages if not specified, max 10 pages\n    const max_page = Math.min(input.max_page || 2, 10);\n    \n    // Trigger reruns for additional pages\n    for (let page = 2; page <= max_page; page++) {\n        const next_page_url = new URL(input.url);\n        next_page_url.searchParams.set('p', page.toString());\n        \n        rerun_stage({\n            url: next_page_url.href,\n            max_page: input.max_page,\n            is_rerun: true\n        });\n    }\n}\n\n// Collect all URLs from the current page\nfor (let story_url of urls) {\n    next_stage({ url: story_url });\n}",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.rerun_stage",
+                    "cmd.next_stage"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Get all story rows\nconst story_rows = $('tr.athing').toArray();\n\n// Extract Hacker News discussion URLs from each story row\nconst urls = story_rows.map(row => {\n    // Get the story ID from the row's id attribute\n    const story_id = $(row).attr('id');\n    \n    if (story_id) {\n        // Construct the Hacker News discussion URL\n        return `https://news.ycombinator.com/item?id=${story_id}`;\n    }\n    return null;\n}).filter(Boolean); // Remove null values\n\nconsole.log(`Found ${urls.length} story URLs on this page`);\n\nreturn { urls };",
+                    "sandbox_version": 1,
+                    "id": "p_mt5c2eqe1cbnwc8thq.1"
+                  },
+                  "parse_code": "// Get all story rows\nconst story_rows = $('tr.athing').toArray();\n\n// Extract Hacker News discussion URLs from each story row\nconst urls = story_rows.map(row => {\n    // Get the story ID from the row's id attribute\n    const story_id = $(row).attr('id');\n    \n    if (story_id) {\n        // Construct the Hacker News discussion URL\n        return `https://news.ycombinator.com/item?id=${story_id}`;\n    }\n    return null;\n}).filter(Boolean); // Remove null values\n\nconsole.log(`Found ${urls.length} story URLs on this page`);\n\nreturn { urls };"
+                },
+                {
+                  "name": "New ide-automation template",
+                  "code": "\nnavigate(input.url);\ncollect(parse());\n",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com/item?id=49405816"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.collect"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "\n// Get title and URL from .titleline > a\nlet titleElement = $('.titleline > a').first();\nlet title = titleElement.text_sane();\nlet url = titleElement.attr('href');\n\n// Get points from [id^=score_]\nlet pointsText = $('[id^=score_]').first().text_sane();\nlet points = parseInt(pointsText.replace(/\\D/g, '')) || 0;\n\n// Get author from .hnuser\nlet author = $('.hnuser').first().text_sane();\n\n// Get comment count from .subtext a:last-child\nlet commentLink = $('.subtext a:last-child').text_sane();\nlet comment_count = 0;\nif (commentLink && commentLink !== 'discuss') {\n  // Extract number from text like \"5 comments\" or \"1 comment\"\n  comment_count = parseInt(commentLink.replace(/\\D/g, '')) || 0;\n}\n\nreturn {\n  title,\n  url: url ? new URL(url) : null,\n  points,\n  author,\n  comment_count\n};\n",
+                    "sandbox_version": 1,
+                    "id": "p_mt5c2eqf248ybc5jot.1"
+                  },
+                  "parse_code": "\n// Get title and URL from .titleline > a\nlet titleElement = $('.titleline > a').first();\nlet title = titleElement.text_sane();\nlet url = titleElement.attr('href');\n\n// Get points from [id^=score_]\nlet pointsText = $('[id^=score_]').first().text_sane();\nlet points = parseInt(pointsText.replace(/\\D/g, '')) || 0;\n\n// Get author from .hnuser\nlet author = $('.hnuser').first().text_sane();\n\n// Get comment count from .subtext a:last-child\nlet commentLink = $('.subtext a:last-child').text_sane();\nlet comment_count = 0;\nif (commentLink && commentLink !== 'discuss') {\n  // Extract number from text like \"5 comments\" or \"1 comment\"\n  comment_count = parseInt(commentLink.replace(/\\D/g, '')) || 0;\n}\n\nreturn {\n  title,\n  url: url ? new URL(url) : null,\n  points,\n  author,\n  comment_count\n};\n"
+                }
+              ],
+              "visibility": "private",
+              "user": "<REDACTED_EMAIL>",
+              "status": {
+                "value": "development",
+                "last_modified": {
+                  "date": "2026-08-23T04:54:56.528Z",
+                  "email": "<REDACTED_EMAIL>"
+                }
+              },
+              "url": "https://news.ycombinator.com",
+              "use_case": "other",
+              "customer": "hl_b71e73bf",
+              "sandbox_version": 1,
+              "example_input": [
+                {
+                  "url": "https://news.ycombinator.com"
+                }
+              ],
+              "example_output": "{\"title\":\"MartyPC is a cross-platform emulator of early PCs written in Rust\",\"url\":\"https://martypc.net/\",\"points\":21,\"author\":\"boilerupnc\",\"comment_count\":1}",
+              "output_fields": {
+                "type": "object",
+                "fields": {
+                  "title": {
+                    "type": "text"
+                  },
+                  "url": {
+                    "type": "url"
+                  },
+                  "points": {
+                    "type": "number"
+                  },
+                  "author": {
+                    "type": "text"
+                  },
+                  "comment_count": {
+                    "type": "number"
+                  }
+                }
+              },
+              "features": [
+                "cmd.navigate",
+                "cmd.parse",
+                "cmd.rerun_stage",
+                "cmd.next_stage",
+                "cmd.collect"
+              ],
+              "shared_libs": [],
+              "source": "dca-ide-automation-66f5c565b6-fkbnw",
+              "customer_id": "hl_b71e73bf",
+              "code_environment": "intent",
+              "id": "t_mt5c2eq9hs3vjdfvl.1",
+              "family": "t_mt5c2eq9hs3vjdfvl",
+              "patch": 1,
+              "version": "1",
+              "domain": "news.ycombinator.com",
+              "discovery": false,
+              "last_modified": {
+                "email": "<REDACTED_EMAIL>",
+                "date": "2026-08-23T04:54:56.533Z"
+              },
+              "is_development": true
+            },
+            "template_b": {
+              "_id": {
+                "buffer": {
+                  "0": 106,
+                  "1": 138,
+                  "2": 125,
+                  "3": 32,
+                  "4": 168,
+                  "5": 96,
+                  "6": 70,
+                  "7": 101,
+                  "8": 32,
+                  "9": 163,
+                  "10": 100,
+                  "11": 191
+                }
+              },
+              "name": "New ide-automation template",
+              "steps": [
+                {
+                  "name": "New ide-automation template",
+                  "code": "// Navigate to the provided URL\nconst url = new URL(input.url);\n\n// Navigate to the URL\nnavigate(url.href);\n\n\n// Parse the current page to get story URLs\nconst { urls } = parse();\n\n// Handle pagination - only on first run (not on reruns)\nif (!input.is_rerun) {\n    // Default to 2 pages if not specified, max 10 pages\n    const max_page = Math.min(input.max_page || 2, 10);\n    \n    // Trigger reruns for additional pages\n    for (let page = 2; page <= max_page; page++) {\n        const next_page_url = new URL(input.url);\n        next_page_url.searchParams.set('p', page.toString());\n        \n        rerun_stage({\n            url: next_page_url.href,\n            max_page: input.max_page,\n            is_rerun: true\n        });\n    }\n}\n\n// Collect all URLs from the current page\nfor (let story_url of urls) {\n    next_stage({ url: story_url });\n}",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.rerun_stage",
+                    "cmd.next_stage"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Get all story rows\nconst story_rows = $('tr.athing').toArray();\n\n// Extract Hacker News discussion URLs from each story row\nconst urls = story_rows.map(row => {\n    // Get the story ID from the row's id attribute\n    const story_id = $(row).attr('id');\n    \n    if (story_id) {\n        // Construct the Hacker News discussion URL\n        return `https://news.ycombinator.com/item?id=${story_id}`;\n    }\n    return null;\n}).filter(Boolean); // Remove null values\n\nconsole.log(`Found ${urls.length} story URLs on this page`);\n\nreturn { urls };",
+                    "sandbox_version": 1,
+                    "id": "p_mt5c2eqe1cbnwc8thq.1"
+                  },
+                  "parse_code": "// Get all story rows\nconst story_rows = $('tr.athing').toArray();\n\n// Extract Hacker News discussion URLs from each story row\nconst urls = story_rows.map(row => {\n    // Get the story ID from the row's id attribute\n    const story_id = $(row).attr('id');\n    \n    if (story_id) {\n        // Construct the Hacker News discussion URL\n        return `https://news.ycombinator.com/item?id=${story_id}`;\n    }\n    return null;\n}).filter(Boolean); // Remove null values\n\nconsole.log(`Found ${urls.length} story URLs on this page`);\n\nreturn { urls };"
+                },
+                {
+                  "name": "New ide-automation template",
+                  "code": "navigate(input.url);\ncollect(parse());",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com/item?id=49405816"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.collect"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Get title and URL from .titleline > a\nlet titleElement = $('.titleline > a').first();\nlet title = titleElement.text_sane();\nlet url = titleElement.attr('href');\n\n// Get site/domain from .sitestr\nlet site = $('.sitestr').first().text_sane() || '';\n\n// Get points from [id^=score_]\nlet pointsText = $('[id^=score_]').first().text_sane();\nlet points = parseInt(pointsText.replace(/\\D/g, '')) || 0;\n\n// Get author from .hnuser\nlet author = $('.hnuser').first().text_sane();\n\n// Get comment count from .subtext a:last-child\nlet commentLink = $('.subtext a:last-child').text_sane();\nlet comment_count = 0;\nif (commentLink && commentLink !== 'discuss') {\n  comment_count = parseInt(commentLink.replace(/\\D/g, '')) || 0;\n}\n\nreturn {\n  title,\n  url: url ? new URL(url) : null,\n  site,\n  points,\n  author,\n  comment_count\n};",
+                    "sandbox_version": 1,
+                    "id": "p_mt5c2eqf248ybc5jot.1"
+                  },
+                  "parse_code": "// Get title and URL from .titleline > a\nlet titleElement = $('.titleline > a').first();\nlet title = titleElement.text_sane();\nlet url = titleElement.attr('href');\n\n// Get site/domain from .sitestr\nlet site = $('.sitestr').first().text_sane() || '';\n\n// Get points from [id^=score_]\nlet pointsText = $('[id^=score_]').first().text_sane();\nlet points = parseInt(pointsText.replace(/\\D/g, '')) || 0;\n\n// Get author from .hnuser\nlet author = $('.hnuser').first().text_sane();\n\n// Get comment count from .subtext a:last-child\nlet commentLink = $('.subtext a:last-child').text_sane();\nlet comment_count = 0;\nif (commentLink && commentLink !== 'discuss') {\n  comment_count = parseInt(commentLink.replace(/\\D/g, '')) || 0;\n}\n\nreturn {\n  title,\n  url: url ? new URL(url) : null,\n  site,\n  points,\n  author,\n  comment_count\n};"
+                }
+              ],
+              "visibility": "private",
+              "user": "<REDACTED_EMAIL>",
+              "status": {
+                "value": "development",
+                "last_modified": {
+                  "date": "2026-08-23T04:54:56.528Z",
+                  "email": "<REDACTED_EMAIL>"
+                }
+              },
+              "url": "https://news.ycombinator.com",
+              "use_case": "other",
+              "customer": "hl_b71e73bf",
+              "sandbox_version": 1,
+              "example_input": [
+                {
+                  "url": "https://news.ycombinator.com"
+                }
+              ],
+              "example_output": "{\"title\":\"MartyPC is a cross-platform emulator of early PCs written in Rust\",\"url\":\"https://martypc.net/\",\"points\":21,\"author\":\"boilerupnc\",\"comment_count\":1}",
+              "output_fields": {
+                "type": "object",
+                "fields": {
+                  "title": {
+                    "type": "text"
+                  },
+                  "url": {
+                    "type": "url"
+                  },
+                  "points": {
+                    "type": "number"
+                  },
+                  "author": {
+                    "type": "text"
+                  },
+                  "comment_count": {
+                    "type": "number"
+                  }
+                }
+              },
+              "features": [
+                "cmd.navigate",
+                "cmd.parse",
+                "cmd.rerun_stage",
+                "cmd.next_stage",
+                "cmd.collect"
+              ],
+              "shared_libs": [],
+              "source": "dca-ide-automation-66f5c565b6-fkbnw",
+              "customer_id": "hl_b71e73bf",
+              "code_environment": "intent",
+              "id": "t_mt5c2eq9hs3vjdfvl.1",
+              "family": "t_mt5c2eq9hs3vjdfvl",
+              "patch": 1,
+              "version": "1",
+              "domain": "news.ycombinator.com",
+              "discovery": false,
+              "last_modified": {
+                "email": "<REDACTED_EMAIL>",
+                "date": "2026-08-23T04:54:56.533Z"
+              },
+              "is_development": true
+            },
+            "title": "View refactor changes",
+            "user": "<REDACTED_EMAIL>"
+          },
+          "success": true,
+          "preview_result": [
+            {
+              "title": "MartyPC is a cross-platform emulator of early PCs written in Rust",
+              "url": "https://martypc.net/",
+              "site": "martypc.net",
+              "points": 22,
+              "author": "boilerupnc",
+              "comment_count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "re-read FULL gate envelope before resuming",
+      "arm": "treatment",
+      "startedAt": "2026-08-23T04:57:41.824Z",
+      "elapsedMs": 1388,
+      "detail": {
+        "ok": true,
+        "result": {
+          "id": "ia_mt5c499v2hx5pbl7de",
+          "step": "user_approval",
+          "completed_steps": [
+            "planner",
+            "control_preview_runner",
+            "step_advance",
+            "control_preview_runner",
+            "code_fixer",
+            "step_preview_runner",
+            "request_fulfillment_validator",
+            "step_advance"
+          ],
+          "status": "pending_answer",
+          "diff": {
+            "template_a": {
+              "_id": "6a8a7d20a860466520a364bf",
+              "name": "New ide-automation template",
+              "steps": [
+                {
+                  "name": "New ide-automation template",
+                  "code": "// Navigate to the provided URL\nconst url = new URL(input.url);\n\n// Navigate to the URL\nnavigate(url.href);\n\n\n// Parse the current page to get story URLs\nconst { urls } = parse();\n\n// Handle pagination - only on first run (not on reruns)\nif (!input.is_rerun) {\n    // Default to 2 pages if not specified, max 10 pages\n    const max_page = Math.min(input.max_page || 2, 10);\n    \n    // Trigger reruns for additional pages\n    for (let page = 2; page <= max_page; page++) {\n        const next_page_url = new URL(input.url);\n        next_page_url.searchParams.set('p', page.toString());\n        \n        rerun_stage({\n            url: next_page_url.href,\n            max_page: input.max_page,\n            is_rerun: true\n        });\n    }\n}\n\n// Collect all URLs from the current page\nfor (let story_url of urls) {\n    next_stage({ url: story_url });\n}",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.rerun_stage",
+                    "cmd.next_stage"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Get all story rows\nconst story_rows = $('tr.athing').toArray();\n\n// Extract Hacker News discussion URLs from each story row\nconst urls = story_rows.map(row => {\n    // Get the story ID from the row's id attribute\n    const story_id = $(row).attr('id');\n    \n    if (story_id) {\n        // Construct the Hacker News discussion URL\n        return `https://news.ycombinator.com/item?id=${story_id}`;\n    }\n    return null;\n}).filter(Boolean); // Remove null values\n\nconsole.log(`Found ${urls.length} story URLs on this page`);\n\nreturn { urls };",
+                    "sandbox_version": 1,
+                    "id": "p_mt5c2eqe1cbnwc8thq.1"
+                  },
+                  "parse_code": "// Get all story rows\nconst story_rows = $('tr.athing').toArray();\n\n// Extract Hacker News discussion URLs from each story row\nconst urls = story_rows.map(row => {\n    // Get the story ID from the row's id attribute\n    const story_id = $(row).attr('id');\n    \n    if (story_id) {\n        // Construct the Hacker News discussion URL\n        return `https://news.ycombinator.com/item?id=${story_id}`;\n    }\n    return null;\n}).filter(Boolean); // Remove null values\n\nconsole.log(`Found ${urls.length} story URLs on this page`);\n\nreturn { urls };"
+                },
+                {
+                  "name": "New ide-automation template",
+                  "code": "\nnavigate(input.url);\ncollect(parse());\n",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com/item?id=49405816"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.collect"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "\n// Get title and URL from .titleline > a\nlet titleElement = $('.titleline > a').first();\nlet title = titleElement.text_sane();\nlet url = titleElement.attr('href');\n\n// Get points from [id^=score_]\nlet pointsText = $('[id^=score_]').first().text_sane();\nlet points = parseInt(pointsText.replace(/\\D/g, '')) || 0;\n\n// Get author from .hnuser\nlet author = $('.hnuser').first().text_sane();\n\n// Get comment count from .subtext a:last-child\nlet commentLink = $('.subtext a:last-child').text_sane();\nlet comment_count = 0;\nif (commentLink && commentLink !== 'discuss') {\n  // Extract number from text like \"5 comments\" or \"1 comment\"\n  comment_count = parseInt(commentLink.replace(/\\D/g, '')) || 0;\n}\n\nreturn {\n  title,\n  url: url ? new URL(url) : null,\n  points,\n  author,\n  comment_count\n};\n",
+                    "sandbox_version": 1,
+                    "id": "p_mt5c2eqf248ybc5jot.1"
+                  },
+                  "parse_code": "\n// Get title and URL from .titleline > a\nlet titleElement = $('.titleline > a').first();\nlet title = titleElement.text_sane();\nlet url = titleElement.attr('href');\n\n// Get points from [id^=score_]\nlet pointsText = $('[id^=score_]').first().text_sane();\nlet points = parseInt(pointsText.replace(/\\D/g, '')) || 0;\n\n// Get author from .hnuser\nlet author = $('.hnuser').first().text_sane();\n\n// Get comment count from .subtext a:last-child\nlet commentLink = $('.subtext a:last-child').text_sane();\nlet comment_count = 0;\nif (commentLink && commentLink !== 'discuss') {\n  // Extract number from text like \"5 comments\" or \"1 comment\"\n  comment_count = parseInt(commentLink.replace(/\\D/g, '')) || 0;\n}\n\nreturn {\n  title,\n  url: url ? new URL(url) : null,\n  points,\n  author,\n  comment_count\n};\n"
+                }
+              ],
+              "visibility": "private",
+              "user": "<REDACTED_EMAIL>",
+              "status": {
+                "value": "development",
+                "last_modified": {
+                  "date": "2026-08-23T04:54:56.528Z",
+                  "email": "<REDACTED_EMAIL>"
+                }
+              },
+              "url": "https://news.ycombinator.com",
+              "use_case": "other",
+              "customer": "hl_b71e73bf",
+              "sandbox_version": 1,
+              "example_input": [
+                {
+                  "url": "https://news.ycombinator.com"
+                }
+              ],
+              "example_output": "{\"title\":\"MartyPC is a cross-platform emulator of early PCs written in Rust\",\"url\":\"https://martypc.net/\",\"points\":21,\"author\":\"boilerupnc\",\"comment_count\":1}",
+              "output_fields": {
+                "type": "object",
+                "fields": {
+                  "title": {
+                    "type": "text"
+                  },
+                  "url": {
+                    "type": "url"
+                  },
+                  "points": {
+                    "type": "number"
+                  },
+                  "author": {
+                    "type": "text"
+                  },
+                  "comment_count": {
+                    "type": "number"
+                  }
+                }
+              },
+              "features": [
+                "cmd.navigate",
+                "cmd.parse",
+                "cmd.rerun_stage",
+                "cmd.next_stage",
+                "cmd.collect"
+              ],
+              "shared_libs": [],
+              "source": "dca-ide-automation-66f5c565b6-fkbnw",
+              "customer_id": "hl_b71e73bf",
+              "code_environment": "intent",
+              "id": "t_mt5c2eq9hs3vjdfvl.1",
+              "family": "t_mt5c2eq9hs3vjdfvl",
+              "patch": 1,
+              "version": "1",
+              "domain": "news.ycombinator.com",
+              "discovery": false,
+              "last_modified": {
+                "email": "<REDACTED_EMAIL>",
+                "date": "2026-08-23T04:54:56.533Z"
+              },
+              "is_development": true
+            },
+            "template_b": {
+              "_id": {
+                "buffer": {
+                  "0": 106,
+                  "1": 138,
+                  "2": 125,
+                  "3": 32,
+                  "4": 168,
+                  "5": 96,
+                  "6": 70,
+                  "7": 101,
+                  "8": 32,
+                  "9": 163,
+                  "10": 100,
+                  "11": 191
+                }
+              },
+              "name": "New ide-automation template",
+              "steps": [
+                {
+                  "name": "New ide-automation template",
+                  "code": "// Navigate to the provided URL\nconst url = new URL(input.url);\n\n// Navigate to the URL\nnavigate(url.href);\n\n\n// Parse the current page to get story URLs\nconst { urls } = parse();\n\n// Handle pagination - only on first run (not on reruns)\nif (!input.is_rerun) {\n    // Default to 2 pages if not specified, max 10 pages\n    const max_page = Math.min(input.max_page || 2, 10);\n    \n    // Trigger reruns for additional pages\n    for (let page = 2; page <= max_page; page++) {\n        const next_page_url = new URL(input.url);\n        next_page_url.searchParams.set('p', page.toString());\n        \n        rerun_stage({\n            url: next_page_url.href,\n            max_page: input.max_page,\n            is_rerun: true\n        });\n    }\n}\n\n// Collect all URLs from the current page\nfor (let story_url of urls) {\n    next_stage({ url: story_url });\n}",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.rerun_stage",
+                    "cmd.next_stage"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Get all story rows\nconst story_rows = $('tr.athing').toArray();\n\n// Extract Hacker News discussion URLs from each story row\nconst urls = story_rows.map(row => {\n    // Get the story ID from the row's id attribute\n    const story_id = $(row).attr('id');\n    \n    if (story_id) {\n        // Construct the Hacker News discussion URL\n        return `https://news.ycombinator.com/item?id=${story_id}`;\n    }\n    return null;\n}).filter(Boolean); // Remove null values\n\nconsole.log(`Found ${urls.length} story URLs on this page`);\n\nreturn { urls };",
+                    "sandbox_version": 1,
+                    "id": "p_mt5c2eqe1cbnwc8thq.1"
+                  },
+                  "parse_code": "// Get all story rows\nconst story_rows = $('tr.athing').toArray();\n\n// Extract Hacker News discussion URLs from each story row\nconst urls = story_rows.map(row => {\n    // Get the story ID from the row's id attribute\n    const story_id = $(row).attr('id');\n    \n    if (story_id) {\n        // Construct the Hacker News discussion URL\n        return `https://news.ycombinator.com/item?id=${story_id}`;\n    }\n    return null;\n}).filter(Boolean); // Remove null values\n\nconsole.log(`Found ${urls.length} story URLs on this page`);\n\nreturn { urls };"
+                },
+                {
+                  "name": "New ide-automation template",
+                  "code": "navigate(input.url);\ncollect(parse());",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com/item?id=49405816"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.collect"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Get title and URL from .titleline > a\nlet titleElement = $('.titleline > a').first();\nlet title = titleElement.text_sane();\nlet url = titleElement.attr('href');\n\n// Get site/domain from .sitestr\nlet site = $('.sitestr').first().text_sane() || '';\n\n// Get points from [id^=score_]\nlet pointsText = $('[id^=score_]').first().text_sane();\nlet points = parseInt(pointsText.replace(/\\D/g, '')) || 0;\n\n// Get author from .hnuser\nlet author = $('.hnuser').first().text_sane();\n\n// Get comment count from .subtext a:last-child\nlet commentLink = $('.subtext a:last-child').text_sane();\nlet comment_count = 0;\nif (commentLink && commentLink !== 'discuss') {\n  comment_count = parseInt(commentLink.replace(/\\D/g, '')) || 0;\n}\n\nreturn {\n  title,\n  url: url ? new URL(url) : null,\n  site,\n  points,\n  author,\n  comment_count\n};",
+                    "sandbox_version": 1,
+                    "id": "p_mt5c2eqf248ybc5jot.1"
+                  },
+                  "parse_code": "// Get title and URL from .titleline > a\nlet titleElement = $('.titleline > a').first();\nlet title = titleElement.text_sane();\nlet url = titleElement.attr('href');\n\n// Get site/domain from .sitestr\nlet site = $('.sitestr').first().text_sane() || '';\n\n// Get points from [id^=score_]\nlet pointsText = $('[id^=score_]').first().text_sane();\nlet points = parseInt(pointsText.replace(/\\D/g, '')) || 0;\n\n// Get author from .hnuser\nlet author = $('.hnuser').first().text_sane();\n\n// Get comment count from .subtext a:last-child\nlet commentLink = $('.subtext a:last-child').text_sane();\nlet comment_count = 0;\nif (commentLink && commentLink !== 'discuss') {\n  comment_count = parseInt(commentLink.replace(/\\D/g, '')) || 0;\n}\n\nreturn {\n  title,\n  url: url ? new URL(url) : null,\n  site,\n  points,\n  author,\n  comment_count\n};"
+                }
+              ],
+              "visibility": "private",
+              "user": "<REDACTED_EMAIL>",
+              "status": {
+                "value": "development",
+                "last_modified": {
+                  "date": "2026-08-23T04:54:56.528Z",
+                  "email": "<REDACTED_EMAIL>"
+                }
+              },
+              "url": "https://news.ycombinator.com",
+              "use_case": "other",
+              "customer": "hl_b71e73bf",
+              "sandbox_version": 1,
+              "example_input": [
+                {
+                  "url": "https://news.ycombinator.com"
+                }
+              ],
+              "example_output": "{\"title\":\"MartyPC is a cross-platform emulator of early PCs written in Rust\",\"url\":\"https://martypc.net/\",\"points\":21,\"author\":\"boilerupnc\",\"comment_count\":1}",
+              "output_fields": {
+                "type": "object",
+                "fields": {
+                  "title": {
+                    "type": "text"
+                  },
+                  "url": {
+                    "type": "url"
+                  },
+                  "points": {
+                    "type": "number"
+                  },
+                  "author": {
+                    "type": "text"
+                  },
+                  "comment_count": {
+                    "type": "number"
+                  }
+                }
+              },
+              "features": [
+                "cmd.navigate",
+                "cmd.parse",
+                "cmd.rerun_stage",
+                "cmd.next_stage",
+                "cmd.collect"
+              ],
+              "shared_libs": [],
+              "source": "dca-ide-automation-66f5c565b6-fkbnw",
+              "customer_id": "hl_b71e73bf",
+              "code_environment": "intent",
+              "id": "t_mt5c2eq9hs3vjdfvl.1",
+              "family": "t_mt5c2eq9hs3vjdfvl",
+              "patch": 1,
+              "version": "1",
+              "domain": "news.ycombinator.com",
+              "discovery": false,
+              "last_modified": {
+                "email": "<REDACTED_EMAIL>",
+                "date": "2026-08-23T04:54:56.533Z"
+              },
+              "is_development": true
+            },
+            "title": "View refactor changes",
+            "user": "<REDACTED_EMAIL>"
+          },
+          "success": true,
+          "preview_result": [
+            {
+              "title": "MartyPC is a cross-platform emulator of early PCs written in Rust",
+              "url": "https://martypc.net/",
+              "site": "martypc.net",
+              "points": 22,
+              "author": "boilerupnc",
+              "comment_count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "POST resume_automation_job {message:true, auto_save:true}",
+      "arm": "treatment",
+      "startedAt": "2026-08-23T04:57:43.213Z",
+      "elapsedMs": 344,
+      "detail": {
+        "ok": true,
+        "result": {
+          "message": true,
+          "auto_save": true
+        }
+      }
+    },
+    {
+      "step": "poll to terminal WITH grace window",
+      "arm": "treatment",
+      "startedAt": "2026-08-23T04:57:43.557Z",
+      "elapsedMs": 286,
+      "detail": {
+        "ok": true,
+        "result": {
+          "verdict": "success",
+          "last": {
+            "id": "ia_mt5c499v2hx5pbl7de",
+            "step": "user_approval",
+            "completed_steps": [
+              "planner",
+              "control_preview_runner",
+              "step_advance",
+              "control_preview_runner",
+              "code_fixer",
+              "step_preview_runner",
+              "request_fulfillment_validator",
+              "step_advance",
+              "user_approval",
+              "save_new_template"
+            ],
+            "status": "done",
+            "success": true,
+            "preview_result": [
+              {
+                "title": "MartyPC is a cross-platform emulator of early PCs written in Rust",
+                "url": "https://martypc.net/",
+                "site": "martypc.net",
+                "points": 22,
+                "author": "boilerupnc",
+                "comment_count": 1
+              }
+            ]
+          },
+          "envelopes": [
+            {
+              "id": "ia_mt5c499v2hx5pbl7de",
+              "step": "user_approval",
+              "completed_steps": [
+                "planner",
+                "control_preview_runner",
+                "step_advance",
+                "control_preview_runner",
+                "code_fixer",
+                "step_preview_runner",
+                "request_fulfillment_validator",
+                "step_advance",
+                "user_approval",
+                "save_new_template"
+              ],
+              "status": "done",
+              "success": true,
+              "preview_result": [
+                {
+                  "title": "MartyPC is a cross-platform emulator of early PCs written in Rust",
+                  "url": "https://martypc.net/",
+                  "site": "martypc.net",
+                  "points": 22,
+                  "author": "boilerupnc",
+                  "comment_count": 1
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "re-read progress from a FRESH process",
+      "arm": "treatment",
+      "startedAt": "2026-08-23T04:57:43.843Z",
+      "elapsedMs": 1288,
+      "detail": {
+        "ok": true,
+        "result": {
+          "id": "ia_mt5c499v2hx5pbl7de",
+          "step": "user_approval",
+          "completed_steps": [
+            "planner",
+            "control_preview_runner",
+            "step_advance",
+            "control_preview_runner",
+            "code_fixer",
+            "step_preview_runner",
+            "request_fulfillment_validator",
+            "step_advance",
+            "user_approval",
+            "save_new_template"
+          ],
+          "status": "done",
+          "success": true,
+          "preview_result": [
+            {
+              "title": "MartyPC is a cross-platform emulator of early PCs written in Rust",
+              "url": "https://martypc.net/",
+              "site": "martypc.net",
+              "points": 22,
+              "author": "boilerupnc",
+              "comment_count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "trigger + read dataset (post-heal)",
+      "arm": "treatment",
+      "startedAt": "2026-08-23T04:57:45.131Z",
+      "elapsedMs": 69274,
+      "detail": {
+        "ok": true,
+        "result": {
+          "jobId": "j_mt5c61182cf2tw3e42",
+          "log": {
+            "id": "j_mt5c61182cf2tw3e42",
+            "status": "done",
+            "collector": "c_mt5bxc3f1ul647jkq0",
+            "template": "t_mt5c2eq9hs3vjdfvl.2",
+            "inputs": 1,
+            "dup_inputs": 0,
+            "lines": 59,
+            "fails": 1,
+            "pages": 62,
+            "pages_left": 0,
+            "success": 61,
+            "navigations": 61,
+            "created": "2026-08-23T04:57:45.518Z",
+            "started": "2026-08-23T04:57:45.640Z",
+            "finished": "2026-08-23T04:58:40.164Z",
+            "trigger": "<REDACTED_EMAIL>",
+            "success_rate": 0.9833333333333333,
+            "job_time": 54524,
+            "queue_time": 122
+          },
+          "template": "t_mt5c2eq9hs3vjdfvl.2",
+          "version": 2,
+          "rowFields": [
+            "author",
+            "comment_count",
+            "input",
+            "points",
+            "site",
+            "title",
+            "url"
+          ],
+          "rowCount": 59,
+          "sampleRow": {
+            "title": "Show HN: Public Muscriptor Instance (latest, most powerful Audio-to-MIDI model)",
+            "url": "https://www.pianoify.net/",
+            "site": "pianoify.net",
+            "points": 23,
+            "author": "jardy",
+            "comment_count": 67,
+            "input": {
+              "url": "https://news.ycombinator.com"
+            }
+          },
+          "ambiguousEmpty": false
+        }
+      }
+    },
+    {
+      "step": "create collector \"polygraph-proof-control-1787460658\"",
+      "arm": "control",
+      "startedAt": "2026-08-23T04:58:54.405Z",
+      "elapsedMs": 2473,
+      "detail": {
+        "ok": true,
+        "result": {
+          "name": "polygraph-proof-control-1787460658",
+          "deliver": {
+            "type": "api_pull",
+            "flatten_csv": false,
+            "delivery_type": "deliver_results"
+          },
+          "active": false,
+          "created": "2026-08-23T04:58:54.741Z",
+          "user": "<REDACTED_EMAIL>",
+          "customer": "hl_b71e73bf",
+          "customer_id": "hl_b71e73bf",
+          "output_format_ver": 1,
+          "require_all_success": false,
+          "default_queue_behavior": "parallel",
+          "strict_input_normalize": true,
+          "request_cmd_behavior": "send_ajax_request",
+          "strict_url_validate": true,
+          "no_strange_input_normalize": true,
+          "allow_wait_ms": false,
+          "id": "c_mt5c7ij91jxqfjvutj",
+          "zone": "v__dca_polygraph_proof_control",
+          "notifications": {
+            "success_rate": {
+              "addresses": "<REDACTED_EMAIL>",
+              "frequency": 1
+            }
+          },
+          "history": [
+            {
+              "date": "2026-08-23T04:58:54.748Z",
+              "user": "Fakename",
+              "comment": "Collector was created"
+            }
+          ],
+          "output_fields": [],
+          "fields": {},
+          "template": {
+            "stub": true
+          },
+          "has_output_fields_mapping": false,
+          "account_id": "hl_b71e73bf",
+          "is_under_dataset_migration": false,
+          "under_sla": false,
+          "output_schema_incompatible": false,
+          "beta_output_schema_incompatible": false,
+          "is_scheduled": false
+        }
+      }
+    },
+    {
+      "step": "POST automate_template",
+      "arm": "control",
+      "startedAt": "2026-08-23T04:58:56.878Z",
+      "elapsedMs": 383,
+      "detail": {
+        "ok": true,
+        "result": {
+          "id": "ia_mt5c7kf5eyoldof6c",
+          "queued": false
+        }
+      }
+    },
+    {
+      "step": "poll automate_template to done",
+      "arm": "control",
+      "startedAt": "2026-08-23T04:58:57.261Z",
+      "elapsedMs": 246935,
+      "detail": {
+        "ok": true,
+        "result": {
+          "step": "collector_mainatiner",
+          "completed_steps": [
+            "prepare_intent_analyzer",
+            "planner",
+            "discovery",
+            "collector_mainatiner",
+            "output_schema_generator",
+            "code_generator",
+            "input_schema_generator",
+            "preview_runner",
+            "preview_picker"
+          ],
+          "status": "done"
+        }
+      }
+    },
+    {
+      "step": "trigger + read dataset (baseline)",
+      "arm": "control",
+      "startedAt": "2026-08-23T05:03:04.197Z",
+      "elapsedMs": 81926,
+      "detail": {
+        "ok": true,
+        "result": {
+          "jobId": "j_mt5ccvvhfzoxn28zq",
+          "log": {
+            "id": "j_mt5ccvvhfzoxn28zq",
+            "status": "done",
+            "collector": "c_mt5c7ij91jxqfjvutj",
+            "template": "t_mt5cco582gmd45j6uk.1",
+            "inputs": 1,
+            "dup_inputs": 0,
+            "lines": 60,
+            "fails": 0,
+            "pages": 62,
+            "pages_left": 0,
+            "success": 62,
+            "navigations": 62,
+            "created": "2026-08-23T05:03:05.376Z",
+            "started": "2026-08-23T05:03:05.439Z",
+            "finished": "2026-08-23T05:04:03.859Z",
+            "trigger": "<REDACTED_EMAIL>",
+            "success_rate": 1,
+            "job_time": 58420,
+            "queue_time": 63
+          },
+          "template": "t_mt5cco582gmd45j6uk.1",
+          "version": 1,
+          "rowFields": [
+            "author",
+            "comment_count",
+            "input",
+            "points",
+            "title",
+            "url"
+          ],
+          "rowCount": 60,
+          "sampleRow": {
+            "title": "Autolith: A programming agent with a live runtime",
+            "url": "https://www.lambda-symbolics.com/autolith",
+            "points": 118,
+            "author": "vismit2000 rtpg hsaliak rufius magnusi iovrthoughtthis magnusi hankbond magnusi cc_ashby magnusi ggangsir magnusi yogthos magnusi yogthos NeutralForest magnusi vivzkestrel magnusi a2ff6eeb0 magnusi jbott a2ff6eeb0 magnusi evanjrowley khalic a2ff6eeb0 jauntywundrkind a2ff6eeb0 wild_egg a2ff6eeb0 wild_egg a2ff6eeb0 rdb_ a2ff6eeb0 magnusi a2ff6eeb0 hatefulmoron a2ff6eeb0 wild_egg magnusi a2ff6eeb0 yogthos armitron magnusi a2ff6eeb0",
+            "comment_count": 46,
+            "input": {
+              "url": "https://news.ycombinator.com"
+            }
+          },
+          "ambiguousEmpty": false
+        }
+      }
+    },
+    {
+      "step": "POST refactor_template",
+      "arm": "control",
+      "startedAt": "2026-08-23T05:04:26.123Z",
+      "elapsedMs": 487,
+      "detail": {
+        "ok": true,
+        "result": {
+          "id": "ia_mt5cemghn94bx7gh6",
+          "queued": false
+        }
+      }
+    },
+    {
+      "step": "poll refactor progress to approval gate",
+      "arm": "control",
+      "startedAt": "2026-08-23T05:04:26.610Z",
+      "elapsedMs": 56448,
+      "detail": {
+        "ok": true,
+        "result": {
+          "id": "ia_mt5cemghn94bx7gh6",
+          "step": "user_approval",
+          "completed_steps": [
+            "planner",
+            "control_preview_runner",
+            "step_advance",
+            "control_preview_runner",
+            "code_fixer",
+            "step_preview_runner",
+            "request_fulfillment_validator",
+            "step_advance"
+          ],
+          "status": "pending_answer",
+          "diff": {
+            "template_a": {
+              "_id": "6a8a7eff46df5c5a2b11cecc",
+              "name": "New ide-automation template",
+              "steps": [
+                {
+                  "name": "New ide-automation template",
+                  "code": "const base_url = 'https://news.ycombinator.com/';\nconst url = new URL(input.url || base_url);\n\n// Get current page number from URL parameter\nconst current_page = parseInt(url.searchParams.get('p')) || 1;\n\n// Navigate to the URL\nnavigate(url.href);\n\n\n// Parse the page to extract story URLs\nconst {story_urls} = parse();\n\nconsole.log(`Found ${story_urls.length} stories on page ${current_page}`);\n\n// Handle pagination - only trigger reruns on first run (not on rerun)\nconst max_page = input.max_page || 2;\nif (!input.is_rerun && current_page < max_page) {\n    // Trigger reruns for subsequent pages\n    for (let page = current_page + 1; page <= max_page; page++) {\n        const next_url = new URL(base_url);\n        next_url.searchParams.set('p', page.toString());\n        rerun_stage({\n            url: next_url.href,\n            max_page: input.max_page,\n            is_rerun: true\n        });\n    }\n}\n\n// Collect all story URLs using next_stage\nfor (let story_url of story_urls) {\n    next_stage({url: story_url});\n}",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.rerun_stage",
+                    "cmd.next_stage"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Get all story rows (tr elements with numeric IDs)\nconst story_rows = $('tr[id]').toArray().filter(row => {\n    const id = $(row).attr('id');\n    // Filter out non-story rows (like \"bigbox\" container)\n    return id && /^\\d+$/.test(id);\n});\n\nconsole.log(`Found ${story_rows.length} story rows`);\n\n// Extract story IDs and construct Hacker News discussion URLs\nconst story_urls = story_rows.map(row => {\n    const story_id = $(row).attr('id');\n    // Construct the Hacker News discussion URL\n    return `https://news.ycombinator.com/item?id=${story_id}`;\n});\n\nconsole.log(`Extracted ${story_urls.length} story URLs`);\n\nreturn {story_urls};",
+                    "sandbox_version": 1,
+                    "id": "p_mt5cco5c20qn0l0q9s.1"
+                  },
+                  "parse_code": "// Get all story rows (tr elements with numeric IDs)\nconst story_rows = $('tr[id]').toArray().filter(row => {\n    const id = $(row).attr('id');\n    // Filter out non-story rows (like \"bigbox\" container)\n    return id && /^\\d+$/.test(id);\n});\n\nconsole.log(`Found ${story_rows.length} story rows`);\n\n// Extract story IDs and construct Hacker News discussion URLs\nconst story_urls = story_rows.map(row => {\n    const story_id = $(row).attr('id');\n    // Construct the Hacker News discussion URL\n    return `https://news.ycombinator.com/item?id=${story_id}`;\n});\n\nconsole.log(`Extracted ${story_urls.length} story URLs`);\n\nreturn {story_urls};"
+                },
+                {
+                  "name": "New ide-automation template",
+                  "code": "navigate(input.url);\n\n\n// Collect the parsed data\ncollect(parse());",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com/item?id=49405816"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.collect"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Extract title\nconst title = $('.titleline > a').text_sane();\n\n// Extract URL\nconst url = $('.titleline > a').attr('href');\n\n// Extract points\nconst pointsText = $('[id^=score_]').text_sane();\nconst points = pointsText ? parseInt(pointsText.replace(/\\D/g, '')) : 0;\n\n// Extract author\nconst author = $('.hnuser').text_sane();\n\n// Extract comment count\nconst commentText = $('.subline > a:last-child').text_sane();\nlet comment_count = 0;\nif (commentText && (commentText.includes('comment') || commentText.includes('discuss'))) {\n  const match = commentText.match(/(\\d+)/);\n  comment_count = match ? parseInt(match[1]) : 0;\n}\n\nreturn {\n  title,\n  url: url ? new URL(url, 'https://news.ycombinator.com/') : null,\n  points,\n  author,\n  comment_count\n};",
+                    "sandbox_version": 1,
+                    "id": "p_mt5cco5d1njzow5e0h.1"
+                  },
+                  "parse_code": "// Extract title\nconst title = $('.titleline > a').text_sane();\n\n// Extract URL\nconst url = $('.titleline > a').attr('href');\n\n// Extract points\nconst pointsText = $('[id^=score_]').text_sane();\nconst points = pointsText ? parseInt(pointsText.replace(/\\D/g, '')) : 0;\n\n// Extract author\nconst author = $('.hnuser').text_sane();\n\n// Extract comment count\nconst commentText = $('.subline > a:last-child').text_sane();\nlet comment_count = 0;\nif (commentText && (commentText.includes('comment') || commentText.includes('discuss'))) {\n  const match = commentText.match(/(\\d+)/);\n  comment_count = match ? parseInt(match[1]) : 0;\n}\n\nreturn {\n  title,\n  url: url ? new URL(url, 'https://news.ycombinator.com/') : null,\n  points,\n  author,\n  comment_count\n};"
+                }
+              ],
+              "visibility": "private",
+              "user": "<REDACTED_EMAIL>",
+              "status": {
+                "value": "development",
+                "last_modified": {
+                  "date": "2026-08-23T05:02:55.292Z",
+                  "email": "<REDACTED_EMAIL>"
+                }
+              },
+              "url": "https://news.ycombinator.com",
+              "use_case": "other",
+              "customer": "hl_b71e73bf",
+              "sandbox_version": 1,
+              "example_input": [
+                {
+                  "url": "https://news.ycombinator.com"
+                }
+              ],
+              "example_output": "{\"title\":\"MartyPC is a cross-platform emulator of early PCs written in Rust\",\"url\":\"https://martypc.net/\",\"points\":27,\"author\":\"boilerupnc\",\"comment_count\":0}",
+              "output_fields": {
+                "type": "object",
+                "fields": {
+                  "title": {
+                    "type": "text"
+                  },
+                  "url": {
+                    "type": "url"
+                  },
+                  "points": {
+                    "type": "number"
+                  },
+                  "author": {
+                    "type": "text"
+                  },
+                  "comment_count": {
+                    "type": "number"
+                  }
+                }
+              },
+              "features": [
+                "cmd.navigate",
+                "cmd.parse",
+                "cmd.rerun_stage",
+                "cmd.next_stage",
+                "cmd.collect"
+              ],
+              "shared_libs": [],
+              "source": "dca-ide-automation-66f5c565b6-mnvkl",
+              "customer_id": "hl_b71e73bf",
+              "code_environment": "intent",
+              "id": "t_mt5cco582gmd45j6uk.1",
+              "family": "t_mt5cco582gmd45j6uk",
+              "patch": 1,
+              "version": "1",
+              "domain": "news.ycombinator.com",
+              "discovery": false,
+              "last_modified": {
+                "email": "<REDACTED_EMAIL>",
+                "date": "2026-08-23T05:02:55.296Z"
+              },
+              "is_development": true
+            },
+            "template_b": {
+              "_id": {
+                "buffer": {
+                  "0": 106,
+                  "1": 138,
+                  "2": 126,
+                  "3": 255,
+                  "4": 70,
+                  "5": 223,
+                  "6": 92,
+                  "7": 90,
+                  "8": 43,
+                  "9": 17,
+                  "10": 206,
+                  "11": 204
+                }
+              },
+              "name": "New ide-automation template",
+              "steps": [
+                {
+                  "name": "New ide-automation template",
+                  "code": "const base_url = 'https://news.ycombinator.com/';\nconst url = new URL(input.url || base_url);\n\n// Get current page number from URL parameter\nconst current_page = parseInt(url.searchParams.get('p')) || 1;\n\n// Navigate to the URL\nnavigate(url.href);\n\n\n// Parse the page to extract story URLs\nconst {story_urls} = parse();\n\nconsole.log(`Found ${story_urls.length} stories on page ${current_page}`);\n\n// Handle pagination - only trigger reruns on first run (not on rerun)\nconst max_page = input.max_page || 2;\nif (!input.is_rerun && current_page < max_page) {\n    // Trigger reruns for subsequent pages\n    for (let page = current_page + 1; page <= max_page; page++) {\n        const next_url = new URL(base_url);\n        next_url.searchParams.set('p', page.toString());\n        rerun_stage({\n            url: next_url.href,\n            max_page: input.max_page,\n            is_rerun: true\n        });\n    }\n}\n\n// Collect all story URLs using next_stage\nfor (let story_url of story_urls) {\n    next_stage({url: story_url});\n}",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.rerun_stage",
+                    "cmd.next_stage"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Get all story rows (tr elements with numeric IDs)\nconst story_rows = $('tr[id]').toArray().filter(row => {\n    const id = $(row).attr('id');\n    // Filter out non-story rows (like \"bigbox\" container)\n    return id && /^\\d+$/.test(id);\n});\n\nconsole.log(`Found ${story_rows.length} story rows`);\n\n// Extract story IDs and construct Hacker News discussion URLs\nconst story_urls = story_rows.map(row => {\n    const story_id = $(row).attr('id');\n    // Construct the Hacker News discussion URL\n    return `https://news.ycombinator.com/item?id=${story_id}`;\n});\n\nconsole.log(`Extracted ${story_urls.length} story URLs`);\n\nreturn {story_urls};",
+                    "sandbox_version": 1,
+                    "id": "p_mt5cco5c20qn0l0q9s.1"
+                  },
+                  "parse_code": "// Get all story rows (tr elements with numeric IDs)\nconst story_rows = $('tr[id]').toArray().filter(row => {\n    const id = $(row).attr('id');\n    // Filter out non-story rows (like \"bigbox\" container)\n    return id && /^\\d+$/.test(id);\n});\n\nconsole.log(`Found ${story_rows.length} story rows`);\n\n// Extract story IDs and construct Hacker News discussion URLs\nconst story_urls = story_rows.map(row => {\n    const story_id = $(row).attr('id');\n    // Construct the Hacker News discussion URL\n    return `https://news.ycombinator.com/item?id=${story_id}`;\n});\n\nconsole.log(`Extracted ${story_urls.length} story URLs`);\n\nreturn {story_urls};"
+                },
+                {
+                  "name": "New ide-automation template",
+                  "code": "navigate(input.url);\n\ncollect(parse());",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com/item?id=49405816"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.collect"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Extract title\nconst title = $('.titleline > a').text_sane();\n\n// Extract URL\nconst url = $('.titleline > a').attr('href');\n\n// Extract points\nconst pointsText = $('[id^=score_]').text_sane();\nconst points = pointsText ? parseInt(pointsText.replace(/\\D/g, '')) : 0;\n\n// Extract author\nconst author = $('.hnuser').text_sane();\n\n// Extract comment count\nconst commentText = $('.subline > a:last-child').text_sane();\nlet comment_count = 0;\nif (commentText && (commentText.includes('comment') || commentText.includes('discuss'))) {\n  const match = commentText.match(/(\\d+)/);\n  comment_count = match ? parseInt(match[1]) : 0;\n}\n\n// Extract site domain\nconst site = $('.sitestr').text_sane() || null;\n\nreturn {\n  title,\n  url: url ? new URL(url, 'https://news.ycombinator.com/') : null,\n  points,\n  author,\n  comment_count,\n  site\n};",
+                    "sandbox_version": 1,
+                    "id": "p_mt5cco5d1njzow5e0h.1"
+                  },
+                  "parse_code": "// Extract title\nconst title = $('.titleline > a').text_sane();\n\n// Extract URL\nconst url = $('.titleline > a').attr('href');\n\n// Extract points\nconst pointsText = $('[id^=score_]').text_sane();\nconst points = pointsText ? parseInt(pointsText.replace(/\\D/g, '')) : 0;\n\n// Extract author\nconst author = $('.hnuser').text_sane();\n\n// Extract comment count\nconst commentText = $('.subline > a:last-child').text_sane();\nlet comment_count = 0;\nif (commentText && (commentText.includes('comment') || commentText.includes('discuss'))) {\n  const match = commentText.match(/(\\d+)/);\n  comment_count = match ? parseInt(match[1]) : 0;\n}\n\n// Extract site domain\nconst site = $('.sitestr').text_sane() || null;\n\nreturn {\n  title,\n  url: url ? new URL(url, 'https://news.ycombinator.com/') : null,\n  points,\n  author,\n  comment_count,\n  site\n};"
+                }
+              ],
+              "visibility": "private",
+              "user": "<REDACTED_EMAIL>",
+              "status": {
+                "value": "development",
+                "last_modified": {
+                  "date": "2026-08-23T05:02:55.292Z",
+                  "email": "<REDACTED_EMAIL>"
+                }
+              },
+              "url": "https://news.ycombinator.com",
+              "use_case": "other",
+              "customer": "hl_b71e73bf",
+              "sandbox_version": 1,
+              "example_input": [
+                {
+                  "url": "https://news.ycombinator.com"
+                }
+              ],
+              "example_output": "{\"title\":\"MartyPC is a cross-platform emulator of early PCs written in Rust\",\"url\":\"https://martypc.net/\",\"points\":27,\"author\":\"boilerupnc\",\"comment_count\":0}",
+              "output_fields": {
+                "type": "object",
+                "fields": {
+                  "title": {
+                    "type": "text"
+                  },
+                  "url": {
+                    "type": "url"
+                  },
+                  "points": {
+                    "type": "number"
+                  },
+                  "author": {
+                    "type": "text"
+                  },
+                  "comment_count": {
+                    "type": "number"
+                  }
+                }
+              },
+              "features": [
+                "cmd.navigate",
+                "cmd.parse",
+                "cmd.rerun_stage",
+                "cmd.next_stage",
+                "cmd.collect"
+              ],
+              "shared_libs": [],
+              "source": "dca-ide-automation-66f5c565b6-mnvkl",
+              "customer_id": "hl_b71e73bf",
+              "code_environment": "intent",
+              "id": "t_mt5cco582gmd45j6uk.1",
+              "family": "t_mt5cco582gmd45j6uk",
+              "patch": 1,
+              "version": "1",
+              "domain": "news.ycombinator.com",
+              "discovery": false,
+              "last_modified": {
+                "email": "<REDACTED_EMAIL>",
+                "date": "2026-08-23T05:02:55.296Z"
+              },
+              "is_development": true
+            },
+            "title": "View refactor changes",
+            "user": "<REDACTED_EMAIL>"
+          },
+          "success": true,
+          "preview_result": [
+            {
+              "title": "MartyPC is a cross-platform emulator of early PCs written in Rust",
+              "url": "https://martypc.net/",
+              "points": 30,
+              "author": "boilerupnc",
+              "comment_count": 0,
+              "site": "martypc.net"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "re-read FULL gate envelope before resuming",
+      "arm": "control",
+      "startedAt": "2026-08-23T05:05:23.058Z",
+      "elapsedMs": 1427,
+      "detail": {
+        "ok": true,
+        "result": {
+          "id": "ia_mt5cemghn94bx7gh6",
+          "step": "user_approval",
+          "completed_steps": [
+            "planner",
+            "control_preview_runner",
+            "step_advance",
+            "control_preview_runner",
+            "code_fixer",
+            "step_preview_runner",
+            "request_fulfillment_validator",
+            "step_advance"
+          ],
+          "status": "pending_answer",
+          "diff": {
+            "template_a": {
+              "_id": "6a8a7eff46df5c5a2b11cecc",
+              "name": "New ide-automation template",
+              "steps": [
+                {
+                  "name": "New ide-automation template",
+                  "code": "const base_url = 'https://news.ycombinator.com/';\nconst url = new URL(input.url || base_url);\n\n// Get current page number from URL parameter\nconst current_page = parseInt(url.searchParams.get('p')) || 1;\n\n// Navigate to the URL\nnavigate(url.href);\n\n\n// Parse the page to extract story URLs\nconst {story_urls} = parse();\n\nconsole.log(`Found ${story_urls.length} stories on page ${current_page}`);\n\n// Handle pagination - only trigger reruns on first run (not on rerun)\nconst max_page = input.max_page || 2;\nif (!input.is_rerun && current_page < max_page) {\n    // Trigger reruns for subsequent pages\n    for (let page = current_page + 1; page <= max_page; page++) {\n        const next_url = new URL(base_url);\n        next_url.searchParams.set('p', page.toString());\n        rerun_stage({\n            url: next_url.href,\n            max_page: input.max_page,\n            is_rerun: true\n        });\n    }\n}\n\n// Collect all story URLs using next_stage\nfor (let story_url of story_urls) {\n    next_stage({url: story_url});\n}",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.rerun_stage",
+                    "cmd.next_stage"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Get all story rows (tr elements with numeric IDs)\nconst story_rows = $('tr[id]').toArray().filter(row => {\n    const id = $(row).attr('id');\n    // Filter out non-story rows (like \"bigbox\" container)\n    return id && /^\\d+$/.test(id);\n});\n\nconsole.log(`Found ${story_rows.length} story rows`);\n\n// Extract story IDs and construct Hacker News discussion URLs\nconst story_urls = story_rows.map(row => {\n    const story_id = $(row).attr('id');\n    // Construct the Hacker News discussion URL\n    return `https://news.ycombinator.com/item?id=${story_id}`;\n});\n\nconsole.log(`Extracted ${story_urls.length} story URLs`);\n\nreturn {story_urls};",
+                    "sandbox_version": 1,
+                    "id": "p_mt5cco5c20qn0l0q9s.1"
+                  },
+                  "parse_code": "// Get all story rows (tr elements with numeric IDs)\nconst story_rows = $('tr[id]').toArray().filter(row => {\n    const id = $(row).attr('id');\n    // Filter out non-story rows (like \"bigbox\" container)\n    return id && /^\\d+$/.test(id);\n});\n\nconsole.log(`Found ${story_rows.length} story rows`);\n\n// Extract story IDs and construct Hacker News discussion URLs\nconst story_urls = story_rows.map(row => {\n    const story_id = $(row).attr('id');\n    // Construct the Hacker News discussion URL\n    return `https://news.ycombinator.com/item?id=${story_id}`;\n});\n\nconsole.log(`Extracted ${story_urls.length} story URLs`);\n\nreturn {story_urls};"
+                },
+                {
+                  "name": "New ide-automation template",
+                  "code": "navigate(input.url);\n\n\n// Collect the parsed data\ncollect(parse());",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com/item?id=49405816"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.collect"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Extract title\nconst title = $('.titleline > a').text_sane();\n\n// Extract URL\nconst url = $('.titleline > a').attr('href');\n\n// Extract points\nconst pointsText = $('[id^=score_]').text_sane();\nconst points = pointsText ? parseInt(pointsText.replace(/\\D/g, '')) : 0;\n\n// Extract author\nconst author = $('.hnuser').text_sane();\n\n// Extract comment count\nconst commentText = $('.subline > a:last-child').text_sane();\nlet comment_count = 0;\nif (commentText && (commentText.includes('comment') || commentText.includes('discuss'))) {\n  const match = commentText.match(/(\\d+)/);\n  comment_count = match ? parseInt(match[1]) : 0;\n}\n\nreturn {\n  title,\n  url: url ? new URL(url, 'https://news.ycombinator.com/') : null,\n  points,\n  author,\n  comment_count\n};",
+                    "sandbox_version": 1,
+                    "id": "p_mt5cco5d1njzow5e0h.1"
+                  },
+                  "parse_code": "// Extract title\nconst title = $('.titleline > a').text_sane();\n\n// Extract URL\nconst url = $('.titleline > a').attr('href');\n\n// Extract points\nconst pointsText = $('[id^=score_]').text_sane();\nconst points = pointsText ? parseInt(pointsText.replace(/\\D/g, '')) : 0;\n\n// Extract author\nconst author = $('.hnuser').text_sane();\n\n// Extract comment count\nconst commentText = $('.subline > a:last-child').text_sane();\nlet comment_count = 0;\nif (commentText && (commentText.includes('comment') || commentText.includes('discuss'))) {\n  const match = commentText.match(/(\\d+)/);\n  comment_count = match ? parseInt(match[1]) : 0;\n}\n\nreturn {\n  title,\n  url: url ? new URL(url, 'https://news.ycombinator.com/') : null,\n  points,\n  author,\n  comment_count\n};"
+                }
+              ],
+              "visibility": "private",
+              "user": "<REDACTED_EMAIL>",
+              "status": {
+                "value": "development",
+                "last_modified": {
+                  "date": "2026-08-23T05:02:55.292Z",
+                  "email": "<REDACTED_EMAIL>"
+                }
+              },
+              "url": "https://news.ycombinator.com",
+              "use_case": "other",
+              "customer": "hl_b71e73bf",
+              "sandbox_version": 1,
+              "example_input": [
+                {
+                  "url": "https://news.ycombinator.com"
+                }
+              ],
+              "example_output": "{\"title\":\"MartyPC is a cross-platform emulator of early PCs written in Rust\",\"url\":\"https://martypc.net/\",\"points\":27,\"author\":\"boilerupnc\",\"comment_count\":0}",
+              "output_fields": {
+                "type": "object",
+                "fields": {
+                  "title": {
+                    "type": "text"
+                  },
+                  "url": {
+                    "type": "url"
+                  },
+                  "points": {
+                    "type": "number"
+                  },
+                  "author": {
+                    "type": "text"
+                  },
+                  "comment_count": {
+                    "type": "number"
+                  }
+                }
+              },
+              "features": [
+                "cmd.navigate",
+                "cmd.parse",
+                "cmd.rerun_stage",
+                "cmd.next_stage",
+                "cmd.collect"
+              ],
+              "shared_libs": [],
+              "source": "dca-ide-automation-66f5c565b6-mnvkl",
+              "customer_id": "hl_b71e73bf",
+              "code_environment": "intent",
+              "id": "t_mt5cco582gmd45j6uk.1",
+              "family": "t_mt5cco582gmd45j6uk",
+              "patch": 1,
+              "version": "1",
+              "domain": "news.ycombinator.com",
+              "discovery": false,
+              "last_modified": {
+                "email": "<REDACTED_EMAIL>",
+                "date": "2026-08-23T05:02:55.296Z"
+              },
+              "is_development": true
+            },
+            "template_b": {
+              "_id": {
+                "buffer": {
+                  "0": 106,
+                  "1": 138,
+                  "2": 126,
+                  "3": 255,
+                  "4": 70,
+                  "5": 223,
+                  "6": 92,
+                  "7": 90,
+                  "8": 43,
+                  "9": 17,
+                  "10": 206,
+                  "11": 204
+                }
+              },
+              "name": "New ide-automation template",
+              "steps": [
+                {
+                  "name": "New ide-automation template",
+                  "code": "const base_url = 'https://news.ycombinator.com/';\nconst url = new URL(input.url || base_url);\n\n// Get current page number from URL parameter\nconst current_page = parseInt(url.searchParams.get('p')) || 1;\n\n// Navigate to the URL\nnavigate(url.href);\n\n\n// Parse the page to extract story URLs\nconst {story_urls} = parse();\n\nconsole.log(`Found ${story_urls.length} stories on page ${current_page}`);\n\n// Handle pagination - only trigger reruns on first run (not on rerun)\nconst max_page = input.max_page || 2;\nif (!input.is_rerun && current_page < max_page) {\n    // Trigger reruns for subsequent pages\n    for (let page = current_page + 1; page <= max_page; page++) {\n        const next_url = new URL(base_url);\n        next_url.searchParams.set('p', page.toString());\n        rerun_stage({\n            url: next_url.href,\n            max_page: input.max_page,\n            is_rerun: true\n        });\n    }\n}\n\n// Collect all story URLs using next_stage\nfor (let story_url of story_urls) {\n    next_stage({url: story_url});\n}",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.rerun_stage",
+                    "cmd.next_stage"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Get all story rows (tr elements with numeric IDs)\nconst story_rows = $('tr[id]').toArray().filter(row => {\n    const id = $(row).attr('id');\n    // Filter out non-story rows (like \"bigbox\" container)\n    return id && /^\\d+$/.test(id);\n});\n\nconsole.log(`Found ${story_rows.length} story rows`);\n\n// Extract story IDs and construct Hacker News discussion URLs\nconst story_urls = story_rows.map(row => {\n    const story_id = $(row).attr('id');\n    // Construct the Hacker News discussion URL\n    return `https://news.ycombinator.com/item?id=${story_id}`;\n});\n\nconsole.log(`Extracted ${story_urls.length} story URLs`);\n\nreturn {story_urls};",
+                    "sandbox_version": 1,
+                    "id": "p_mt5cco5c20qn0l0q9s.1"
+                  },
+                  "parse_code": "// Get all story rows (tr elements with numeric IDs)\nconst story_rows = $('tr[id]').toArray().filter(row => {\n    const id = $(row).attr('id');\n    // Filter out non-story rows (like \"bigbox\" container)\n    return id && /^\\d+$/.test(id);\n});\n\nconsole.log(`Found ${story_rows.length} story rows`);\n\n// Extract story IDs and construct Hacker News discussion URLs\nconst story_urls = story_rows.map(row => {\n    const story_id = $(row).attr('id');\n    // Construct the Hacker News discussion URL\n    return `https://news.ycombinator.com/item?id=${story_id}`;\n});\n\nconsole.log(`Extracted ${story_urls.length} story URLs`);\n\nreturn {story_urls};"
+                },
+                {
+                  "name": "New ide-automation template",
+                  "code": "navigate(input.url);\n\ncollect(parse());",
+                  "input": [
+                    {
+                      "url": "https://news.ycombinator.com/item?id=49405816"
+                    }
+                  ],
+                  "fields": {
+                    "url": {
+                      "type": "url",
+                      "required": true
+                    }
+                  },
+                  "features": [
+                    "cmd.navigate",
+                    "cmd.parse",
+                    "cmd.collect"
+                  ],
+                  "worker": "code",
+                  "parser": {
+                    "parser": "// Extract title\nconst title = $('.titleline > a').text_sane();\n\n// Extract URL\nconst url = $('.titleline > a').attr('href');\n\n// Extract points\nconst pointsText = $('[id^=score_]').text_sane();\nconst points = pointsText ? parseInt(pointsText.replace(/\\D/g, '')) : 0;\n\n// Extract author\nconst author = $('.hnuser').text_sane();\n\n// Extract comment count\nconst commentText = $('.subline > a:last-child').text_sane();\nlet comment_count = 0;\nif (commentText && (commentText.includes('comment') || commentText.includes('discuss'))) {\n  const match = commentText.match(/(\\d+)/);\n  comment_count = match ? parseInt(match[1]) : 0;\n}\n\n// Extract site domain\nconst site = $('.sitestr').text_sane() || null;\n\nreturn {\n  title,\n  url: url ? new URL(url, 'https://news.ycombinator.com/') : null,\n  points,\n  author,\n  comment_count,\n  site\n};",
+                    "sandbox_version": 1,
+                    "id": "p_mt5cco5d1njzow5e0h.1"
+                  },
+                  "parse_code": "// Extract title\nconst title = $('.titleline > a').text_sane();\n\n// Extract URL\nconst url = $('.titleline > a').attr('href');\n\n// Extract points\nconst pointsText = $('[id^=score_]').text_sane();\nconst points = pointsText ? parseInt(pointsText.replace(/\\D/g, '')) : 0;\n\n// Extract author\nconst author = $('.hnuser').text_sane();\n\n// Extract comment count\nconst commentText = $('.subline > a:last-child').text_sane();\nlet comment_count = 0;\nif (commentText && (commentText.includes('comment') || commentText.includes('discuss'))) {\n  const match = commentText.match(/(\\d+)/);\n  comment_count = match ? parseInt(match[1]) : 0;\n}\n\n// Extract site domain\nconst site = $('.sitestr').text_sane() || null;\n\nreturn {\n  title,\n  url: url ? new URL(url, 'https://news.ycombinator.com/') : null,\n  points,\n  author,\n  comment_count,\n  site\n};"
+                }
+              ],
+              "visibility": "private",
+              "user": "<REDACTED_EMAIL>",
+              "status": {
+                "value": "development",
+                "last_modified": {
+                  "date": "2026-08-23T05:02:55.292Z",
+                  "email": "<REDACTED_EMAIL>"
+                }
+              },
+              "url": "https://news.ycombinator.com",
+              "use_case": "other",
+              "customer": "hl_b71e73bf",
+              "sandbox_version": 1,
+              "example_input": [
+                {
+                  "url": "https://news.ycombinator.com"
+                }
+              ],
+              "example_output": "{\"title\":\"MartyPC is a cross-platform emulator of early PCs written in Rust\",\"url\":\"https://martypc.net/\",\"points\":27,\"author\":\"boilerupnc\",\"comment_count\":0}",
+              "output_fields": {
+                "type": "object",
+                "fields": {
+                  "title": {
+                    "type": "text"
+                  },
+                  "url": {
+                    "type": "url"
+                  },
+                  "points": {
+                    "type": "number"
+                  },
+                  "author": {
+                    "type": "text"
+                  },
+                  "comment_count": {
+                    "type": "number"
+                  }
+                }
+              },
+              "features": [
+                "cmd.navigate",
+                "cmd.parse",
+                "cmd.rerun_stage",
+                "cmd.next_stage",
+                "cmd.collect"
+              ],
+              "shared_libs": [],
+              "source": "dca-ide-automation-66f5c565b6-mnvkl",
+              "customer_id": "hl_b71e73bf",
+              "code_environment": "intent",
+              "id": "t_mt5cco582gmd45j6uk.1",
+              "family": "t_mt5cco582gmd45j6uk",
+              "patch": 1,
+              "version": "1",
+              "domain": "news.ycombinator.com",
+              "discovery": false,
+              "last_modified": {
+                "email": "<REDACTED_EMAIL>",
+                "date": "2026-08-23T05:02:55.296Z"
+              },
+              "is_development": true
+            },
+            "title": "View refactor changes",
+            "user": "<REDACTED_EMAIL>"
+          },
+          "success": true,
+          "preview_result": [
+            {
+              "title": "MartyPC is a cross-platform emulator of early PCs written in Rust",
+              "url": "https://martypc.net/",
+              "points": 30,
+              "author": "boilerupnc",
+              "comment_count": 0,
+              "site": "martypc.net"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "POST resume_automation_job {message:true, auto_save:false}",
+      "arm": "control",
+      "startedAt": "2026-08-23T05:05:24.486Z",
+      "elapsedMs": 333,
+      "detail": {
+        "ok": true,
+        "result": {
+          "message": true,
+          "auto_save": false
+        }
+      }
+    },
+    {
+      "step": "poll to terminal WITH grace window",
+      "arm": "control",
+      "startedAt": "2026-08-23T05:05:24.820Z",
+      "elapsedMs": 297,
+      "detail": {
+        "ok": true,
+        "result": {
+          "verdict": "success",
+          "last": {
+            "id": "ia_mt5cemghn94bx7gh6",
+            "step": "user_approval",
+            "completed_steps": [
+              "planner",
+              "control_preview_runner",
+              "step_advance",
+              "control_preview_runner",
+              "code_fixer",
+              "step_preview_runner",
+              "request_fulfillment_validator",
+              "step_advance",
+              "user_approval"
+            ],
+            "status": "done",
+            "success": true,
+            "preview_result": [
+              {
+                "title": "MartyPC is a cross-platform emulator of early PCs written in Rust",
+                "url": "https://martypc.net/",
+                "points": 30,
+                "author": "boilerupnc",
+                "comment_count": 0,
+                "site": "martypc.net"
+              }
+            ]
+          },
+          "envelopes": [
+            {
+              "id": "ia_mt5cemghn94bx7gh6",
+              "step": "user_approval",
+              "completed_steps": [
+                "planner",
+                "control_preview_runner",
+                "step_advance",
+                "control_preview_runner",
+                "code_fixer",
+                "step_preview_runner",
+                "request_fulfillment_validator",
+                "step_advance",
+                "user_approval"
+              ],
+              "status": "done",
+              "success": true,
+              "preview_result": [
+                {
+                  "title": "MartyPC is a cross-platform emulator of early PCs written in Rust",
+                  "url": "https://martypc.net/",
+                  "points": 30,
+                  "author": "boilerupnc",
+                  "comment_count": 0,
+                  "site": "martypc.net"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "trigger + read dataset (post-heal)",
+      "arm": "control",
+      "startedAt": "2026-08-23T05:05:25.117Z",
+      "elapsedMs": 204732,
+      "detail": {
+        "ok": true,
+        "result": {
+          "jobId": "j_mt5cfvyy1w2mgt2r3m",
+          "log": {
+            "id": "j_mt5cfvyy1w2mgt2r3m",
+            "status": "done",
+            "collector": "c_mt5c7ij91jxqfjvutj",
+            "template": "t_mt5cco582gmd45j6uk.1",
+            "inputs": 1,
+            "dup_inputs": 0,
+            "lines": 60,
+            "fails": 0,
+            "pages": 62,
+            "pages_left": 0,
+            "success": 62,
+            "navigations": 62,
+            "created": "2026-08-23T05:05:25.491Z",
+            "started": "2026-08-23T05:05:25.579Z",
+            "finished": "2026-08-23T05:08:28.863Z",
+            "trigger": "<REDACTED_EMAIL>",
+            "success_rate": 1,
+            "job_time": 183284,
+            "queue_time": 88
+          },
+          "template": "t_mt5cco582gmd45j6uk.1",
+          "version": 1,
+          "rowFields": [
+            "author",
+            "comment_count",
+            "input",
+            "points",
+            "title",
+            "url"
+          ],
+          "rowCount": 60,
+          "sampleRow": {
+            "title": "What's in a PowerPoint File?",
+            "url": "https://editide.com/blog/what-is-a-pptx-file/",
+            "points": 72,
+            "author": "danielochoa0620 postdoc74 eightysixfour orthoxerox theolivenbaum fassssst rationalist aghuang danielochoa0620 bena TonyAlicea10 pea armcat ronbenton demibabs tamimio gruez spockz gruez yellowapple NooneAtAll3 ctward kjellsbells somat FailMore josephg danielochoa0620 Onavo anthk josephg EDM115 mzajc ifh-hn snazz danielochoa0620 bena yellowapple bena",
+            "comment_count": 37,
+            "input": {
+              "url": "https://news.ycombinator.com"
+            }
+          },
+          "ambiguousEmpty": false
+        }
       }
     }
   ]

@@ -1,3 +1,61 @@
+# Addendum 2026-08-23: the loop CAN complete — `auto_save:true` promotes
+
+> **This addendum supersedes the conclusion below, not its observations.**
+> Everything recorded on 2026-08-20 still happened. The inference drawn from
+> it — that "an unattended self-healing loop cannot currently complete on
+> Bright Data" — is wrong, and should no longer be quoted.
+
+**What we now know.** `resume_automation_job` accepts an `auto_save` boolean.
+With `{message: true, auto_save: true}`, the approved template is saved to
+production automatically: `completed_steps` gains a final `save_new_template`
+step, and the next job runs on an incremented template version. No Scraper
+Studio IDE visit, no human "Save to Production" click. The 2026-08-20 run did
+not send `auto_save` at all, so it took the documented non-auto_save path,
+where the approved change stays a draft.
+
+**Evidence.** A controlled two-armed experiment on two disposable collectors,
+same site, same prompt, same time, differing only in the flag —
+[`evidence/autosave-proof-2026-08-23.md`](./evidence/autosave-proof-2026-08-23.md)
+(narrative) and
+[`evidence/autosave-proof-2026-08-23.json`](./evidence/autosave-proof-2026-08-23.json)
+(raw, redacted). PASS, 13/13 assertions.
+
+| | `auto_save:true` | `auto_save:false` |
+|---|---|---|
+| Collector | `c_mt5bxc3f1ul647jkq0` | `c_mt5c7ij91jxqfjvutj` |
+| Template before → after | `t_mt5c2eq9hs3vjdfvl.1` → **`.2`** | `t_mt5cco582gmd45j6uk.1` → `.1` |
+| `save_new_template` present | **yes** | no |
+| New field in production rows | **yes** | no |
+
+**Two caveats that matter more than the headline.**
+
+1. **`auto_save` only applies to successful jobs.** A heal can reach the
+   approval gate with `success: false` — the AI tried and failed to satisfy the
+   prompt. Approving such a job promotes nothing and flips it to
+   `status: "failed"` within ~1.5s, consuming the collector's single concurrent
+   heal slot. Always check `success` before approving; use
+   `isHealUnfulfilled()` and reject with `{message: false}` instead. Observed
+   live: [`evidence/autosave-proof-2026-08-23-run3-rank-prompt.json`](./evidence/autosave-proof-2026-08-23-run3-rank-prompt.json).
+
+2. **This does not fully explain the 2026-08-20 run.** That run used the prompt
+   "…named rank" — the same prompt that, on 2026-08-23, drove Bright Data's AI
+   through five failed repair rounds to a `success: false` gate. So the
+   2026-08-20 heal may have been unsuccessful rather than merely un-saved, in
+   which case `auto_save` would not have rescued it either. The original log
+   does not record `success`, so both explanations remain open. Nothing in the
+   new proof depends on which is true.
+
+**Verifying promotion.** Bright Data exposes no versions/template/rollback
+endpoint (both 404). The only production-effect signal is
+`GET /dca/log/{job_id}.template`, a `t_<id>.<version>` string that increments on
+each save — read it from a job triggered *after* the heal. Require two
+independent confirmations before declaring a repair promoted:
+`save_new_template` in `completed_steps`, **and** a template version increase on
+a fresh job. The `output_schema` comparison in `heal.ts` stays useful but cannot
+prove a positive for fixes that change values without changing the field list.
+
+---
+
 # Finding: a self-healing job can report `status: "done"` without changing production
 
 **Date:** 2026-08-20

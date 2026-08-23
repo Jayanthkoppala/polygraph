@@ -13,6 +13,8 @@ import {
   BrightDataClient,
   BrightDataError,
   BrightDataPollTimeoutError,
+  isAwaitingApproval,
+  isHealUnfulfilled,
   parseDatasetBody,
   parseTemplateVersion,
 } from '../../../src/brightdata/client.js';
@@ -421,5 +423,37 @@ describe('parseDatasetBody / pollDataset wire formats', () => {
     const result = await client.pollDataset('j_1', { intervalMs: 1 });
     expect(result.rows).toHaveLength(2);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('isHealUnfulfilled', () => {
+  // Observed live 2026-08-23: a heal reached the approval gate with
+  // success:false after five code_fixer/request_fulfillment_validator rounds,
+  // and approving it flipped the job to "failed" in ~1.5s.
+  it('flags a gate envelope whose job already failed fulfillment', () => {
+    expect(
+      isHealUnfulfilled({
+        status: 'pending_answer',
+        step: 'user_approval',
+        success: false,
+        preview_result: [{ title: 'a', rank: null }],
+      })
+    ).toBe(true);
+  });
+
+  it('does not flag a successful gate envelope', () => {
+    expect(isHealUnfulfilled({ status: 'pending_answer', step: 'user_approval', success: true })).toBe(false);
+  });
+
+  it('does not flag an envelope that omits success — absent is not false', () => {
+    // "can't tell" must never be treated as proof of failure, the same rule
+    // heal.ts applies to promotion checks.
+    expect(isHealUnfulfilled({ status: 'pending_answer', step: 'user_approval' })).toBe(false);
+  });
+
+  it('is independent of isAwaitingApproval — the gate can be reached either way', () => {
+    const unfulfilledGate = { status: 'pending_answer', step: 'user_approval', success: false };
+    expect(isAwaitingApproval(unfulfilledGate)).toBe(true);
+    expect(isHealUnfulfilled(unfulfilledGate)).toBe(true);
   });
 });

@@ -426,6 +426,30 @@ export function isAwaitingApproval(progress: RefactorProgress): boolean {
   return REFACTOR_APPROVAL_STATES.has(status) || step === 'user_approval';
 }
 
+/**
+ * True when a Self-Healing job sitting at the approval gate has ALREADY
+ * failed to satisfy the prompt — `success: false` on the progress envelope.
+ *
+ * This distinction is load-bearing and was learned the expensive way
+ * (docs/evidence/autosave-proof-2026-08-23-run3-rank-prompt.json): a heal can
+ * reach `status: "pending_answer"` / `step: "user_approval"` with
+ * `success: false` and a `preview_result` whose new field is null, meaning
+ * the AI looped through code_fixer -> request_fulfillment_validator several
+ * times and gave up. Bright Data's `auto_save` documentation says it
+ * "applies to successful jobs only", so approving such a job cannot promote
+ * anything — and observed live, approving it flips the job straight to
+ * `status: "failed"` within ~1.5s, burning it. Only one heal runs per
+ * collector at a time, so that burn costs a whole heal slot.
+ *
+ * An automated recovery worker must therefore check this BEFORE approving,
+ * and send `{message: false}` to reject-and-re-prompt instead of
+ * `{message: true}`. `isAwaitingApproval` says the gate was reached; this
+ * says whether approving it is worth anything.
+ */
+export function isHealUnfulfilled(progress: RefactorProgress): boolean {
+  return progress.success === false;
+}
+
 export class BrightDataClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
