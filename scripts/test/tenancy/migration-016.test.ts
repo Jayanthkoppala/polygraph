@@ -48,13 +48,13 @@ function seedTenant(db: Database.Database): { tenantId: string; collectorId: str
 }
 
 describe('M016 — collector_deliveries error-record columns', () => {
-  it('adds the two nullable columns to a fresh database and records version 16', () => {
+  it('adds the two nullable columns to a fresh database and records every migration', () => {
     const { db, path } = tempDb();
     migrate(db, path);
     const present = columns(db, 'collector_deliveries');
     for (const column of ERROR_COLUMNS) expect(present).toContain(column);
     const versions = db.prepare(`SELECT COUNT(*) AS n FROM schema_migrations`).get() as { n: number };
-    expect(versions.n).toBe(16);
+    expect(versions.n).toBe(18);
   });
 
   it('is idempotent: re-running over an already-migrated database is a no-op', () => {

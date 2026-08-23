@@ -2,7 +2,7 @@
 // wash — the exact defect that got magic-card vetoed in the first place.
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
-import { VerdictCardShell } from '@/components/fleet/VerdictCardShell';
+import { VerdictCardShell } from '@/components/verdict/VerdictCardShell';
 
 afterEach(() => cleanup());
 

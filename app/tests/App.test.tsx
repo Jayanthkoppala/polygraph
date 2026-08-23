@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AppRoutes } from '@/App';
-import type { FleetState } from '@/lib/api';
 
 // jsdom has neither a WebGL canvas nor a ResizeObserver; the shader has its own tests.
 vi.mock('@/components/Dither', () => ({ default: () => <div data-testid="dither" /> }));
@@ -34,18 +33,11 @@ beforeEach(() => {
   );
 });
 
-const EMPTY_FLEET: FleetState = {
-  tenant: 'demo-fleet',
-  ts: new Date().toISOString(),
-  collectors: [],
-  governor: {
-    day: '2026-08-20',
-    heal_enabled: false,
-    max_attempts_per_incident: 1,
-    cooldown_minutes: 60,
-    daily_heal_budget: 0,
-    totalAttemptsToday: 0,
-  },
+// The workspace at `/app` is the ONLY signed-in surface, and it renders off
+// `/api/recovery/collectors` alone — no `/api/state`, no `/api/ledger`, both of
+// which belonged to the deleted fleet dashboard.
+const WORKSPACE_ROUTES = {
+  '/api/recovery/collectors': { status: 200, body: { collectors: [] } },
 };
 
 // Routes a mocked `fetch` by pathname. Must cover every endpoint the target screen calls,
@@ -126,10 +118,10 @@ describe('AppRoutes', () => {
     );
   });
 
-  it('/fleet for an authenticated, keyless tenant mounts onboarding at key-paste — never back at signup', async () => {
+  it('/app for an authenticated, keyless tenant mounts onboarding at key-paste — never back at signup', async () => {
     mockApi({ '/api/settings/key/status': { status: 200, body: { status: null } } });
     render(
-      <MemoryRouter initialEntries={['/fleet']}>
+      <MemoryRouter initialEntries={['/app']}>
         <AppRoutes />
       </MemoryRouter>,
     );
@@ -138,29 +130,41 @@ describe('AppRoutes', () => {
     expect(screen.queryByLabelText(/fleet name/i)).not.toBeInTheDocument();
   });
 
-  it('/app for an authenticated, keyless tenant also mounts at key-paste (the real post-signup redirect target)', async () => {
-    mockApi({ '/api/settings/key/status': { status: 200, body: { status: null } } });
+  it('/app for a fully onboarded tenant renders the recovery workspace', async () => {
+    mockApi({
+      '/api/settings/key/status': { status: 200, body: { status: { last4: '3f2a' } } },
+      ...WORKSPACE_ROUTES,
+    });
     render(
       <MemoryRouter initialEntries={['/app']}>
         <AppRoutes />
       </MemoryRouter>,
     );
-    await waitFor(() => expect(screen.getByTestId('api-key-input')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Recovery workspace')).toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: 'Collectors' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Repair receipts' })).toBeInTheDocument();
   });
 
-  it('/fleet for a fully onboarded tenant renders the real fleet dashboard', async () => {
+  // The old verdict dashboard is gone, route and all: a bookmarked `/fleet`
+  // must fall through the catch-all to the landing page, never render a second
+  // workspace and never show its headline copy.
+  it('/fleet no longer exists — a signed-in tenant lands on the landing page, not a fleet dashboard', async () => {
     mockApi({
       '/api/settings/key/status': { status: 200, body: { status: { last4: '3f2a' } } },
-      '/api/state': { status: 200, body: EMPTY_FLEET },
-      '/api/ledger': { status: 200, body: { events: [] } },
+      ...WORKSPACE_ROUTES,
     });
     render(
       <MemoryRouter initialEntries={['/fleet']}>
         <AppRoutes />
       </MemoryRouter>,
     );
-    await waitFor(() => expect(screen.getByText(/collector fleet/i)).toBeInTheDocument());
-    expect(screen.getByText('demo-fleet')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId('landing-scene')).toHaveTextContent(/we built a live evolving store for this test/i),
+    );
+    expect(screen.queryByText('Recovery workspace')).not.toBeInTheDocument();
+    expect(screen.queryByText(/collectors are lying to you/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('fleet-shell-grid')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('ledger-region')).not.toBeInTheDocument();
   });
 
   it('/receipts renders the completed demo receipt without customer onboarding', async () => {
@@ -207,39 +211,37 @@ describe('AppRoutes', () => {
     await waitFor(() => expect(screen.getByTestId('api-key-input')).toBeInTheDocument());
   });
 
-  it('/signup for an already-keyed tenant redirects straight to the fleet, never re-shows onboarding', async () => {
+  it('/signup for an already-keyed tenant redirects straight to the workspace, never re-shows onboarding', async () => {
     mockApi({
       '/api/settings/key/status': { status: 200, body: { status: { last4: '3f2a' } } },
-      '/api/state': { status: 200, body: EMPTY_FLEET },
-      '/api/ledger': { status: 200, body: { events: [] } },
+      ...WORKSPACE_ROUTES,
     });
     render(
       <MemoryRouter initialEntries={['/signup']}>
         <AppRoutes />
       </MemoryRouter>,
     );
-    await waitFor(() => expect(screen.getByText(/collector fleet/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Recovery workspace')).toBeInTheDocument());
   });
 
-  it('/fleet under `polygraph demo` renders the seeded dashboard — the sentinel routes explicitly, not by being mistaken for a keyed tenant', async () => {
+  it('/app under `polygraph demo` renders the seeded workspace — the sentinel routes explicitly, not by being mistaken for a keyed tenant', async () => {
     mockApi({
       '/api/settings/key/status': { status: 200, body: { status: 'offline-demo' } },
-      '/api/state': { status: 200, body: EMPTY_FLEET },
-      '/api/ledger': { status: 200, body: { events: [] } },
+      ...WORKSPACE_ROUTES,
     });
     render(
-      <MemoryRouter initialEntries={['/fleet']}>
+      <MemoryRouter initialEntries={['/app']}>
         <AppRoutes />
       </MemoryRouter>,
     );
-    await waitFor(() => expect(screen.getByText(/collector fleet/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Recovery workspace')).toBeInTheDocument());
   });
 
   it('a session probe that cannot answer never ejects a live session to the landing page', async () => {
     // Every attempt fails — not a 401, which would be a real answer.
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network error')));
     render(
-      <MemoryRouter initialEntries={['/fleet']}>
+      <MemoryRouter initialEntries={['/app']}>
         <AppRoutes />
       </MemoryRouter>,
     );
@@ -260,11 +262,11 @@ describe('AppRoutes', () => {
           if (attempt <= 2) throw new TypeError('network error');
           return { ok: true, status: 200, statusText: 'OK', json: async () => ({ status: null }) };
         }
-        return { ok: true, status: 200, statusText: 'OK', json: async () => EMPTY_FLEET };
+        return { ok: true, status: 200, statusText: 'OK', json: async () => ({ collectors: [] }) };
       }),
     );
     render(
-      <MemoryRouter initialEntries={['/fleet']}>
+      <MemoryRouter initialEntries={['/app']}>
         <AppRoutes />
       </MemoryRouter>,
     );

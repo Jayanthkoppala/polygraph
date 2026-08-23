@@ -7,6 +7,8 @@ import { up013DeliveryRecovery } from './migrations/013-delivery-recovery.js';
 import { up014RecoveryCycleMode } from './migrations/014-recovery-cycle-mode.js';
 import { up015IngestTokenReveal } from './migrations/015-ingest-token-reveal.js';
 import { up016DeliveryErrorRecords } from './migrations/016-delivery-error-records.js';
+import { up017SchemaProviderMetadata } from './migrations/017-schema-provider-metadata.js';
+import { up018RecoveryCycleTimeline } from './migrations/018-recovery-cycle-timeline.js';
 
 /**
  * The migration runner, per tenant-architecture.md §8. Idempotent and
@@ -499,6 +501,20 @@ const MIGRATIONS: Migration[] = [
   // guarded ALTER TABLE ADD COLUMNs, nullable, no backfill. Defined in
   // ./migrations/.
   { version: 16, destructive: false, up: up016DeliveryErrorRecords },
+  // M017 — strips Bright Data's delivery-wrapper field names out of every
+  // stored `tenant_collectors.output_schema_json`. Connect used to persist
+  // the provider's whole published `output_schema` with every field
+  // required, including the 18 wrapper fields ingest strips from the rows —
+  // so a healthy delivery graded FAILED_STRUCTURAL. Rewrites column values
+  // only (no table rebuild, so no pre-migration snapshot) and is idempotent.
+  // Defined in ./migrations/.
+  { version: 17, destructive: false, up: up017SchemaProviderMetadata },
+  // M018 — `recovery_cycles.timeline_json`: the per-step `{status, at}` trail
+  // the worker appends as a repair advances, so a repair receipt can show
+  // when each step happened and how long it took. One guarded, nullable
+  // ALTER TABLE ADD COLUMN; pre-M018 cycles read NULL. Defined in
+  // ./migrations/.
+  { version: 18, destructive: false, up: up018RecoveryCycleTimeline },
 ];
 
 /** One consistent snapshot before the first destructive step. VACUUM INTO

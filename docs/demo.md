@@ -75,12 +75,11 @@ This does four things, in order:
 
 Open `http://127.0.0.1:4141` in a browser. With the React app built, you land on the
 landing page — click **Run the verification demo** (or go straight to
-`http://127.0.0.1:4141/fleet`) for the live fleet view: three collector cards, the
-fixture catalog (`demo-store-products`) at **PASS**, and the two books.toscrape.com
-collectors sitting at "not checked"/"awaiting first run" (the cards are titled by the
-collector's site name, so the terminal's `demo-store-products` is the "Fixture Catalog"
-card — nothing invented, they genuinely haven't run yet), plus
-a ledger stream on the right with a **Verify chain** button that runs a real chain walk.
+`http://127.0.0.1:4141/app`) for the live recovery workspace: the connected collectors
+in the left rail with the exact state each one is in, and — for whichever collector is
+selected — its accepted deliveries and its verified repairs. Each repair row expands
+into the full receipt: what broke, every step Polygraph took and how long it took, the
+verification run that proved the fix, and the receipt hash.
 Leave that terminal running. Everything below happens in a **second terminal**, in
 the same directory.
 

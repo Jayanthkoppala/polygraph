@@ -108,46 +108,7 @@ export function resolveFocusSelection(selection: FocusSelection, collectors: Col
   return selection;
 }
 
-export interface HeadlineResult {
-  sentence: string;
-  /** The worst true thing this sentence is about — drives which colour (if
-   * any) the headline itself takes on. */
-  worstState: VerdictState | 'NONE';
-}
-
-// The single largest-type sentence (ux-spec.md §4), never a stat row.
-// Precedence LYING > SUSPECT > NOT VERIFIED > PASS; always the worst true thing.
-export function computeHeadline(collectors: CollectorState[]): HeadlineResult {
-  if (collectors.length === 0) {
-    return { sentence: 'No collectors connected yet.', worstState: 'NONE' };
-  }
-
-  const states = collectors.map(toVerdictState);
-  const wrongShape = states.filter((s) => s === 'WRONG_SHAPE').length;
-  const wrongTarget = states.filter((s) => s === 'WRONG_TARGET').length;
-  const lying = wrongShape + wrongTarget;
-  const suspect = states.filter((s) => s === 'UNEXPLAINED').length;
-  const unverified = states.filter((s) => s === 'NOT_CHECKED').length;
-
-  if (lying > 0) {
-    // §2.5: WRONG_TARGET sits off the red ramp, so only take the red headline
-    // colour when a WRONG_SHAPE collector genuinely exists.
-    return {
-      sentence: `${lying} collector${lying === 1 ? '' : 's'} ${lying === 1 ? 'is' : 'are'} lying to you.`,
-      worstState: wrongShape > 0 ? 'WRONG_SHAPE' : 'WRONG_TARGET',
-    };
-  }
-  if (suspect > 0) {
-    return {
-      sentence: `${suspect} collector${suspect === 1 ? '' : 's'} need${suspect === 1 ? 's' : ''} your call.`,
-      worstState: 'UNEXPLAINED',
-    };
-  }
-  if (unverified > 0) {
-    return {
-      sentence: `${unverified} collector${unverified === 1 ? '' : 's'} aren't being checked.`,
-      worstState: 'NOT_CHECKED',
-    };
-  }
-  return { sentence: 'Everything checks out.', worstState: 'VERIFIED' };
-}
+// `computeHeadline` lived here — the "N collectors are lying to you" sentence
+// of the deleted /fleet dashboard. Removed with the surface that showed it:
+// the recovery workspace states facts per collector and never aggregates them
+// into one verdict sentence.

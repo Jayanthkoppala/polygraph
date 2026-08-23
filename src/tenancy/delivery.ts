@@ -324,6 +324,10 @@ export async function recordDeliveredRows(
   // all see the identical rows. Mirrors evaluateRunResult's own
   // override-then-registry schema resolution so the two never disagree on
   // which fields are "real".
+  // `ctx.schemas` has already been through `effectiveSchema`, so a legacy
+  // collector whose stored schema declares all 18 wrapper fields no longer
+  // "keeps" them here — which is the point: keeping them would put
+  // html/warc/screenshot back into the graded rows and the retained preview.
   const gradingSchema = ctx.schemas?.[collector.id] ?? COLLECTOR_REGISTRY[collector.name]?.schema;
   const schemaFields: ReadonlySet<string> = new Set(Object.keys(gradingSchema?.fields ?? {}));
   // Error records ("Results and errors together in one file") are split off
@@ -512,6 +516,24 @@ interface RecordForRecoveryInput {
 type RecoveryOutcome = Required<Pick<DeliveryDecision, 'deliveryId' | 'state' | 'heldReason' | 'cycleId' | 'duplicate'>>;
 
 /**
+ * The fewest DATA rows a delivery must carry before it can become — or
+ * refresh — the healthy baseline.
+ *
+ * Bright Data's "Test Webhook" button posts a single placeholder record, and
+ * an operator poking that button is not a statement about the collector's
+ * health. Taken as a baseline it becomes the comparison point every future
+ * delivery is diagnosed against, so one test click could silently redefine a
+ * collector's "normal" as one row — and, worse, clear a hold. Five is low
+ * enough that any real scheduled run clears it and high enough that no
+ * hand-fired sample does.
+ *
+ * A PASS below the threshold is still fully recorded (it appears in the
+ * deliveries feed with its verdict) — it simply leaves `state`,
+ * `baseline_delivery_id` and `held_reason` exactly as they were.
+ */
+export const BASELINE_MIN_ROWS = 5;
+
+/**
  * The recovery half of ingest (build plan D6/D7): persist the graded
  * delivery, then either establish/refresh the baseline or ask the policy
  * whether to enqueue a cycle. Never calls the provider — the worker does
@@ -566,6 +588,10 @@ function recordForRecovery(
   const hasBaseline = state.baseline_delivery_id !== null;
 
   const refreshBaseline = (): RecoveryOutcome => {
+    // A delivery too small to be a real run never becomes the comparison
+    // point and never clears a hold — see BASELINE_MIN_ROWS. It stays
+    // recorded with its verdict; nothing about the collector's state moves.
+    if (rows.length < BASELINE_MIN_ROWS) return outcome();
     // First healthy delivery becomes the baseline; later healthy deliveries
     // refresh it so the comparison point tracks the collector's current
     // shape and a hold clears once the target recovers by itself.

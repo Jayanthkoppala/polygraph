@@ -2,7 +2,7 @@
 // the WRONG_TARGET entity-key substitution, row density, repair slot, reduced motion.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { VerdictCard } from '@/components/fleet/VerdictCard';
+import { VerdictCard } from '@/components/verdict/VerdictCard';
 import type { CollectorState } from '@/lib/api';
 
 afterEach(() => {

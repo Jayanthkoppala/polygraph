@@ -238,8 +238,13 @@ export async function handleSessionRoutes(ctx: RouteContext, session: Session, t
         return;
       }
 
+      // `inferred.fields` already excludes Bright Data's delivery-wrapper
+      // fields (timestamp, status_code, error, html, ... — see
+      // provider-metadata.ts). A collector whose published schema is nothing
+      // BUT wrapper fields has no scraped contract to grade, so it lands on
+      // the same "run it once for real" answer as one with no schema at all.
       const inferred = inferFieldsForCollector(collectorsListResponse, collectorId);
-      if (inferred.fieldNames.length === 0) {
+      if (inferred.fields.length === 0) {
         sendJson(res, 409, {
           error: 'Run this collector once and save its output schema to production in Bright Data, then retry',
         });
@@ -251,7 +256,7 @@ export async function handleSessionRoutes(ctx: RouteContext, session: Session, t
       const listed = summarizeCollectorsList(collectorsListResponse).find((collector) => collector.id === collectorId);
       scope.collectors.createDraft({ collectorId, name: listed?.name ?? collectorId, canaryInputs: [] });
       const outputSchema = buildConfirmedSchema(
-        inferred.fieldNames.map((name) => ({ name, type: 'text', required: true }))
+        inferred.fields.map(({ name, type }) => ({ name, type, required: true }))
       );
       const collector = persistConfirmedSetup(
         scope,

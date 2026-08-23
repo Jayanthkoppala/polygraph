@@ -2,7 +2,7 @@
 // owns the break-button row, the skeleton state, and the proof line.
 import { useEffect, useState } from 'react';
 import { useReducedMotion } from 'motion/react';
-import { VerdictCard } from '@/components/fleet/VerdictCard';
+import { VerdictCard } from '@/components/verdict/VerdictCard';
 import { NoiseTexture } from '@/components/ui/noise-texture';
 import {
   AlertDialog,

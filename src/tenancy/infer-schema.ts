@@ -14,6 +14,8 @@
  * verification (see `key-verification.ts`) without a second network call.
  */
 
+import { partitionSchemaFieldNames } from './provider-metadata.js';
+
 /** Bright Data's own id field name is unconfirmed too (docs show `id` in
  * examples, but the delete-scraper page notes "this ID may also be
  * referred to as `collector_id`") — tolerate both rather than assuming one. */
@@ -115,6 +117,93 @@ export function fieldNamesFromOutputSchema(raw: unknown): string[] {
   return [];
 }
 
+/** Bright Data's published `output_schema` types, mapped onto the vocabulary
+ * `inferType` already emits for probed fields. `FieldSchema.type` has no
+ * closed enum — nothing in contract.ts/coherence.ts branches on it — so this
+ * is a convention for the confirm-step UI and the recovery repair brief, not
+ * a validated domain. Anything unrecognised degrades to `'text'`, which is
+ * also what `inferType` falls back to. */
+const BRIGHTDATA_TYPE_MAP: Readonly<Record<string, string>> = {
+  text: 'text',
+  string: 'text',
+  str: 'text',
+  html: 'text',
+  number: 'number',
+  integer: 'number',
+  int: 'number',
+  float: 'number',
+  double: 'number',
+  decimal: 'number',
+  price: 'number',
+  currency: 'number',
+  boolean: 'boolean',
+  bool: 'boolean',
+  url: 'url',
+  link: 'url',
+  uri: 'url',
+  image: 'url',
+  image_url: 'url',
+  date: 'date',
+  datetime: 'date',
+  timestamp: 'date',
+  array: 'array',
+  list: 'array',
+  object: 'object',
+  dict: 'object',
+  map: 'object',
+};
+
+/** Maps one raw Bright Data type token to ours; `'text'` for anything else,
+ * including a missing/non-string type. */
+export function mapOutputSchemaType(raw: unknown): string {
+  if (typeof raw !== 'string') return 'text';
+  return BRIGHTDATA_TYPE_MAP[raw.trim().toLowerCase()] ?? 'text';
+}
+
+export interface InferredField {
+  name: string;
+  /** Mapped through `mapOutputSchemaType`; `'text'` when Bright Data
+   * published no type for the field. */
+  type: string;
+}
+
+function typeOfEntry(entry: unknown): string {
+  if (typeof entry === 'string') return mapOutputSchemaType(entry);
+  if (entry && typeof entry === 'object') return mapOutputSchemaType((entry as Record<string, unknown>).type);
+  return 'text';
+}
+
+/**
+ * `fieldNamesFromOutputSchema` with the declared type carried along, for the
+ * connect path that persists a real `OutputSchema` rather than only
+ * pre-filling a wizard. Accepts the same four encodings and is equally
+ * total — a field whose type is missing or unrecognised is `'text'`, never
+ * an error.
+ */
+export function fieldsFromOutputSchema(raw: unknown): InferredField[] {
+  const names = fieldNamesFromOutputSchema(raw);
+  if (names.length === 0) return [];
+
+  const typeFor = (name: string): string => {
+    if (Array.isArray(raw)) {
+      const entry = raw.find(
+        (e) => e && typeof e === 'object' && (e as Record<string, unknown>).name === name
+      );
+      return entry === undefined ? 'text' : typeOfEntry(entry);
+    }
+    if (raw && typeof raw === 'object') {
+      const obj = raw as Record<string, unknown>;
+      const container = (Object.prototype.hasOwnProperty.call(obj, 'fields') ? obj.fields : obj.properties) ?? obj;
+      if (container && typeof container === 'object') {
+        return typeOfEntry((container as Record<string, unknown>)[name]);
+      }
+    }
+    return 'text';
+  };
+
+  return names.map((name) => ({ name, type: typeFor(name) }));
+}
+
 interface InferredSchema {
   /** Field names recognised from `output_schema` — [] when absent, present
    * but empty, or an unrecognised shape. Types/required/default_value are
@@ -122,6 +211,14 @@ interface InferredSchema {
    * by design") — only names, to pre-fill the wizard. The probe (step 2)
    * is the actual source of truth. */
   fieldNames: string[];
+  /** The same fields with their mapped types — what the connect route turns
+   * into the persisted `OutputSchema`. Same exclusion as `fieldNames`. */
+  fields: InferredField[];
+  /** Wrapper field names that WERE published in `output_schema` and were
+   * excluded — Bright Data's own delivery bookkeeping, never scraped
+   * content. Surfaced so the wizard/logs can say why a 23-field collector
+   * shows 5 fields, rather than looking like a parse failure. */
+  metadataFieldNames: string[];
   /** A collectors_list entry matching this collector id was found at all. */
   found: boolean;
   /** The matched entry carried a non-null/undefined `output_schema`
@@ -137,13 +234,27 @@ interface InferredSchema {
  * directly from key-save-time verification per §4 ("already called at
  * key-save time — reuse that response, no extra request"). Never throws. */
 export function inferFieldsForCollector(collectorsListResponse: unknown, collectorId: string): InferredSchema {
+  const empty = { fieldNames: [], fields: [], metadataFieldNames: [] };
   const entry = findCollectorListEntry(collectorsListResponse, collectorId);
-  if (!entry) return { fieldNames: [], found: false, hasOutputSchema: false };
+  if (!entry) return { ...empty, found: false, hasOutputSchema: false };
 
   const raw = entry.output_schema;
-  if (raw === undefined || raw === null) return { fieldNames: [], found: true, hasOutputSchema: false };
+  if (raw === undefined || raw === null) return { ...empty, found: true, hasOutputSchema: false };
 
-  return { fieldNames: fieldNamesFromOutputSchema(raw), found: true, hasOutputSchema: true };
+  // Bright Data publishes its delivery wrapper's own fields (timestamp,
+  // status_code, error, html, ...) inside `output_schema` alongside the
+  // scraped ones. Ingest strips them from every row, so keeping them here
+  // would build a contract on fields that are 0% filled by construction.
+  const parsed = fieldsFromOutputSchema(raw);
+  const { kept, metadata } = partitionSchemaFieldNames(parsed.map((f) => f.name));
+  const keptSet = new Set(kept);
+  return {
+    fieldNames: kept,
+    fields: parsed.filter((f) => keptSet.has(f.name)),
+    metadataFieldNames: metadata,
+    found: true,
+    hasOutputSchema: true,
+  };
 }
 
 /**

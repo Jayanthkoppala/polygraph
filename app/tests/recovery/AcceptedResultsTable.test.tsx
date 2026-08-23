@@ -15,6 +15,7 @@ function delivery(overrides: Partial<RecoveryDelivery> = {}): RecoveryDelivery {
     verdict: 'PASS',
     cause: 'NONE',
     isBaseline: true,
+    testSample: false,
     errorCount: 0,
     errorCodes: {},
     preview: [],

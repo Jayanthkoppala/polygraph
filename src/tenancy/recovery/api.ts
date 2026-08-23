@@ -1,6 +1,8 @@
 import type Database from 'better-sqlite3';
 import { DeliveryStore, type DeliveryRow } from '../delivery-store.js';
 import { scopeFor } from '../scope.js';
+import { deliveryTemplates } from './delivery-template.js';
+import { buildRepairDetail, type RepairDetail } from './repair-detail.js';
 import {
   RecoveryCycleStore,
   RecoveryStateStore,
@@ -218,6 +220,23 @@ export function listRecoveryCollectors(
   });
 }
 
+/**
+ * At most this many data rows and a delivery reads as a hand-fired sample,
+ * not a run: Bright Data's "Test Webhook" button posts a single placeholder
+ * record. Marked in the feed so the operator can tell "my collector returned
+ * one row" from "I clicked Test", and so a stray sample is never mistaken for
+ * a shrinking collector. Deliberately below `BASELINE_MIN_ROWS` (5) — a
+ * delivery this small cannot become the baseline in the first place.
+ */
+export const TEST_SAMPLE_MAX_ROWS = 2;
+
+/** Derived, not stored. A baseline delivery is by definition a real run, so
+ * it is never a test sample — the guard only matters for rows recorded before
+ * `BASELINE_MIN_ROWS` existed. */
+export function isTestSample(rowCount: number, isBaseline: boolean): boolean {
+  return rowCount <= TEST_SAMPLE_MAX_ROWS && !isBaseline;
+}
+
 export interface RecoveryDeliveryItem {
   id: string;
   received_at: string;
@@ -227,10 +246,20 @@ export interface RecoveryDeliveryItem {
   verdict: string | null;
   cause: string | null;
   is_baseline: boolean;
+  /** A delivery small enough to be Bright Data's "Test Webhook" placeholder
+   * rather than a real run — see `TEST_SAMPLE_MAX_ROWS`. Derived from
+   * `row_count`, never stored: no column to backfill, and it can never
+   * disagree with the row count it is computed from. */
+  test_sample: boolean;
   /** M016: Bright Data error records partitioned out of the payload. 0 / {}
    * for deliveries recorded before the columns existed. */
   error_count: number;
   error_codes: Record<string, number>;
+  /** The provider template version this delivery came from, when a recovery
+   * cycle recorded one for it (delivery-template.ts). `null` — rendered "—" —
+   * whenever it is not known, which is most deliveries: the webhook payload
+   * does not carry a version and none is guessed. */
+  template: string | null;
   preview: unknown[];
 }
 
@@ -296,6 +325,7 @@ export function listRecoveryDeliveries(
   masterKey: Buffer
 ): Page<RecoveryDeliveryItem> {
   const store = new DeliveryStore(db, masterKey);
+  const templates = deliveryTemplates(db, tenantId, collectorId);
   const rows = store.listDeliveries(tenantId, collectorId, {
     ...(options.before ? { before: options.before } : {}),
     limit: options.limit,
@@ -309,8 +339,10 @@ export function listRecoveryDeliveries(
     verdict: row.verdict,
     cause: row.cause,
     is_baseline: row.is_baseline === 1,
+    test_sample: isTestSample(row.row_count, row.is_baseline === 1),
     error_count: row.error_count ?? 0,
     error_codes: errorCodesOf(row),
+    template: templates.get(row.id) ?? null,
     preview: previewOf(row),
   }));
   const total = store.countDeliveries(tenantId, collectorId);
@@ -331,6 +363,11 @@ export interface RecoveryRepairItem {
   template_before: string | null;
   template_after: string | null;
   receipt_sha256: string;
+  /** The full end-to-end story of this repair — detection, what the worker
+   * did and when, the verification run, and the receipt. Absent only when the
+   * cycle row behind the receipt cannot be read. Field names, rates, and ids
+   * only: see repair-detail.ts for the redaction contract. */
+  detail?: RepairDetail;
 }
 
 function fieldsOf(row: RepairReceiptRow): string[] {
@@ -361,19 +398,24 @@ export function listRecoveryRepairs(
     ...(options.before ? { before: options.before } : {}),
     limit: options.limit,
   });
-  const items: RecoveryRepairItem[] = rows.map((row) => ({
-    id: row.id,
-    collector_id: row.collector_id,
-    collector_name: names.get(row.collector_id) ?? row.collector_id,
-    status: 'VERIFIED',
-    mode: cycles.get(tenantId, row.cycle_id)?.mode ?? 'baseline',
-    detected_at: row.detected_at,
-    verified_at: row.verified_at,
-    fields_restored: fieldsOf(row),
-    template_before: row.template_before,
-    template_after: row.template_after,
-    receipt_sha256: row.receipt_sha256,
-  }));
+  const items: RecoveryRepairItem[] = rows.map((row) => {
+    const cycle = cycles.get(tenantId, row.cycle_id);
+    const detail = buildRepairDetail(db, tenantId, row, cycle);
+    return {
+      id: row.id,
+      collector_id: row.collector_id,
+      collector_name: names.get(row.collector_id) ?? row.collector_id,
+      status: 'VERIFIED' as const,
+      mode: cycle?.mode ?? 'baseline',
+      detected_at: row.detected_at,
+      verified_at: row.verified_at,
+      fields_restored: fieldsOf(row),
+      template_before: row.template_before,
+      template_after: row.template_after,
+      receipt_sha256: row.receipt_sha256,
+      ...(detail ? { detail } : {}),
+    };
+  });
   const total = store.count(tenantId, options.collectorId ? { collectorId: options.collectorId } : {});
   return pageOf(items, options.limit, total, (item) => item.id);
 }

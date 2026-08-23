@@ -21,6 +21,7 @@
 import type { FieldSchema, OutputSchema } from '../core/types.js';
 import type { TenantScope, TenantCollectorRow } from './scope.js';
 import { compileEntityKeyRule, type EntityKeyRule, type KeyExtractor } from './entity-key.js';
+import { effectiveSchema } from './provider-metadata.js';
 
 export interface ConfirmedFieldInput {
   name: string;
@@ -46,7 +47,11 @@ export function buildConfirmedSchema(fields: ConfirmedFieldInput[]): OutputSchem
     if (field.default_value !== undefined) entry.default_value = field.default_value;
     schemaFields[field.name] = entry;
   }
-  return { fields: schemaFields };
+  // Defence in depth: a Bright Data wrapper field name reaching the confirm
+  // step (from inference, or from a hand-posted confirm body) must never
+  // become part of a graded contract — ingest strips those fields from every
+  // row, so they would be 0% filled by construction.
+  return effectiveSchema({ fields: schemaFields });
 }
 
 export interface ConfirmedSetup {
@@ -92,7 +97,14 @@ interface RunnerOverrides {
 export function loadRunnerOverridesFor(row: Pick<TenantCollectorRow, 'output_schema_json' | 'entity_key_rule_json'>): RunnerOverrides {
   const overrides: RunnerOverrides = {};
   if (row.output_schema_json) {
-    overrides.schema = JSON.parse(row.output_schema_json) as OutputSchema;
+    // `effectiveSchema` drops Bright Data's delivery-wrapper field names
+    // (timestamp, status_code, error, html, ..., and `input`) from the
+    // GRADED schema. Applied here, at the single load point every grading
+    // path goes through — delivery ingest, the recovery policy's
+    // eligibility check, and the worker's verification judge — so a
+    // collector connected before this fix grades correctly on its next
+    // delivery instead of waiting for migration 017 to rewrite its row.
+    overrides.schema = effectiveSchema(JSON.parse(row.output_schema_json) as OutputSchema);
   }
   if (row.entity_key_rule_json) {
     overrides.entityExtractor = compileEntityKeyRule(JSON.parse(row.entity_key_rule_json) as EntityKeyRule);

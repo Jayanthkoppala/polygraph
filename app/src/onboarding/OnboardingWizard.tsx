@@ -31,7 +31,7 @@ const STAGE_VIEW: Record<OnboardingStage, { position: number; screen: string }> 
 export interface OnboardingWizardProps {
   initialStage?: OnboardingStage;
   /** Called once onboarding is done. The wizard never routes itself; this is how a
-   * host wires "go to /fleet". Defaults to a same-origin navigation. */
+   * host wires "go to /app". Defaults to a same-origin navigation. */
   onComplete?: () => void;
 }
 
@@ -46,7 +46,7 @@ export function OnboardingWizard({ initialStage, onComplete }: OnboardingWizardP
     if (onComplete) {
       onComplete();
     } else {
-      window.location.assign('/fleet');
+      window.location.assign('/app');
     }
   }, [onComplete]);
 

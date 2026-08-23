@@ -54,8 +54,11 @@ import { LoggingRecoveryNotifier, type RecoveryNotifier } from './notify.js';
 import { judgeBootstrap, judgeRepair, RECOVERY_POLICY, type RecoveryPolicyEvidence } from './policy.js';
 import { createBrightDataRecoveryProvider, type ProviderProgress, type RecoveryProvider } from './provider.js';
 import {
+  appendCycleTimeline,
+  parseCycleTimeline,
   StaleWriteError,
   type CycleStatus,
+  type CycleTimelineEntry,
   type RecoveryCycleRow,
   type RecoveryStateRow,
   type RecoveryStore,
@@ -375,7 +378,10 @@ export class RecoveryWorker {
       if (progress.state === 'PUBLISHED') {
         status = await this.markPublished(ctx);
       } else {
-        ctx.cycle = this.cas(ctx, { status: 'AWAITING_APPROVAL' });
+        ctx.cycle = this.cas(ctx, {
+          status: 'AWAITING_APPROVAL',
+          timeline: this.stamp(ctx, 'AWAITING_APPROVAL'),
+        });
         status = 'AWAITING_APPROVAL';
       }
     }
@@ -405,7 +411,7 @@ export class RecoveryWorker {
     }
 
     if (status === 'PUBLISHED') {
-      ctx.cycle = this.cas(ctx, { status: 'VERIFYING' });
+      ctx.cycle = this.cas(ctx, { status: 'VERIFYING', timeline: this.stamp(ctx, 'VERIFYING') });
       status = 'VERIFYING';
     }
 
@@ -454,6 +460,7 @@ export class RecoveryWorker {
     ctx.cycle = this.cas(ctx, {
       status: 'REFACTOR_STARTED',
       templateBefore: before ? `${before.id}.${before.version}` : null,
+      timeline: this.stamp(ctx, 'REFACTOR_STARTED', before ? `template ${before.id}.${before.version}` : undefined),
     });
     this.appendLedger(ctx, {
       verdict: 'RECOVERY_PENDING',
@@ -463,7 +470,10 @@ export class RecoveryWorker {
     void this.notify((n) => n.cycleStarted(ctx.cycle));
 
     const started = await ctx.provider.startRefactor(ctx.cycle.collector_id, prompt, [input]);
-    ctx.cycle = this.cas(ctx, { providerJobId: started.jobId ?? null });
+    ctx.cycle = this.cas(ctx, {
+      providerJobId: started.jobId ?? null,
+      timeline: this.stamp(ctx, 'PROVIDER_JOB_STARTED', started.jobId ?? undefined),
+    });
   }
 
   /** Resume check for REFACTOR_STARTED..PUBLISHED: the provider's current
@@ -586,9 +596,22 @@ export class RecoveryWorker {
     const previewFieldsPresent = ctx.progress?.previewFieldsPresent ?? [];
     const gateSuccess = ctx.progress?.gateSuccess;
     const missingRegressed = ctx.evidence.regressed_fields.filter((f) => !previewFieldsPresent.includes(f));
-    if (gateSuccess !== false && missingRegressed.length === 0) return;
+    if (gateSuccess !== false && missingRegressed.length === 0) {
+      // The passing preview is evidence too: without this write the receipt
+      // could only show the fields a FAILING preview produced, and the
+      // successful path — the one a customer actually reads — would have a
+      // hole where "we checked what the provider produced" belongs.
+      ctx.cycle = this.cas(ctx, {
+        publicationProof: this.proofOf(ctx, { preview_fields_present: previewFieldsPresent }),
+        timeline: this.stamp(ctx, 'PREVIEW_CHECKED'),
+      });
+      return;
+    }
 
-    ctx.cycle = this.cas(ctx, { publicationProof: this.proofOf(ctx, { preview_fields_present: previewFieldsPresent }) });
+    ctx.cycle = this.cas(ctx, {
+      publicationProof: this.proofOf(ctx, { preview_fields_present: previewFieldsPresent }),
+      timeline: this.stamp(ctx, 'PREVIEW_CHECKED'),
+    });
     const reason =
       gateSuccess === false
         ? 'provider reports the repair did not satisfy the prompt (success:false at the approval gate)'
@@ -603,7 +626,10 @@ export class RecoveryWorker {
     // unapproved on purpose — rejecting it is a mutation this worker was
     // not authorised to infer.
     this.checkGates(ctx, false);
-    ctx.cycle = this.cas(ctx, { status: 'APPROVED_AUTOSAVE' });
+    ctx.cycle = this.cas(ctx, {
+      status: 'APPROVED_AUTOSAVE',
+      timeline: this.stamp(ctx, 'APPROVED_AUTOSAVE'),
+    });
     await ctx.provider.approveWithAutoSave(ctx.cycle.collector_id);
   }
 
@@ -616,6 +642,7 @@ export class RecoveryWorker {
       status: 'PUBLISHED',
       templateAfter: null,
       publicationProof: this.proofOf(ctx, { template_after: null }),
+      timeline: this.stamp(ctx, 'PUBLISHED'),
     });
     return 'PUBLISHED';
   }
@@ -651,7 +678,10 @@ export class RecoveryWorker {
       // trigger — before any rows exist — so ingest can recognise this run's
       // output arriving over the webhook and never grade it as an incident.
       onStarted: (jobId) => {
-        ctx.cycle = this.cas(ctx, { verificationRunId: jobId });
+        ctx.cycle = this.cas(ctx, {
+          verificationRunId: jobId,
+          timeline: this.stamp(ctx, 'VERIFICATION_RUN_STARTED', jobId),
+        });
       },
       // Lease heartbeat: a slow dataset build must not let the lease lapse
       // and hand this cycle to a second worker mid-verification.
@@ -667,6 +697,7 @@ export class RecoveryWorker {
       ctx.cycle = this.cas(ctx, {
         templateAfter,
         publicationProof: this.proofOf(ctx, { template_after: templateAfter }),
+        timeline: this.stamp(ctx, 'TEMPLATE_PUBLISHED', templateAfter ?? undefined),
       });
     }
     const graded = await this.grade(ctx, run.jobId, run.rows);
@@ -711,6 +742,10 @@ export class RecoveryWorker {
       throw stopWith('FAILED', why || 'verification failed', 'VERIFICATION_FAILED');
     }
 
+    // Stamped before the commit, not after: `commitVerifiedCycle` finishes the
+    // cycle inside its own transaction, and a terminal cycle can no longer be
+    // written through the lease.
+    ctx.cycle = this.cas(ctx, { timeline: this.stamp(ctx, 'VERIFIED') });
     const state = this.requireState(ctx);
     const result = this.deps.recovery.commitVerifiedCycle(
       {
@@ -815,6 +850,19 @@ export class RecoveryWorker {
     );
   }
 
+  /** The cycle's timeline with one more entry on the end (M018). Returned,
+   * never written on its own: the caller folds it into the same CAS as the
+   * status change it describes, so a step and its timestamp are always
+   * written together or not at all. `note` carries ids only — a provider job
+   * id or a template version, both already in the repairs response. */
+  private stamp(ctx: CycleContext, status: string, note?: string): CycleTimelineEntry[] {
+    return appendCycleTimeline(parseCycleTimeline(ctx.cycle.timeline_json), {
+      status,
+      at: this.now().toISOString(),
+      ...(note ? { note } : {}),
+    });
+  }
+
   private renewIfDue(ctx: CycleContext): void {
     const now = this.now();
     if (now.getTime() - ctx.lastRenewAt < (this.deps.leaseRenewMs ?? DEFAULT_LEASE_RENEW_MS)) return;
@@ -855,6 +903,14 @@ export class RecoveryWorker {
     const pendingWritten = ctx.cycle.status !== 'PENDING' && ctx.cycle.status !== 'LEASED';
     try {
       this.deps.db.transaction(() => {
+        ctx.cycle = this.deps.recovery.cycles.transition(
+          ctx.cycle.tenant_id,
+          ctx.cycle.id,
+          ctx.cycle.state_version,
+          this.owner,
+          { timeline: this.stamp(ctx, stop.status) },
+          nowIso
+        );
         ctx.cycle = this.deps.recovery.cycles.finish(
           ctx.cycle.tenant_id,
           ctx.cycle.id,

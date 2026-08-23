@@ -126,6 +126,56 @@ incident carries structural codes, the heal prompt gets one hint line of at
 most 120 characters listing them with counts (`Provider error codes:
 dead_page×58, parse_error×2`); transient codes never reach the prompt.
 
+### Test webhooks never shape the baseline
+
+Bright Data's **Test Webhook** button posts a single placeholder record. Two
+rules keep an operator's test click from redefining what "healthy" means for a
+collector:
+
+- **`BASELINE_MIN_ROWS = 5`** (`src/tenancy/delivery.ts`) — a delivery becomes
+  or refreshes the baseline only with at least five data rows. A `PASS` below
+  that is recorded in full, with its verdict, but leaves `state`,
+  `baseline_delivery_id` and `held_reason` untouched. Without it, one test
+  click could become the comparison point every later delivery is diagnosed
+  against — and, since a healthy delivery is the only thing that clears a
+  hold, could quietly release a `HELD` collector.
+- **`test_sample`** — `GET /api/recovery/deliveries` marks any delivery of at
+  most `TEST_SAMPLE_MAX_ROWS = 2` data rows that is not the baseline. Derived
+  from `row_count` rather than stored: nothing to backfill, and it can never
+  disagree with the count it is computed from. It lets the operator tell "my
+  collector returned one row" from "I clicked Test".
+
+The two thresholds are deliberately different — `TEST_SAMPLE_MAX_ROWS` is
+strictly below `BASELINE_MIN_ROWS`, so a labelled sample can never be a
+baseline, while a 3- or 4-row delivery is a real (if small) run that is simply
+not yet enough to define normal.
+
+### The graded schema excludes wrapper fields
+
+Bright Data publishes its delivery wrapper's own fields inside a collector's
+`output_schema` — `timestamp`, `requested_timestamp`, `input`, `prime_input`,
+`status_code`, `warning`, `warning_code`, `error`, `error_code`, `screenshot`,
+`html`, `warc`, `page_id`, `job_id`, `collector_id`, `collector_queue`,
+`reparse_file`, `crawl_type`. Ingest strips those from every row, so a
+contract that declares them `required` can never be satisfied: a 60-row
+delivery with every real field populated graded `FAILED_STRUCTURAL` against 18
+fields that were 0% filled by construction (observed on
+`polygraph-demo-1787483366`, 2026-08-23).
+
+`src/tenancy/provider-metadata.ts` is the single list. `POST
+/api/collectors/connect` excludes those names when it builds the confirmed
+schema (and maps Bright Data's published types onto ours), and
+`effectiveSchema` removes them again at load time in `loadRunnerOverridesFor`
+— the one place delivery grading, the recovery policy's eligibility check, and
+the worker's verification judge all read a stored schema — so a collector
+connected before the fix grades correctly on its next delivery without waiting
+for a migration. **M017** rewrites `tenant_collectors.output_schema_json` so
+the stored contract matches the graded one. A schema that is *nothing but*
+wrapper fields is left alone by both (emptying it would grade every delivery
+green); connect answers `409` for such a collector instead of creating it.
+`input` is excluded from the graded schema but kept in the rows — it is the
+run input the post-repair verification reuses.
+
 ## Bootstrap repair
 
 A collector that has **never** been healthy has no baseline delivery, so the

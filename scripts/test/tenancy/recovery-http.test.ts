@@ -11,6 +11,17 @@ import {
   RecoveryStateStore,
   RepairReceiptStore,
 } from '../../../src/tenancy/recovery/store.js';
+import { LEGACY_CONNECT_SCHEMA, healthyHackerNewsRows } from './provider-metadata-fixtures.js';
+
+/** Rows matching `c_customer`'s own sku/title/price schema. */
+function shopRows(count: number): Record<string, unknown>[] {
+  return Array.from({ length: count }, (_, i) => ({
+    input: { url: `https://shop.example/p/SKU-${i + 1}` },
+    sku: `SKU-${i + 1}`,
+    title: `Product ${i + 1}`,
+    price: 10 + i,
+  }));
+}
 
 /**
  * HTTP-level cover for the automatic-recovery contract: the real server, a
@@ -372,6 +383,128 @@ describe('automatic recovery HTTP contract', () => {
     expect(page.items[0].preview).toEqual([{ sku: 'SKU-1', title: 'Coffee Grinder', price: 89 }]);
   });
 
+  it('grades a legacy 23-field collector on its real fields only: healthy delivery PASSes and becomes the baseline', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    const { webhookUrl } = await account.connect('c_customer');
+
+    // Rewind this collector to the schema the pre-fix connect route wrote:
+    // 5 real fields + 18 Bright Data wrapper fields, all required. Grading
+    // used to fail every delivery against it, because ingest strips the 18.
+    writer()
+      .prepare(`UPDATE tenant_collectors SET output_schema_json = ? WHERE collector_id = 'c_customer'`)
+      .run(JSON.stringify(LEGACY_CONNECT_SCHEMA));
+
+    const rows = healthyHackerNewsRows(60);
+    const res = await ingest(webhookUrl, rows, 'run-legacy-schema');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ accepted: true, rows: 60, verdict: 'PASS' });
+
+    const page = (await (
+      await get(base, account.cookie, '/api/recovery/deliveries?collector_id=c_customer')
+    ).json()) as { items: Array<Record<string, unknown>> };
+    expect(page.items[0]).toMatchObject({
+      provider_run_id: 'run-legacy-schema',
+      row_count: 60,
+      verdict: 'PASS',
+      is_baseline: true,
+    });
+    // The wrapper fields never reach the retained preview either.
+    expect(JSON.stringify(page.items[0].preview)).not.toContain('collector_queue');
+    expect(JSON.stringify(page.items[0].preview)).not.toContain('requested_timestamp');
+
+    const listed = (await (
+      await get(base, account.cookie, '/api/recovery/collectors')
+    ).json()) as { collectors: Array<Record<string, unknown>> };
+    expect(listed.collectors[0]).toMatchObject({ collector_id: 'c_customer', state: 'READY' });
+  });
+
+  it('a PASS below BASELINE_MIN_ROWS is recorded but never becomes the baseline', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    const { webhookUrl } = await account.connect('c_customer');
+
+    // Bright Data's "Test Webhook" button: one placeholder record.
+    const sample = await ingest(webhookUrl, [{ sku: 'S1', title: 'T', price: 1 }], 'run-test-webhook');
+    const sampleBody = (await sample.json()) as Record<string, unknown>;
+    expect(sampleBody).toMatchObject({ accepted: true, verdict: 'PASS' });
+
+    // Recorded, with its verdict — but nothing about the collector moved.
+    let page = (await (
+      await get(base, account.cookie, '/api/recovery/deliveries?collector_id=c_customer')
+    ).json()) as { items: Array<Record<string, unknown>> };
+    expect(page.items[0]).toMatchObject({
+      provider_run_id: 'run-test-webhook',
+      row_count: 1,
+      verdict: 'PASS',
+      is_baseline: false,
+      test_sample: true,
+    });
+
+    let listed = (await (
+      await get(base, account.cookie, '/api/recovery/collectors')
+    ).json()) as { collectors: Array<Record<string, unknown>> };
+    expect(listed.collectors[0]).toMatchObject({
+      collector_id: 'c_customer',
+      state: 'WAITING_BASELINE',
+      held_reason: null,
+    });
+
+    // Four rows is still short of the threshold.
+    const four = await ingest(webhookUrl, shopRows(4), 'run-four');
+    expect((await four.json()) as Record<string, unknown>).toMatchObject({ verdict: 'PASS' });
+    listed = (await (
+      await get(base, account.cookie, '/api/recovery/collectors')
+    ).json()) as { collectors: Array<Record<string, unknown>> };
+    expect(listed.collectors[0]).toMatchObject({ state: 'WAITING_BASELINE' });
+
+    // Five clears it: this one is the baseline.
+    const five = await ingest(webhookUrl, shopRows(5), 'run-five');
+    expect((await five.json()) as Record<string, unknown>).toMatchObject({ verdict: 'PASS' });
+
+    page = (await (
+      await get(base, account.cookie, '/api/recovery/deliveries?collector_id=c_customer')
+    ).json()) as { items: Array<Record<string, unknown>> };
+    const byRun = Object.fromEntries(page.items.map((i) => [i.provider_run_id, i]));
+    expect(byRun['run-five']).toMatchObject({ is_baseline: true, test_sample: false });
+    expect(byRun['run-four']).toMatchObject({ is_baseline: false, test_sample: false });
+    expect(byRun['run-test-webhook']).toMatchObject({ is_baseline: false, test_sample: true });
+
+    listed = (await (
+      await get(base, account.cookie, '/api/recovery/collectors')
+    ).json()) as { collectors: Array<Record<string, unknown>> };
+    expect(listed.collectors[0]).toMatchObject({ state: 'READY' });
+  });
+
+  it('a one-row PASS never refreshes an established baseline or clears a hold', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    const { webhookUrl } = await account.connect('c_customer');
+    const tenantId = tenantIdOf('tenant-a');
+
+    // Establish a real baseline first.
+    await ingest(webhookUrl, shopRows(10), 'run-baseline');
+    const states = new RecoveryStateStore(writer());
+    let row = states.get(tenantId, 'c_customer')!;
+    const establishedBaseline = row.baseline_delivery_id;
+    expect(establishedBaseline).not.toBeNull();
+
+    // Hold it, the way policy would.
+    row = states.transition(tenantId, 'c_customer', row.state_version, {
+      state: 'HELD',
+      heldReason: 'UNRESOLVED_PROVIDER_JOB',
+    });
+
+    const sample = await ingest(webhookUrl, [{ sku: 'S1', title: 'T', price: 1 }], 'run-sample-after-hold');
+    expect((await sample.json()) as Record<string, unknown>).toMatchObject({ verdict: 'PASS' });
+
+    const after = states.get(tenantId, 'c_customer')!;
+    expect(after.state).toBe('HELD');
+    expect(after.held_reason).toBe('UNRESOLVED_PROVIDER_JOB');
+    expect(after.baseline_delivery_id).toBe(establishedBaseline);
+  });
+
   it('partitions Bright Data error records at ingest and surfaces error_count / error_codes in the deliveries feed', async () => {
     const base = await boot();
     const account = await signIn(base, 'tenant-a');
@@ -476,6 +609,191 @@ describe('automatic recovery HTTP contract', () => {
       verifiedAt,
     });
   }
+
+  /** A VERIFIED cycle with everything the receipt detail joins together: the
+   *  policy evidence written at detection, the publication proof and the
+   *  M018 step timeline written by the worker, the verification delivery, and
+   *  the append-only receipt. Seeded through the same stores the worker uses,
+   *  because no route can produce one. */
+  function seedVerifiedRepair(tenantId: string, collectorId: string, verifiedAt: string): { incident: string; verification: string } {
+    const incident = seedDelivery(tenantId, collectorId, `${verifiedAt}-incident`, { verdict: 'FAILED_STRUCTURAL' });
+    const verification = seedDelivery(tenantId, collectorId, `${verifiedAt}-verification`);
+    const cycles = new RecoveryCycleStore(writer());
+    const cycle = cycles.create({
+      tenantId,
+      collectorId,
+      incidentDeliveryId: incident,
+      policyEvidence: {
+        verdict: 'FAILED_STRUCTURAL',
+        cause: 'STRUCTURAL',
+        row_count: 1,
+        baseline_row_count: 1,
+        regressed_fields: ['price'],
+        retained_fields: ['sku'],
+        fields: [
+          { field: 'price', baseline_fill: 1, incident_fill: 0, regression: 'missing', damaged: false },
+          { field: 'sku', baseline_fill: 1, incident_fill: 1, regression: null, damaged: false },
+        ],
+        identity_ok: true,
+        // Free text built around the customer's own data. It must never reach
+        // a response — this marker is asserted absent below.
+        heal_prompt: 'Restore price on https://example.test/secret-input-value',
+      },
+    });
+    const leased = cycles.acquireLease(tenantId, cycle.id, 'test-owner', 60_000)!;
+    const started = cycles.transition(tenantId, cycle.id, leased.state_version, 'test-owner', {
+      status: 'REFACTOR_STARTED',
+      providerJobId: 'job_abc',
+      templateBefore: 't_x.4',
+      timeline: [
+        { status: 'REFACTOR_STARTED', at: '2026-08-23T10:01:00.000Z', note: 'template t_x.4' },
+        { status: 'PROVIDER_JOB_STARTED', at: '2026-08-23T10:01:05.000Z', note: 'job_abc' },
+      ],
+    });
+    const published = cycles.transition(tenantId, cycle.id, started.state_version, 'test-owner', {
+      status: 'PUBLISHED',
+      templateAfter: 't_x.5',
+      verificationRunId: 'job_def',
+      verificationDeliveryId: verification,
+      publicationProof: {
+        completed_steps: ['refactor', 'save_new_template'],
+        provider_status: 'published',
+        status_sequence: ['awaiting_approval', 'published'],
+        preview_fields_present: ['sku', 'price'],
+        template_before: 't_x.4',
+        template_after: 't_x.5',
+      },
+      timeline: [
+        { status: 'REFACTOR_STARTED', at: '2026-08-23T10:01:00.000Z', note: 'template t_x.4' },
+        { status: 'PROVIDER_JOB_STARTED', at: '2026-08-23T10:01:05.000Z', note: 'job_abc' },
+        { status: 'PREVIEW_CHECKED', at: '2026-08-23T10:05:02.000Z' },
+        { status: 'APPROVED_AUTOSAVE', at: '2026-08-23T10:05:03.000Z' },
+        { status: 'PUBLISHED', at: '2026-08-23T10:08:00.000Z' },
+        { status: 'VERIFICATION_RUN_STARTED', at: '2026-08-23T10:08:05.000Z', note: 'job_def' },
+        { status: 'VERIFIED', at: verifiedAt },
+      ],
+    });
+    cycles.finish(tenantId, cycle.id, published.state_version, 'test-owner', 'VERIFIED', null);
+    new RepairReceiptStore(writer()).insertVerified({
+      tenantId,
+      collectorId,
+      cycleId: cycle.id,
+      incidentDeliveryId: incident,
+      verificationDeliveryId: verification,
+      templateBefore: 't_x.4',
+      templateAfter: 't_x.5',
+      fieldsRestored: ['price'],
+      detectedAt: `${verifiedAt}-detected`,
+      verifiedAt,
+    });
+    return { incident, verification };
+  }
+
+  it('returns the full repair story in `detail`: detection, the step timeline, the publication and the verification run', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    await account.connect('c_customer');
+    const tenantId = tenantIdOf('tenant-a');
+    seedVerifiedRepair(tenantId, 'c_customer', '2026-08-21T10:00:00.000Z');
+
+    const res = await get(base, account.cookie, '/api/recovery/repairs?collector_id=c_customer');
+    const page = (await res.json()) as { items: Array<Record<string, any>> };
+    const detail = page.items[0].detail as Record<string, any>;
+
+    expect(detail.mode).toBe('baseline');
+
+    // Detected: the incident delivery's own facts plus the per-field diagnosis.
+    expect(detail.detected).toMatchObject({
+      row_count: 1,
+      verdict: 'FAILED_STRUCTURAL',
+      regressed_fields: ['price'],
+      retained_fields: ['sku'],
+      baseline_row_count: 1,
+      identity_ok: true,
+    });
+    expect(detail.detected.fields).toEqual([
+      { field: 'price', baseline_fill: 1, incident_fill: 0, regression: 'missing', damaged: false },
+      { field: 'sku', baseline_fill: 1, incident_fill: 1, regression: null, damaged: false },
+    ]);
+
+    // The timeline the worker appended, in order, each step with the time it
+    // took from the one before it.
+    expect(detail.timeline.map((step: { status: string }) => step.status)).toEqual([
+      'REFACTOR_STARTED',
+      'PROVIDER_JOB_STARTED',
+      'PREVIEW_CHECKED',
+      'APPROVED_AUTOSAVE',
+      'PUBLISHED',
+      'VERIFICATION_RUN_STARTED',
+      'VERIFIED',
+    ]);
+    expect(detail.timeline[1]).toMatchObject({ note: 'job_abc', duration_ms: 5_000 });
+
+    expect(detail.publication).toMatchObject({
+      provider_job_id: 'job_abc',
+      template_before: 't_x.4',
+      template_after: 't_x.5',
+      completed_steps: ['refactor', 'save_new_template'],
+      status_sequence: ['awaiting_approval', 'published'],
+      preview_fields_present: ['sku', 'price'],
+    });
+
+    expect(detail.verification).toMatchObject({
+      run_id: 'job_def',
+      row_count: 1,
+      verdict: 'PASS',
+      fields_restored: ['price'],
+      fields_restored_rate: 1,
+    });
+
+    expect(detail.receipt.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(detail.receipt.verified_at).toBe('2026-08-21T10:00:00.000Z');
+    // No ledger event was appended by this seed; the field is still reported.
+    expect(detail.receipt).toHaveProperty('ledger_event_id');
+  });
+
+  it('reports the template version for the deliveries a cycle knows one for, and null for the rest', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    await account.connect('c_customer');
+    const tenantId = tenantIdOf('tenant-a');
+    const { incident, verification } = seedVerifiedRepair(tenantId, 'c_customer', '2026-08-21T10:00:00.000Z');
+    // An ordinary delivery no cycle ever touched.
+    const plain = seedDelivery(tenantId, 'c_customer', '2026-08-22T10:00:00.000Z');
+
+    const res = await get(base, account.cookie, '/api/recovery/deliveries?collector_id=c_customer&limit=50');
+    const page = (await res.json()) as { items: Array<{ id: string; template: string | null }> };
+    const templateOf = (id: string) => page.items.find((item) => item.id === id)?.template;
+
+    // The incident came from the template the cycle found before the repair;
+    // the verification run came from the one it published.
+    expect(templateOf(incident)).toBe('t_x.4');
+    expect(templateOf(verification)).toBe('t_x.5');
+    // Never guessed for a delivery no cycle recorded a version for.
+    expect(templateOf(plain)).toBeNull();
+  });
+
+  it('the repair detail carries field NAMES and rates only — never a row value, a payload, or the heal prompt', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    await account.connect('c_customer');
+    const tenantId = tenantIdOf('tenant-a');
+    seedVerifiedRepair(tenantId, 'c_customer', '2026-08-21T10:00:00.000Z');
+
+    const res = await get(base, account.cookie, '/api/recovery/repairs?collector_id=c_customer');
+    const raw = await res.text();
+
+    // Field names are the point of the receipt.
+    expect(raw).toContain('price');
+    expect(raw).toContain('sku');
+    // Everything the delivery actually held is not.
+    expect(raw).not.toContain('SKU-1');
+    expect(raw).not.toContain('A title long enough');
+    expect(raw).not.toContain('secret-input-value');
+    expect(raw).not.toContain('heal_prompt');
+    expect(raw).not.toContain('rows_json');
+    expect(raw).not.toContain('rows_preview_json');
+  });
 
   it('reports the contract state copy for every collector state', async () => {
     const base = await boot();

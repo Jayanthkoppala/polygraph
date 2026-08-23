@@ -121,6 +121,9 @@ export interface RecoveryCycleRow {
   publication_proof_json: string | null;
   /** Provider job id of this cycle's own verification run (S1-1c). */
   verification_run_id: string | null;
+  /** M018. Bounded `{status, at}` trail appended as the cycle advances, or
+   * NULL for a cycle that ran before the column existed. */
+  timeline_json: string | null;
   verification_delivery_id: string | null;
   lease_owner: string | null;
   lease_expires_at: string | null;
@@ -128,6 +131,64 @@ export interface RecoveryCycleRow {
   terminal_reason: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * One step of a cycle, as the worker saw it happen (M018).
+ *
+ * `status` is a cycle status the worker wrote, or one of the few extra
+ * milestones a status alone cannot express (`PREVIEW_CHECKED`,
+ * `VERIFICATION_RUN_STARTED`). `note` is a bounded, id-only annotation —
+ * a provider job id or a template version, both of which the repairs
+ * response already returns. Nothing here may ever carry a row value, a
+ * secret, or a provider error string.
+ */
+export interface CycleTimelineEntry {
+  status: string;
+  at: string;
+  note?: string;
+}
+
+/** How many timeline entries a cycle keeps. A cycle that flaps between
+ * provider states could otherwise grow the column without bound; the oldest
+ * entries are dropped first, exactly like the status history. */
+export const CYCLE_TIMELINE_LIMIT = 40;
+
+/** Reads `timeline_json` defensively: an unreadable or malformed column is an
+ * empty timeline, never a thrown read — the rest of the cycle's story is
+ * still true. */
+export function parseCycleTimeline(json: string | null | undefined): CycleTimelineEntry[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const out: CycleTimelineEntry[] = [];
+    for (const entry of parsed) {
+      if (!entry || typeof entry !== 'object') continue;
+      const rec = entry as Record<string, unknown>;
+      if (typeof rec.status !== 'string' || typeof rec.at !== 'string') continue;
+      out.push({
+        status: rec.status,
+        at: rec.at,
+        ...(typeof rec.note === 'string' ? { note: rec.note } : {}),
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** Appends `entry` to `existing`, dropping the oldest entries past
+ * `CYCLE_TIMELINE_LIMIT`. Pure, so the worker can compute the next value from
+ * the row it already holds and write it through the same compare-and-swap as
+ * every other cycle column. */
+export function appendCycleTimeline(
+  existing: CycleTimelineEntry[],
+  entry: CycleTimelineEntry
+): CycleTimelineEntry[] {
+  const next = [...existing, entry];
+  return next.length > CYCLE_TIMELINE_LIMIT ? next.slice(next.length - CYCLE_TIMELINE_LIMIT) : next;
 }
 
 export interface RepairReceiptRow {
@@ -424,6 +485,10 @@ export class RecoveryCycleStore {
       verificationRunId?: string | null;
       verificationDeliveryId?: string | null;
       terminalReason?: string | null;
+      /** M018: the FULL next timeline, not a delta — the caller appends to
+       * the array it read, so this write is compare-and-swapped with the rest
+       * of the patch and cannot interleave with another worker's append. */
+      timeline?: CycleTimelineEntry[];
     },
     now = new Date().toISOString()
   ): RecoveryCycleRow {
@@ -460,6 +525,10 @@ export class RecoveryCycleStore {
     if (patch.terminalReason !== undefined) {
       sets.push('terminal_reason = ?');
       params.push(patch.terminalReason);
+    }
+    if (patch.timeline !== undefined) {
+      sets.push('timeline_json = ?');
+      params.push(canonicalJson(patch.timeline));
     }
 
     const result = this.db

@@ -14,7 +14,7 @@ export function OnboardingEntry() {
   if (status === 'unknown') return <SessionUnavailable onRetry={retry} />;
   // `demo` redirects like `ready` deliberately: the demo server implements none of
   // this funnel (no /api/signup, /t/:token or /api/settings/key), so it would 404.
-  if (status === 'ready' || status === 'demo') return <Navigate to="/fleet" replace />;
+  if (status === 'ready' || status === 'demo') return <Navigate to="/app" replace />;
   if (status === 'keyless') return <OnboardingWizard initialStage="key-paste" />;
   return <OnboardingWizard />;
 }

@@ -3,9 +3,9 @@
 import { useCallback, useState } from 'react';
 import { motion } from 'motion/react';
 import { VerdictCardShell } from './VerdictCardShell';
-import { VerdictRail } from '@/components/verdict/VerdictRail';
-import { VerdictChip } from '@/components/verdict/VerdictChip';
-import { RepairSlot } from '@/components/verdict/RepairSlot';
+import { VerdictRail } from './VerdictRail';
+import { VerdictChip } from './VerdictChip';
+import { RepairSlot } from './RepairSlot';
 import { VERDICT, toVerdictState, repairRefusal, type VerdictState } from '@/lib/verdict';
 import { firstIdentityMismatch } from '@/lib/evidence';
 import type { CollectorState } from '@/lib/api';

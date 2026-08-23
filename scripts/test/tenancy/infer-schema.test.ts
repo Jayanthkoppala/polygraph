@@ -168,6 +168,11 @@ describe('inferFieldsForCollector — the three required degrade cases', () => {
 
     expect(inferFieldsForCollector(response, 'c_1')).toEqual({
       fieldNames: ['sku', 'price'],
+      fields: [
+        { name: 'sku', type: 'text' },
+        { name: 'price', type: 'object' },
+      ],
+      metadataFieldNames: [],
       found: true,
       hasOutputSchema: true,
     });
@@ -176,31 +181,60 @@ describe('inferFieldsForCollector — the three required degrade cases', () => {
   it('recognised: output_schema present and parseable', () => {
     const list = [{ id: 'c_1', output_schema: [{ name: 'sku' }, { name: 'price' }] }];
     const result = inferFieldsForCollector(list, 'c_1');
-    expect(result).toEqual({ fieldNames: ['sku', 'price'], found: true, hasOutputSchema: true });
+    expect(result).toEqual({
+      fieldNames: ['sku', 'price'],
+      fields: [
+        { name: 'sku', type: 'text' },
+        { name: 'price', type: 'text' },
+      ],
+      metadataFieldNames: [],
+      found: true,
+      hasOutputSchema: true,
+    });
   });
 
   it('present but unrecognised shape: degrades to an empty field list, never throws', () => {
     const list = [{ id: 'c_1', output_schema: 'some opaque string Bright Data might send' }];
     expect(() => inferFieldsForCollector(list, 'c_1')).not.toThrow();
     const result = inferFieldsForCollector(list, 'c_1');
-    expect(result).toEqual({ fieldNames: [], found: true, hasOutputSchema: true });
+    expect(result).toEqual({
+      fieldNames: [],
+      fields: [],
+      metadataFieldNames: [],
+      found: true,
+      hasOutputSchema: true,
+    });
   });
 
   it('absent entirely ("when available" means it can be missing): degrades cleanly', () => {
     const list = [{ id: 'c_1', name: 'No schema yet' }];
     expect(() => inferFieldsForCollector(list, 'c_1')).not.toThrow();
-    expect(inferFieldsForCollector(list, 'c_1')).toEqual({ fieldNames: [], found: true, hasOutputSchema: false });
+    expect(inferFieldsForCollector(list, 'c_1')).toEqual({
+      fieldNames: [],
+      fields: [],
+      metadataFieldNames: [],
+      found: true,
+      hasOutputSchema: false,
+    });
   });
 
   it('the collector is not in the list at all: degrades cleanly, found:false', () => {
     const list = [{ id: 'c_other', output_schema: [{ name: 'sku' }] }];
-    expect(inferFieldsForCollector(list, 'c_1')).toEqual({ fieldNames: [], found: false, hasOutputSchema: false });
+    expect(inferFieldsForCollector(list, 'c_1')).toEqual({
+      fieldNames: [],
+      fields: [],
+      metadataFieldNames: [],
+      found: false,
+      hasOutputSchema: false,
+    });
   });
 
   it('a wholly malformed collectors_list response degrades cleanly', () => {
     expect(() => inferFieldsForCollector('not even an array', 'c_1')).not.toThrow();
     expect(inferFieldsForCollector('not even an array', 'c_1')).toEqual({
       fieldNames: [],
+      fields: [],
+      metadataFieldNames: [],
       found: false,
       hasOutputSchema: false,
     });

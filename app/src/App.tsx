@@ -1,5 +1,10 @@
 // Router root. `/app` is where the backend's `GET /t/:token` exchange redirects
 // (src/tenancy/auth.ts), so a freshly-exchanged keyless tenant must land here too.
+//
+// There is exactly ONE workspace, and it is `/app`. The old `/fleet` verdict
+// dashboard is gone — route included: a signed-in customer who still has the
+// URL bookmarked lands on the landing page's catch-all redirect rather than on
+// a second, contradictory view of their collectors.
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { LandingPage } from '@/landing/LandingPage';
 import { AppGate } from '@/routes/AppGate';
@@ -19,8 +24,7 @@ export function AppRoutes() {
         <Route path="/live-proof" element={<LandingPage mode="proof" />} />
         <Route path="/signup" element={<OnboardingEntry />} />
         <Route path="/login" element={<OnboardingEntry />} />
-        <Route path="/app" element={<AppGate surface="recovery" />} />
-        <Route path="/fleet" element={<AppGate />} />
+        <Route path="/app" element={<AppGate />} />
         <Route path="/how-it-works" element={<HowItWorksPage />} />
         <Route path="/receipts" element={<ReceiptsPage />} />
         <Route path="/legal/privacy" element={<PrivacyPage />} />

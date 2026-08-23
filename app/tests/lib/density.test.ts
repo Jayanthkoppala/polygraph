@@ -1,10 +1,9 @@
-/** Density/layout/headline tests (ui-system.md §5.3, ux-spec.md §4). */
+/** Density/layout tests (ui-system.md §5.3). */
 import { describe, expect, it } from 'vitest';
 import {
   layoutFor,
   sortBySeverityThenRecency,
   partitionByAttention,
-  computeHeadline,
   resolveFocusSelection,
   pinFocus,
   AUTO_FOCUS,
@@ -101,62 +100,6 @@ describe('partitionByAttention — only VERIFIED collapses into the healthy row'
   });
 });
 
-describe('computeHeadline — one sentence, the worst true thing, exact precedence (ux-spec.md §4)', () => {
-  it('LYING beats everything, singular phrasing at n=1', () => {
-    const { sentence, worstState } = computeHeadline([collector({ id: 'a', verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL' })]);
-    expect(sentence).toBe('1 collector is lying to you.');
-    expect(worstState).toBe('WRONG_SHAPE');
-  });
-
-  it('LYING beats SUSPECT and NOT_CHECKED when several states coexist, plural phrasing', () => {
-    const collectors = [
-      collector({ id: 'a', verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL' }),
-      collector({ id: 'b', verdict: 'FAILED_IDENTITY', cause: 'IDENTITY' }),
-      collector({ id: 'c', verdict: 'SUSPECT_UNEXPLAINED_ANOMALY' }),
-      collector({ id: 'd', unverified: true }),
-    ];
-    expect(computeHeadline(collectors).sentence).toBe('2 collectors are lying to you.');
-  });
-
-  it('SUSPECT wins when nothing is failed', () => {
-    const collectors = [collector({ id: 'a', verdict: 'SUSPECT_UNEXPLAINED_ANOMALY' }), collector({ id: 'b', verdict: 'PASS' })];
-    expect(computeHeadline(collectors).sentence).toBe('1 collector needs your call.');
-  });
-
-  it('NOT_CHECKED wins when nothing is worse', () => {
-    const collectors = [collector({ id: 'a', unverified: true }), collector({ id: 'b', unverified: true }), collector({ id: 'c', verdict: 'PASS' })];
-    expect(computeHeadline(collectors).sentence).toBe("2 collectors aren't being checked.");
-  });
-
-  it('everything passing', () => {
-    const collectors = [collector({ id: 'a', verdict: 'PASS' }), collector({ id: 'b', verdict: 'PASS' })];
-    expect(computeHeadline(collectors)).toEqual({ sentence: 'Everything checks out.', worstState: 'VERIFIED' });
-  });
-
-  it('zero collectors is its own sentence, not "0 collectors..."', () => {
-    expect(computeHeadline([])).toEqual({ sentence: 'No collectors connected yet.', worstState: 'NONE' });
-  });
-
-  /** critique.md next-tier #3: `worstState` was hardcoded to 'WRONG_SHAPE', putting a
-   * red headline over magenta cards — the severity-ramp confusion §2.5 forbids. */
-  it('a fleet lying only via WRONG_TARGET takes the WRONG_TARGET (magenta) headline colour, never WRONG_SHAPE red', () => {
-    const collectors = [
-      collector({ id: 'a', verdict: 'FAILED_IDENTITY', cause: 'IDENTITY' }),
-      collector({ id: 'b', verdict: 'PASS' }),
-    ];
-    const { sentence, worstState } = computeHeadline(collectors);
-    expect(sentence).toBe('1 collector is lying to you.');
-    expect(worstState).toBe('WRONG_TARGET');
-  });
-
-  it('WRONG_SHAPE still wins the headline colour when both lying states coexist', () => {
-    const collectors = [
-      collector({ id: 'a', verdict: 'FAILED_IDENTITY', cause: 'IDENTITY' }),
-      collector({ id: 'b', verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL' }),
-    ];
-    expect(computeHeadline(collectors).worstState).toBe('WRONG_SHAPE');
-  });
-});
 
 /** FOCUS follows the story (critique.md next-tier #4): selection used to be captured
  * once at mount, so a collector that started lying later never reached the panel. */

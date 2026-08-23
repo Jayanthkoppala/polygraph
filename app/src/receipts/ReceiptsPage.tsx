@@ -83,7 +83,7 @@ export function ReceiptsPage() {
             <p className="max-w-2xl text-sm leading-6 text-[#9B9B9B]">Only collectors that entered a real broken-and-repair lifecycle appear here. Healthy runs stay in the fleet ledger.</p>
           </div>
           <div className="flex items-center gap-3">
-            <Link to="/fleet" className="rounded-lg border border-[#313131] bg-[#181818]/80 px-4 py-2 text-sm font-medium text-[#EDEDED] hover:bg-[#272727]">Collector fleet</Link>
+            <Link to="/app" className="rounded-lg border border-[#313131] bg-[#181818]/80 px-4 py-2 text-sm font-medium text-[#EDEDED] hover:bg-[#272727]">Recovery workspace</Link>
             <button type="button" onClick={() => void load(true)} disabled={refreshing} className="inline-flex items-center gap-2 rounded-lg border border-[#313131] bg-[#272727] px-4 py-2 text-sm font-medium text-[#EDEDED] hover:border-[#4B4B4B] disabled:opacity-50">
               <ArrowClockwise className={refreshing ? 'animate-spin' : ''} size={16} aria-hidden />
               Refresh

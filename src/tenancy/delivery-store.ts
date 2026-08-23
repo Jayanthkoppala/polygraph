@@ -7,6 +7,7 @@ import {
   type EncryptedVerificationInput,
 } from './verification-input-crypto.js';
 import type { SecretString } from './crypto.js';
+import { PROVIDER_METADATA_FIELDS } from './provider-metadata.js';
 
 export type VerificationInputStatus = 'captured' | 'unavailable';
 
@@ -139,30 +140,12 @@ function rowsForHistory(rows: Record<string, unknown>[]): Record<string, unknown
   return rows.map(({ input: _input, ...row }) => row);
 }
 
-/** Fields Bright Data's delivery wrapper attaches to every row for its own
- * bookkeeping — job/page/collector identifiers, crawl status, and raw
- * artefacts — never something a collector's OutputSchema declared. Left in
- * place, they inflate contract fill rates with data nobody scraped and can
- * leak raw html/warc/screenshot payloads into the retained preview. */
-export const PROVIDER_METADATA_FIELDS: ReadonlySet<string> = new Set([
-  'job_id',
-  'page_id',
-  'collector_id',
-  'collector_queue',
-  'reparse_file',
-  'crawl_type',
-  'timestamp',
-  'requested_timestamp',
-  'prime_input',
-  'status_code',
-  'warning',
-  'warning_code',
-  'error',
-  'error_code',
-  'screenshot',
-  'html',
-  'warc',
-]);
+/** Re-exported from `provider-metadata.ts`, the single source of truth for
+ * Bright Data's wrapper field names (shared with schema-side exclusion via
+ * `SCHEMA_METADATA_FIELDS`/`effectiveSchema`). Kept exported here because
+ * this module is where row stripping lives and where callers already import
+ * it from. */
+export { PROVIDER_METADATA_FIELDS } from './provider-metadata.js';
 
 /**
  * Removes `PROVIDER_METADATA_FIELDS` from every row before grading and

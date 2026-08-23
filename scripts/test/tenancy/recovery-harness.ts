@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { recordDeliveredRows } from '../../../src/tenancy/delivery.js';
+import { BASELINE_MIN_ROWS, recordDeliveredRows } from '../../../src/tenancy/delivery.js';
 import { DeliveryStore } from '../../../src/tenancy/delivery-store.js';
 import { RecoveryStore } from '../../../src/tenancy/recovery/store.js';
 import type { FreshRunHooks, FreshRunResult, ProviderProgress, RecoveryProvider } from '../../../src/tenancy/recovery/provider.js';
@@ -43,7 +43,10 @@ export interface Harness {
   close(): void;
 }
 
-export function healthyRows(count = 4): Record<string, unknown>[] {
+/** Defaults to `BASELINE_MIN_ROWS`: below that a PASS is recorded but never
+ * becomes the baseline (Bright Data's one-row "Test Webhook" must not define
+ * a collector's normal), so a fixture meant to BE healthy has to clear it. */
+export function healthyRows(count = BASELINE_MIN_ROWS): Record<string, unknown>[] {
   return Array.from({ length: count }, (_, i) => ({
     input: { url: `https://shop.example/p/SKU-${i + 1}` },
     sku: `SKU-${i + 1}`,

@@ -58,11 +58,96 @@ export interface RecoveryDelivery {
   verdict: string | null;
   cause: string | null;
   isBaseline: boolean;
+  /** Too few rows to be a real run — Bright Data's "Test Webhook" posts a
+   * single placeholder record. Such a delivery never becomes the baseline. */
+  testSample: boolean;
   /** Bright Data error records partitioned out of the payload at ingest. */
   errorCount: number;
   /** `error_code` → count (at most 20 codes). */
   errorCodes: Record<string, number>;
+  /** Provider template version this delivery came from, when the server knows
+   *  one. Optional, and `null`/absent both mean "not known" — never rendered
+   *  as a guessed version. */
+  template?: string | null;
   preview: DeliveryPreviewRow[];
+}
+
+/** One step of a repair, as the worker recorded it (server `detail.timeline`).
+ *  `at` is null for a repair that ran before per-step times were stored — the
+ *  step still happened, its clock time is simply not on file. */
+export interface RepairTimelineStep {
+  status: string;
+  at: string | null;
+  note: string | null;
+  durationMs: number | null;
+}
+
+/** Per-field diagnosis from the moment the break was detected. Fill RATES and
+ *  field NAMES only: the server never returns a row value, and neither does
+ *  anything downstream of this type. */
+export interface RepairFieldDiagnosis {
+  field: string;
+  baselineFill: number;
+  incidentFill: number;
+  regression: string | null;
+  damaged: boolean;
+}
+
+export interface RepairDetected {
+  deliveryId: string | null;
+  receivedAt: string | null;
+  rowCount: number | null;
+  verdict: string | null;
+  cause: string | null;
+  errorCount: number;
+  regressedFields: string[];
+  retainedFields: string[];
+  fields: RepairFieldDiagnosis[];
+  baselineRowCount: number | null;
+  identityOk: boolean | null;
+}
+
+export interface RepairPublication {
+  providerJobId: string | null;
+  templateBefore: string | null;
+  templateAfter: string | null;
+  completedSteps: string[];
+  providerStatus: string | null;
+  statusSequence: string[];
+  previewFieldsPresent: string[];
+}
+
+export interface RepairVerification {
+  runId: string | null;
+  deliveryId: string | null;
+  receivedAt: string | null;
+  rowCount: number | null;
+  verdict: string | null;
+  cause: string | null;
+  fieldsRestored: string[];
+  /** 0..1, or null when nothing regressed (a bootstrap repair). */
+  fieldsRestoredRate: number | null;
+}
+
+export interface RepairReceiptFacts {
+  sha256: string | null;
+  verifiedAt: string | null;
+  ledgerEventId: number | null;
+}
+
+/** The end-to-end story behind one receipt, as returned in `detail`. Absent on
+ *  a row whose cycle could not be read — the summary row still renders. */
+export interface RepairDetail {
+  cycleId: string;
+  mode: 'baseline' | 'bootstrap';
+  startedAt: string | null;
+  completedAt: string | null;
+  totalDurationMs: number | null;
+  detected: RepairDetected | null;
+  timeline: RepairTimelineStep[];
+  publication: RepairPublication;
+  verification: RepairVerification;
+  receipt: RepairReceiptFacts;
 }
 
 /** One row of `GET /api/recovery/repairs`. The endpoint is documented to return
@@ -82,6 +167,9 @@ export interface RecoveryRepair {
   status?: string;
   /** `bootstrap` = first working version of a never-healthy collector. */
   mode?: 'baseline' | 'bootstrap';
+  /** The expandable receipt. Optional: an old server, or a receipt whose cycle
+   *  row is unreadable, sends the summary fields only. */
+  detail?: RepairDetail;
 }
 
 export interface Page<T> {
@@ -195,14 +283,114 @@ export async function fetchRecoveryDeliveries(
       verdict: asString(rec.verdict),
       cause: asString(rec.cause),
       isBaseline: asBool(rec.is_baseline, false),
+      testSample: asBool(rec.test_sample, false),
       errorCount: typeof rec.error_count === 'number' ? rec.error_count : 0,
       errorCodes: asErrorCodes(rec.error_codes),
+      template: asString(rec.template),
       preview: asPreviewRows(rec.preview),
     });
   }
   const nextBefore = typeof body.next_before === 'string' || typeof body.next_before === 'number' ? body.next_before : null;
   const total = typeof body.total === 'number' ? body.total : items.length;
   return { items, nextBefore, total };
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+/** Maps the server's `detail` object. Every field is read defensively and the
+ *  whole thing is optional: a receipt row must still render its summary if the
+ *  detail is missing, truncated, or from an older server. */
+function asRepairDetail(value: unknown): RepairDetail | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const rec = value as Record<string, unknown>;
+  const cycleId = asString(rec.cycle_id);
+  if (!cycleId) return undefined;
+
+  const detectedRaw = rec.detected;
+  const detected: RepairDetected | null =
+    detectedRaw && typeof detectedRaw === 'object' && !Array.isArray(detectedRaw)
+      ? (() => {
+          const d = detectedRaw as Record<string, unknown>;
+          return {
+            deliveryId: asString(d.delivery_id),
+            receivedAt: asString(d.received_at),
+            rowCount: asNumber(d.row_count),
+            verdict: asString(d.verdict),
+            cause: asString(d.cause),
+            errorCount: asNumber(d.error_count) ?? 0,
+            regressedFields: asStringArray(d.regressed_fields),
+            retainedFields: asStringArray(d.retained_fields),
+            fields: (Array.isArray(d.fields) ? d.fields : [])
+              .map((entry) => asRecord(entry))
+              .filter((f) => typeof f.field === 'string')
+              .map((f) => ({
+                field: f.field as string,
+                baselineFill: asNumber(f.baseline_fill) ?? 0,
+                incidentFill: asNumber(f.incident_fill) ?? 0,
+                regression: asString(f.regression),
+                damaged: f.damaged === true,
+              })),
+            baselineRowCount: asNumber(d.baseline_row_count),
+            identityOk: typeof d.identity_ok === 'boolean' ? d.identity_ok : null,
+          };
+        })()
+      : null;
+
+  const publication = asRecord(rec.publication);
+  const verification = asRecord(rec.verification);
+  const receipt = asRecord(rec.receipt);
+
+  return {
+    cycleId,
+    mode: rec.mode === 'bootstrap' ? 'bootstrap' : 'baseline',
+    startedAt: asString(rec.started_at),
+    completedAt: asString(rec.completed_at),
+    totalDurationMs: asNumber(rec.total_duration_ms),
+    detected,
+    timeline: (Array.isArray(rec.timeline) ? rec.timeline : [])
+      .map((entry) => asRecord(entry))
+      .filter((step) => typeof step.status === 'string')
+      .map((step) => ({
+        status: step.status as string,
+        at: asString(step.at),
+        note: asString(step.note),
+        durationMs: asNumber(step.duration_ms),
+      })),
+    publication: {
+      providerJobId: asString(publication.provider_job_id),
+      templateBefore: asString(publication.template_before),
+      templateAfter: asString(publication.template_after),
+      completedSteps: asStringArray(publication.completed_steps),
+      providerStatus: asString(publication.provider_status),
+      statusSequence: asStringArray(publication.status_sequence),
+      previewFieldsPresent: asStringArray(publication.preview_fields_present),
+    },
+    verification: {
+      runId: asString(verification.run_id),
+      deliveryId: asString(verification.delivery_id),
+      receivedAt: asString(verification.received_at),
+      rowCount: asNumber(verification.row_count),
+      verdict: asString(verification.verdict),
+      cause: asString(verification.cause),
+      fieldsRestored: asStringArray(verification.fields_restored),
+      fieldsRestoredRate: asNumber(verification.fields_restored_rate),
+    },
+    receipt: {
+      sha256: asString(receipt.sha256),
+      verifiedAt: asString(receipt.verified_at),
+      ledgerEventId: asNumber(receipt.ledger_event_id),
+    },
+  };
 }
 
 /** GET /api/recovery/repairs?collector_id?=&before=&limit= — `collectorId` is
@@ -227,6 +415,7 @@ export async function fetchRecoveryRepairs(
     if (typeof id !== 'string' && typeof id !== 'number') continue;
     const collector = asString(rec.collector_id);
     if (!collector) continue;
+    const detail = asRepairDetail(rec.detail);
     items.push({
       id,
       collectorId: collector,
@@ -241,6 +430,7 @@ export async function fetchRecoveryRepairs(
       receiptSha256: asString(rec.receipt_sha256),
       status: asString(rec.status) ?? undefined,
       mode: rec.mode === 'bootstrap' ? 'bootstrap' : 'baseline',
+      ...(detail ? { detail } : {}),
     });
   }
   const nextBefore = typeof body.next_before === 'string' || typeof body.next_before === 'number' ? body.next_before : null;

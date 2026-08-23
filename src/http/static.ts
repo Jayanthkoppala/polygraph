@@ -52,7 +52,7 @@ export function hasBuiltApp(dir: string | undefined): dir is string {
 /**
  * Serves a built SPA out of `webDir`: a real static asset when `pathname`
  * resolves to one inside `webDir`, otherwise the SPA shell (`index.html`) so
- * client-side routing (`/app`, `/fleet`, deep links) always gets something
+ * client-side routing (`/app`, deep links) always gets something
  * real to mount into. Never crashes when `webDir` is missing or unbuilt — a
  * fresh clone that hasn't run `cd app && npm run build` yet still gets a
  * clear, working response instead of an error or a blank page.

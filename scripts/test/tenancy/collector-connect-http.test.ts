@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { startServer, type RunningServer } from '../../../src/tenancy/serve.js';
+import { BRIGHTDATA_OUTPUT_SCHEMA, METADATA_FIELDS, REAL_FIELDS } from './provider-metadata-fixtures.js';
 
 const ORIGIN = 'http://test.local';
 
@@ -108,7 +109,7 @@ describe('customer collector connection', () => {
       fields: {
         sku: { type: 'text', required: true },
         title: { type: 'text', required: true },
-        price: { type: 'text', required: true },
+        price: { type: 'number', required: true },
       },
     });
     expect(persisted.enabled).toBe(0);
@@ -118,6 +119,53 @@ describe('customer collector connection', () => {
       .get('c_customer') as { collector_id: string; token_sha256: string };
     expect(token.collector_id).toBe('c_customer');
     expect(token.token_sha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('excludes Bright Data\'s delivery-wrapper fields from the persisted schema', async () => {
+    // The production shape: 23 published fields, 18 of them Bright Data's own
+    // delivery bookkeeping. Persisting all 23 as required built a contract
+    // that ingest can never satisfy — it strips those fields from every row —
+    // so a fully populated delivery graded FAILED_STRUCTURAL.
+    const { base, cookie } = await boot({
+      total: 1,
+      data: [{ id: 'c_hn', name: 'Hacker News', output_schema: BRIGHTDATA_OUTPUT_SCHEMA }],
+    });
+
+    const connected = await fetch(`${base}/api/collectors/connect`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: ORIGIN, cookie },
+      body: JSON.stringify({ collector_id: 'c_hn' }),
+    });
+    expect(connected.status).toBe(200);
+
+    const persisted = running!.writer
+      .prepare('SELECT output_schema_json FROM tenant_collectors WHERE collector_id = ?')
+      .get('c_hn') as { output_schema_json: string };
+    const schema = JSON.parse(persisted.output_schema_json) as { fields: Record<string, unknown> };
+
+    expect(Object.keys(schema.fields).sort()).toEqual([...REAL_FIELDS].sort());
+    for (const name of METADATA_FIELDS) expect(schema.fields).not.toHaveProperty(name);
+    // Bright Data's published types map onto ours; required stays true for
+    // every real field, as before.
+    expect(schema.fields).toEqual({
+      title: { type: 'text', required: true },
+      url: { type: 'url', required: true },
+      points: { type: 'number', required: true },
+      author: { type: 'text', required: true },
+      comment_count: { type: 'number', required: true },
+    });
+  });
+
+  it('asks for one real run when the published schema is nothing but wrapper fields', async () => {
+    const { base, cookie } = await boot([
+      { id: 'c_meta_only', name: 'Meta Only', output_schema: ['timestamp', 'status_code', 'error', 'input'] },
+    ]);
+    const connected = await fetch(`${base}/api/collectors/connect`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: ORIGIN, cookie },
+      body: JSON.stringify({ collector_id: 'c_meta_only' }),
+    });
+    expect(connected.status).toBe(409);
   });
 
   it('refuses a collector that is not in the signed-in user Bright Data account', async () => {

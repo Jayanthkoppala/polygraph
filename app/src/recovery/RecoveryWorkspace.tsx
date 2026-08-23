@@ -1,12 +1,12 @@
 // The `/app` recovery workspace: connected collectors on the left (exact contract
 // state copy + auto-heal opt-out), the selected collector's accepted deliveries and
 // verified repairs on the right. Polls `/api/recovery/collectors` every 5s, the same
-// cadence as the old `/fleet` surface (FleetApp.tsx). Single viewport: header and
+// cadence the deleted `/fleet` surface used. Single viewport: header and
 // table headers are pinned, only table bodies and the rail scroll.
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CircleNotch, Plus, SignOut } from '@phosphor-icons/react';
-import { AddCollectorDialog } from '@/components/fleet/FleetShell';
+import { AddCollectorDialog } from './AddCollectorDialog';
 import { CollectorRail } from './CollectorRail';
 import { AcceptedResultsTable, RepairsTable } from './RecoveryTables';
 import { WebhookReveal } from './WebhookReveal';
