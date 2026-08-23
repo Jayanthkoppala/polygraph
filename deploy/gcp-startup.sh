@@ -46,20 +46,32 @@ project_id="$(metadata project/project-id)"
 hostname="$(metadata instance/attributes/polygraph-hostname)"
 source_repo="$(metadata instance/attributes/polygraph-source-repo)"
 source_ref="$(metadata instance/attributes/polygraph-source-ref)"
-token_json="$(metadata instance/service-accounts/default/token)"
-access_token="$(printf '%s' "$token_json" | jq -r '.access_token')"
+env_file=/etc/polygraph.env
+if [ -s "$env_file" ] \
+  && grep -q '^POLYGRAPH_MASTER_KEY=' "$env_file" \
+  && grep -q '^BRIGHTDATA_API_KEY=' "$env_file" \
+  && grep -q '^POLYGRAPH_DEMO_GITHUB_TOKEN=' "$env_file"; then
+  # Existing hosts already have these values provisioned locally. Reuse them
+  # so a normal source deployment does not depend on Secret Manager uptime.
+  master_key="$(sed -n 's/^POLYGRAPH_MASTER_KEY=//p' "$env_file" | head -n 1)"
+  brightdata_key="$(sed -n 's/^BRIGHTDATA_API_KEY=//p' "$env_file" | head -n 1)"
+  github_token="$(sed -n 's/^POLYGRAPH_DEMO_GITHUB_TOKEN=//p' "$env_file" | head -n 1)"
+else
+  token_json="$(metadata instance/service-accounts/default/token)"
+  access_token="$(printf '%s' "$token_json" | jq -r '.access_token')"
 
-fetch_secret() {
-  curl -fsS -H "Authorization: Bearer $access_token" \
-    "https://secretmanager.googleapis.com/v1/projects/$project_id/secrets/$1/versions/latest:access" \
-    | jq -r '.payload.data' | base64 -d
-}
+  fetch_secret() {
+    curl -fsS -H "Authorization: Bearer $access_token" \
+      "https://secretmanager.googleapis.com/v1/projects/$project_id/secrets/$1/versions/latest:access" \
+      | jq -r '.payload.data' | base64 -d
+  }
 
-master_key="$(fetch_secret polygraph-master-key)"
-brightdata_key="$(fetch_secret polygraph-brightdata-api-key)"
-github_token="$(fetch_secret polygraph-demo-github-token)"
+  master_key="$(fetch_secret polygraph-master-key)"
+  brightdata_key="$(fetch_secret polygraph-brightdata-api-key)"
+  github_token="$(fetch_secret polygraph-demo-github-token)"
+fi
 
-install -m 600 /dev/null /etc/polygraph.env
+install -m 600 /dev/null "$env_file"
 {
   printf 'NODE_ENV=production\n'
   printf 'PORT=8080\n'
@@ -83,7 +95,7 @@ install -m 600 /dev/null /etc/polygraph.env
   printf 'POLYGRAPH_MASTER_KEY=%s\n' "$master_key"
   printf 'BRIGHTDATA_API_KEY=%s\n' "$brightdata_key"
   printf 'POLYGRAPH_DEMO_GITHUB_TOKEN=%s\n' "$github_token"
-} > /etc/polygraph.env
+} > "$env_file"
 unset master_key brightdata_key github_token token_json access_token
 
 image="polygraph-source:${source_ref:0:12}"
@@ -102,7 +114,7 @@ docker run -d \
   --name polygraph \
   --restart unless-stopped \
   --network host \
-  --env-file /etc/polygraph.env \
+  --env-file "$env_file" \
   -v /data:/data \
   "$image"
 
@@ -115,7 +127,7 @@ if [ "$healthy" -ne 1 ]; then
   docker logs --tail 160 polygraph || true
   docker rm -f polygraph >/dev/null 2>&1 || true
   if [ -n "$previous_image" ] && docker image inspect "$previous_image" >/dev/null 2>&1; then
-    docker run -d --name polygraph --restart unless-stopped --network host --env-file /etc/polygraph.env -v /data:/data "$previous_image"
+    docker run -d --name polygraph --restart unless-stopped --network host --env-file "$env_file" -v /data:/data "$previous_image"
   fi
   exit 1
 fi
