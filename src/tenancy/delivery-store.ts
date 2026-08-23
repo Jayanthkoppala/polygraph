@@ -127,6 +127,60 @@ function rowsForHistory(rows: Record<string, unknown>[]): Record<string, unknown
   return rows.map(({ input: _input, ...row }) => row);
 }
 
+/** Fields Bright Data's delivery wrapper attaches to every row for its own
+ * bookkeeping — job/page/collector identifiers, crawl status, and raw
+ * artefacts — never something a collector's OutputSchema declared. Left in
+ * place, they inflate contract fill rates with data nobody scraped and can
+ * leak raw html/warc/screenshot payloads into the retained preview. */
+export const PROVIDER_METADATA_FIELDS: ReadonlySet<string> = new Set([
+  'job_id',
+  'page_id',
+  'collector_id',
+  'collector_queue',
+  'reparse_file',
+  'crawl_type',
+  'timestamp',
+  'requested_timestamp',
+  'prime_input',
+  'status_code',
+  'warning',
+  'warning_code',
+  'error',
+  'error_code',
+  'screenshot',
+  'html',
+  'warc',
+]);
+
+/**
+ * Removes `PROVIDER_METADATA_FIELDS` from every row before grading and
+ * storage, so Bright Data's wrapper bookkeeping is never mistaken for
+ * scraped content — with one exception: a key in `keepFields` (a specific
+ * collector's own declared OutputSchema field names) always wins. A
+ * collector can legitimately have a field of its own named `job_id` (e.g.
+ * jobs.ashbyhq.com's job listing id) that has nothing to do with Bright
+ * Data's delivery job id; stripping it blind would permanently fail that
+ * collector's required-field contract check. `input` is untouched here —
+ * `rowsForHistory` is the single place that drops it.
+ */
+export function stripProviderMetadata(
+  rows: Record<string, unknown>[],
+  keepFields: ReadonlySet<string> = new Set()
+): Record<string, unknown>[] {
+  return rows.map((row) => {
+    let changed = false;
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      if (PROVIDER_METADATA_FIELDS.has(key) && !keepFields.has(key)) {
+        changed = true;
+        continue;
+      }
+      out[key] = value;
+    }
+    return changed ? out : row;
+  });
+}
+
 /**
  * The bounded, redacted shape of a delivery that survives the 30-day payload
  * purge and is the ONLY row content any API response returns (D9).

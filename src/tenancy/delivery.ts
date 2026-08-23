@@ -12,7 +12,8 @@ import type { Cause, Evidence, RunError, RunResult } from '../core/types.js';
 import type { Governor } from '../loop/policy.js';
 import type { TenantCollectorRow } from './scope.js';
 import { scopeFor } from './scope.js';
-import { DeliveryStore, deliveryPayloadHash } from './delivery-store.js';
+import { DeliveryStore, deliveryPayloadHash, stripProviderMetadata } from './delivery-store.js';
+import { COLLECTOR_REGISTRY } from '../evidence/extractors.js';
 import {
   ActiveCycleExistsError,
   isTerminalCycleStatus,
@@ -242,7 +243,7 @@ export interface RecoveryIngestOptions {
 export async function recordDeliveredRows(
   db: Database.Database,
   target: DeliveryTarget,
-  rows: Record<string, unknown>[],
+  deliveredRows: Record<string, unknown>[],
   nowIso = new Date().toISOString(),
   externalRunId?: string,
   recoveryOptions?: RecoveryIngestOptions
@@ -262,7 +263,7 @@ export async function recordDeliveredRows(
   // reaches the ledger as a failure, never bumps consecutive_failures, and
   // never opens a cycle.
   if (recoveryOptions && recoveryEnabled) {
-    const verification = recordVerificationRedelivery(db, target, rows, nowIso, externalRunId, recoveryOptions);
+    const verification = recordVerificationRedelivery(db, target, deliveredRows, nowIso, externalRunId, recoveryOptions);
     if (verification) return verification;
   }
 
@@ -278,6 +279,18 @@ export async function recordDeliveredRows(
   });
   ctx.decisions = scope.decisions;
 
+  const collector = config.collectors[0];
+  // Provider metadata (job_id, page_id, html, warc, ...) never counts as
+  // scraped content — except a field name a collector's OWN schema declares
+  // as real (e.g. jobs.ashbyhq.com's `job_id`), which always wins. Stripped
+  // once, here, so grading, the ledger snapshot, and delivery storage/preview
+  // all see the identical rows. Mirrors evaluateRunResult's own
+  // override-then-registry schema resolution so the two never disagree on
+  // which fields are "real".
+  const gradingSchema = ctx.schemas?.[collector.id] ?? COLLECTOR_REGISTRY[collector.name]?.schema;
+  const schemaFields: ReadonlySet<string> = new Set(Object.keys(gradingSchema?.fields ?? {}));
+  const rows = stripProviderMetadata(deliveredRows, schemaFields);
+
   const runId = externalRunId ?? `delivery_${randomUUID()}`;
   const emptyError: RunError[] | undefined = rows.length === 0
     ? [{ input: null, error_code: 'DELIVERY_EMPTY', message: 'Bright Data delivered zero result rows' }]
@@ -288,7 +301,6 @@ export async function recordDeliveredRows(
     rows,
     ...(emptyError ? { errors: emptyError } : {}),
   };
-  const collector = config.collectors[0];
   const evaluated = await evaluateRunResult(collector, runResult, ctx, { runCanary: false });
   const decision = decideWithGovernor(evaluated.cause, evaluated.evidence, {
     collector: collector.id,

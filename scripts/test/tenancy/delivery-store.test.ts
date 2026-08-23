@@ -4,6 +4,7 @@ import {
   DeliveryStore,
   extractReusableVerificationInput,
   redactedPreview,
+  stripProviderMetadata,
 } from '../../../src/tenancy/delivery-store.js';
 import { SecretDecryptionError, SecretString } from '../../../src/tenancy/crypto.js';
 import { decryptVerificationInput } from '../../../src/tenancy/verification-input-crypto.js';
@@ -493,5 +494,55 @@ describe('redactedPreview', () => {
     expect(preview[0].meta).toBe('[object]');
     expect(JSON.stringify(preview)).not.toContain('secret');
     expect(preview[0].input).toBeUndefined();
+  });
+});
+
+describe('stripProviderMetadata', () => {
+  it('removes Bright Data delivery-wrapper metadata fields, keeping real row content and input', () => {
+    const [row] = stripProviderMetadata([
+      {
+        sku: 'S1',
+        price: 10,
+        input: { url: 'https://example.com' },
+        job_id: 'j_1',
+        page_id: 'p_1',
+        collector_id: 'c_1',
+        collector_queue: 'q_1',
+        reparse_file: 'r_1',
+        crawl_type: 'discover',
+        timestamp: '2026-01-01T00:00:00Z',
+        requested_timestamp: '2026-01-01T00:00:00Z',
+        prime_input: { url: 'https://example.com' },
+        status_code: 200,
+        warning: 'w',
+        warning_code: 'wc',
+        error: 'e',
+        error_code: 'ec',
+        screenshot: 'base64...',
+        html: '<html></html>',
+        warc: 'raw',
+      },
+    ]);
+
+    expect(row).toEqual({ sku: 'S1', price: 10, input: { url: 'https://example.com' } });
+  });
+
+  it('leaves a row untouched (same reference) when it carries no metadata fields', () => {
+    const clean = { sku: 'S1', price: 10 };
+    const [row] = stripProviderMetadata([clean]);
+    expect(row).toBe(clean);
+  });
+
+  it('keeps a metadata-named field when the collector schema declares it as its own (e.g. jobs.ashbyhq.com job_id)', () => {
+    const [row] = stripProviderMetadata(
+      [{ job_id: 'ashby-listing-42', page_id: 'p_1', title: 'Engineer' }],
+      new Set(['job_id'])
+    );
+    expect(row).toEqual({ job_id: 'ashby-listing-42', title: 'Engineer' });
+  });
+
+  it('never touches `input`, even though it is never on the deny list', () => {
+    const [row] = stripProviderMetadata([{ input: { job_id: 'not-metadata-here' }, sku: 'S1' }]);
+    expect(row.input).toEqual({ job_id: 'not-metadata-here' });
   });
 });

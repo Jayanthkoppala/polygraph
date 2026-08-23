@@ -11,6 +11,13 @@ import { assertDeliveryStructure, DeliveryStructureError } from '../recovery/ing
 import type { RouteContext } from './context.js';
 import { INGEST_LIMIT_PER_HOUR, SIGNUP_LIMIT_PER_HOUR } from './context.js';
 import { loadPublicTenantRow, readJsonBody, requireCsrf, clientIp, buildDashboardState } from './context.js';
+
+/** Shape every Bright Data run-id candidate — header or row field — must
+ * satisfy before it is trusted as `provider_run_id` or a dedupe/recursion
+ * key. The delivery is otherwise unauthenticated body content, so nothing
+ * outside this character class is accepted. */
+const RUN_ID_RE = /^[A-Za-z0-9._:-]{1,200}$/;
+
 /** Seconds until the fixed hourly rate-limit window rolls over — the honest
  * value for `Retry-After`, because that is exactly when the counter resets. */
 function secondsUntilNextHour(nowIso: string): number {
@@ -118,12 +125,29 @@ export async function handlePublicRoutes(ctx: RouteContext): Promise<boolean> {
       const rows = payload.rows;
       assertDeliveryStructure(rows);
       // Bright Data names the run in one of several headers depending on the
-      // delivery product; the first well-formed one is the run id, and all of
-      // them are matched against recovery cycles' verification runs.
-      const candidateRunIds = ['x-brightdata-job-id', 'x-brd-delivery-id', 'x-brd-delivery-batch-id']
-        .map((name) => req.headers[name])
-        .filter((v): v is string => typeof v === 'string' && /^[A-Za-z0-9._:-]{1,200}$/.test(v));
-      const externalRunId = candidateRunIds[0];
+      // delivery product; when none of them are present, the delivered rows'
+      // own `job_id` field is the last-resort fallback (still validated the
+      // same way, since it arrives in an unauthenticated body). All four are
+      // matched against recovery cycles' verification runs.
+      const headerRunId = (name: string): string | undefined => {
+        const value = req.headers[name];
+        return typeof value === 'string' && RUN_ID_RE.test(value) ? value : undefined;
+      };
+      const jobIdHeader = headerRunId('x-brightdata-job-id');
+      const deliveryIdHeader = headerRunId('x-brd-delivery-id');
+      const batchIdHeader = headerRunId('x-brd-delivery-batch-id');
+      const firstRowJobId =
+        typeof rows[0]?.job_id === 'string' && RUN_ID_RE.test(rows[0].job_id as string)
+          ? (rows[0].job_id as string)
+          : undefined;
+      const externalRunId = jobIdHeader ?? deliveryIdHeader ?? batchIdHeader ?? firstRowJobId;
+      const candidateRunIds = [
+        ...new Set(
+          [jobIdHeader, deliveryIdHeader, batchIdHeader, firstRowJobId].filter(
+            (v): v is string => v !== undefined
+          )
+        ),
+      ];
       const decision = await recordDeliveredRows(deps.writer, target, rows, nowIso, externalRunId, {
         masterKey: deps.masterKey,
         candidateRunIds,

@@ -218,6 +218,67 @@ describe('automatic recovery HTTP contract', () => {
     expect(((await both.json()) as { run_id: string }).run_id).toBe('j_1');
   });
 
+  it('falls back to the delivered row\'s job_id field as run_id when no run-id header is present', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    const { webhookUrl } = await account.connect('c_customer');
+    const rows = [{ input: { url: 'https://x/1' }, sku: 'S1', title: 'T', price: 1, job_id: 'row_job_42' }];
+    const res = await ingest(webhookUrl, rows);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { run_id: string };
+    expect(body.run_id).toBe('row_job_42');
+
+    const list = await get(base, account.cookie, '/api/recovery/deliveries?collector_id=c_customer');
+    const listed = (await list.json()) as { items: Array<{ provider_run_id: string | null }> };
+    expect(listed.items[0].provider_run_id).toBe('row_job_42');
+  });
+
+  it('ignores a malformed row job_id and falls back to a generated run_id', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    const { webhookUrl } = await account.connect('c_customer');
+    const rows = [{ input: { url: 'https://x/1' }, sku: 'S1', title: 'T', price: 1, job_id: 'has spaces / bad' }];
+    const res = await ingest(webhookUrl, rows);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { run_id: string };
+    expect(body.run_id).toMatch(/^delivery_/);
+  });
+
+  it('strips Bright Data delivery-wrapper metadata from rows before grading and storage', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    const { webhookUrl } = await account.connect('c_customer');
+    const rows = [
+      {
+        input: { url: 'https://x/1' },
+        sku: 'S1',
+        title: 'T',
+        price: 1,
+        job_id: 'j_meta_1',
+        page_id: 'p_1',
+        html: '<html>raw page content that must never be retained</html>',
+        warc: 'raw-warc-bytes',
+        status_code: 200,
+      },
+    ];
+    const res = await ingest(webhookUrl, rows);
+    expect(res.status).toBe(200);
+    // The declared schema (sku/title/price) is fully satisfied by the real
+    // fields — the metadata never counts toward, or against, the contract.
+    expect(((await res.json()) as { verdict: string }).verdict).toBe('PASS');
+
+    const list = await get(base, account.cookie, '/api/recovery/deliveries?collector_id=c_customer');
+    const listed = (await list.json()) as {
+      items: Array<{ preview: Array<Record<string, unknown>> }>;
+    };
+    const preview = listed.items[0].preview[0];
+    expect(preview).toMatchObject({ sku: 'S1', title: 'T', price: 1 });
+    for (const metaField of ['job_id', 'page_id', 'html', 'warc', 'status_code']) {
+      expect(preview).not.toHaveProperty(metaField);
+    }
+    expect(JSON.stringify(listed)).not.toContain('raw page content');
+  });
+
   it('rate-limits deliveries per collector and answers 429 with a Retry-After', async () => {
     const base = await boot();
     const account = await signIn(base, 'tenant-a');

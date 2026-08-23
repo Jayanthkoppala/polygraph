@@ -146,8 +146,11 @@ export function AcceptedResultsTable({
               {deliveries.map((delivery) => (
                 <TableRow key={delivery.id}>
                   <TableCell className="pl-4 font-mono text-xs text-[#A1A1AA]">{displayTime(delivery.receivedAt)}</TableCell>
-                  <TableCell className="max-w-40 truncate font-mono text-xs text-[#9B9B9B]" title={delivery.providerRunId ?? undefined}>
-                    {delivery.providerRunId ?? '—'}
+                  <TableCell
+                    className="max-w-40 truncate font-mono text-xs text-[#9B9B9B]"
+                    title={delivery.providerRunId ?? String(delivery.id)}
+                  >
+                    {delivery.providerRunId ?? compactHash(String(delivery.id))}
                   </TableCell>
                   <TableCell className="font-mono text-xs tabular-nums">{delivery.rowCount ?? '—'}</TableCell>
                   <TableCell className="text-xs">
