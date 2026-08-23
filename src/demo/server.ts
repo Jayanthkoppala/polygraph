@@ -63,7 +63,19 @@ export async function tryHandleDemoMissionRequest(req: IncomingMessage, res: Ser
       const acquired = service.acquire(typeof body.idempotency_key === 'string' ? body.idempotency_key : undefined); sendJson(res, acquired.reused ? 200 : 201, { id: acquired.mission.id, reused: acquired.reused }); return true;
     }
     if (method === 'POST' && !trustedJsonMutation(req)) { sendJson(res, 415, { error: 'demo mutations require same-site application/json requests' }); return true; }
-    if (method === 'POST' && url.pathname === '/api/demo/missions') { const body = await jsonBody(req); if (!body) { sendJson(res, 400, { error: 'invalid JSON body' }); return true; } const acquired = service.acquire(typeof body.idempotency_key === 'string' ? body.idempotency_key : undefined); sendJson(res, acquired.reused ? 200 : 201, { id: acquired.mission.id, reused: acquired.reused }); return true; }
+    if (method === 'POST' && url.pathname === '/api/demo/missions') {
+      const body = await jsonBody(req); if (!body) { sendJson(res, 400, { error: 'invalid JSON body' }); return true; }
+      try {
+        const acquired = service.acquire(typeof body.idempotency_key === 'string' ? body.idempotency_key : undefined);
+        sendJson(res, acquired.reused ? 200 : 201, { id: acquired.mission.id, reused: acquired.reused });
+      } catch (error) {
+        if (!(error instanceof DemoMissionLeaseError)) throw error;
+        const active = service.joinableActive();
+        if (!active) throw error;
+        sendJson(res, 200, { id: active.id, reused: true });
+      }
+      return true;
+    }
     const match = url.pathname.match(/^\/api\/demo\/missions\/([^/]+)(?:\/(shift|reset))?$/);
     if (!match) { sendJson(res, 404, { error: 'not found' }); return true; }
     const id = decodeURIComponent(match[1]); const action = match[2];

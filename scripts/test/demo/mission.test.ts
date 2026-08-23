@@ -430,6 +430,27 @@ describe('demo mission HTTP API', () => {
     db.close();
   });
 
+  it('joins the active public proof for a different browser request without scheduling another A run', async () => {
+    const { calls, service } = fakes();
+    server = createDemoMissionServer({ service, appDir: '/definitely-unbuilt' });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const request = (idempotency_key: string) => fetch(`http://127.0.0.1:${port}/api/demo/missions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
+      body: JSON.stringify({ idempotency_key }),
+    });
+
+    const first = await request('browser-request-1');
+    const join = await request('browser-request-2');
+
+    expect(first.status).toBe(201);
+    expect(join.status).toBe(200);
+    expect(await join.json()).toMatchObject({ id: 'mission-1', reused: true });
+    await service.whenSettled('mission-1');
+    expect(calls.filter((call) => call === 'trigger:1')).toHaveLength(1);
+  });
+
   it('exposes completed demo receipts through the public demo read model', async () => {
     const { service } = fakes();
     const mission = service.create();

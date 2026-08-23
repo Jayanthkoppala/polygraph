@@ -251,6 +251,19 @@ export class DemoMissionService {
   acquire(idempotencyKey?: string): { mission: DemoMission; reused: boolean } {
     return this.beginFresh(idempotencyKey);
   }
+  /** A public browser retry may attach to the one running proof without spending another provider run. */
+  joinableActive(): DemoMission | undefined {
+    const inMemory = this.activeId ? this.missions.get(this.activeId) : undefined;
+    if (inMemory && (inMemory.status === 'running' || inMemory.status === 'waiting')) return inMemory;
+    const persisted = this.deps.stateStore?.loadActive<DemoMission>();
+    if (!persisted) return undefined;
+    const mission = persisted.mission;
+    if (mission.status !== 'running' && mission.status !== 'waiting') return undefined;
+    this.missions.set(mission.id, mission);
+    if (!this.runtimes.has(mission.id)) this.runtimes.set(mission.id, { scrapes: 0, heals: 0, settled: fulfilled });
+    this.activeId = mission.id;
+    return mission;
+  }
   /** Starts only A against the generation that is already live. */
   startFresh(idempotencyKey?: string): DemoMission {
     return this.beginFresh(idempotencyKey).mission;
