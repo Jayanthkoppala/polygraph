@@ -1,0 +1,16 @@
+{
+  "probe": "brightdata-dca-webhook-delivery",
+  "tunnel": "https://hindu-habitat-valuation-streams.trycloudflare.com",
+  "collectorId": "c_mt5pm9l9sgrxu8cwe",
+  "jobId": "j_mt5psouj2d5j3r0y4z",
+  "rowCount": 60,
+  "jobLog": {
+    "status": "done",
+    "lines": 60,
+    "template": "t_mt5psljh1v5i1rckup.1"
+  },
+  "hitCount": 0,
+  "hits": [],
+  "result": "NO DELIVERY OBSERVED within 180s of dataset ready",
+  "deleted_c_mt5pm9l9sgrxu8cwe": true
+}
