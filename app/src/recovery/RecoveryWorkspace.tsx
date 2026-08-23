@@ -3,13 +3,14 @@
 // verified repairs on the right. Polls `/api/recovery/collectors` every 5s, the same
 // cadence as the old `/fleet` surface (FleetApp.tsx). Single viewport: header and
 // table headers are pinned, only table bodies and the rail scroll.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CircleNotch, Plus, SignOut } from '@phosphor-icons/react';
 import { AddCollectorDialog } from '@/components/fleet/FleetShell';
 import { CollectorRail } from './CollectorRail';
 import { AcceptedResultsTable, RepairsTable } from './RecoveryTables';
 import { WebhookReveal } from './WebhookReveal';
+import { usePagedTable } from './usePagedTable';
 import {
   ApiError,
   fetchRecoveryCollectors,
@@ -18,14 +19,11 @@ import {
   rotateIngestToken,
   setCollectorAutoHeal,
   type RecoveryCollector,
-  type RecoveryDelivery,
-  type RecoveryRepair,
 } from '@/lib/recoveryApi';
 import { connectCollector, listAvailableCollectors } from '@/onboarding/api';
 import { signOut } from '@/lib/session';
 
 const POLL_INTERVAL_MS = 5000;
-const PAGE_SIZE = 50;
 
 interface PendingWebhook {
   collectorName: string;
@@ -38,25 +36,24 @@ export function RecoveryWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const [deliveries, setDeliveries] = useState<RecoveryDelivery[]>([]);
-  const [deliveriesLoading, setDeliveriesLoading] = useState(false);
-  const [deliveriesLoadingMore, setDeliveriesLoadingMore] = useState(false);
-  const [deliveriesNextBefore, setDeliveriesNextBefore] = useState<string | number | null>(null);
-
-  const [repairs, setRepairs] = useState<RecoveryRepair[]>([]);
-  const [repairsLoading, setRepairsLoading] = useState(false);
-  const [repairsLoadingMore, setRepairsLoadingMore] = useState(false);
-  const [repairsNextBefore, setRepairsNextBefore] = useState<string | number | null>(null);
+  const deliveriesLoader = useCallback(
+    (collectorId: string, before: string | number | null, limit: number) =>
+      fetchRecoveryDeliveries(collectorId, { before, limit }),
+    [],
+  );
+  const repairsLoader = useCallback(
+    (collectorId: string, before: string | number | null, limit: number) =>
+      fetchRecoveryRepairs(collectorId, { before, limit }),
+    [],
+  );
+  const deliveriesPager = usePagedTable(deliveriesLoader);
+  const repairsPager = usePagedTable(repairsLoader);
 
   const [addingCollector, setAddingCollector] = useState(false);
   const [pendingWebhook, setPendingWebhook] = useState<PendingWebhook | null>(null);
   const [pendingAutoHeal, setPendingAutoHeal] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
-
-  // Guards a fetch-in-flight for the wrong collector from landing after the user
-  // has already selected a different one (fast clicking, or a poll re-selecting).
-  const selectionToken = useRef(0);
 
   const pollCollectors = useCallback(async () => {
     try {
@@ -78,58 +75,12 @@ export function RecoveryWorkspace() {
     return () => window.clearInterval(id);
   }, [pollCollectors]);
 
-  const loadDeliveries = useCallback(async (collectorId: string, before: string | number | null, append: boolean) => {
-    const token = ++selectionToken.current;
-    if (append) setDeliveriesLoadingMore(true);
-    else setDeliveriesLoading(true);
-    try {
-      const page = await fetchRecoveryDeliveries(collectorId, { before, limit: PAGE_SIZE });
-      if (token !== selectionToken.current) return;
-      setDeliveries((current) => (append ? [...current, ...page.items] : page.items));
-      setDeliveriesNextBefore(page.nextBefore);
-    } catch {
-      if (token !== selectionToken.current) return;
-      if (!append) setDeliveries([]);
-    } finally {
-      if (token === selectionToken.current) {
-        setDeliveriesLoading(false);
-        setDeliveriesLoadingMore(false);
-      }
-    }
-  }, []);
-
-  const loadRepairs = useCallback(async (collectorId: string, before: string | number | null, append: boolean) => {
-    const token = selectionToken.current;
-    if (append) setRepairsLoadingMore(true);
-    else setRepairsLoading(true);
-    try {
-      const page = await fetchRecoveryRepairs(collectorId, { before, limit: PAGE_SIZE });
-      if (token !== selectionToken.current) return;
-      setRepairs((current) => (append ? [...current, ...page.items] : page.items));
-      setRepairsNextBefore(page.nextBefore);
-    } catch {
-      if (token !== selectionToken.current) return;
-      if (!append) setRepairs([]);
-    } finally {
-      if (token === selectionToken.current) {
-        setRepairsLoading(false);
-        setRepairsLoadingMore(false);
-      }
-    }
-  }, []);
-
   useEffect(() => {
-    if (!selectedId) {
-      setDeliveries([]);
-      setRepairs([]);
-      setDeliveriesNextBefore(null);
-      setRepairsNextBefore(null);
-      return;
-    }
-    void loadDeliveries(selectedId, null, false);
-    void loadRepairs(selectedId, null, false);
-    // Only re-run on selection changing collector, not on every 5s poll — the
-    // tables have their own load-more cursor state that a poll must not reset.
+    // Selection change (including the first collector auto-selected after the
+    // initial poll) resets both tables to page 1. Not re-run on every 5s
+    // poll or on a page-size change — the pagers own that state themselves.
+    deliveriesPager.reset(selectedId);
+    repairsPager.reset(selectedId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
@@ -259,18 +210,34 @@ export function RecoveryWorkspace() {
 
         <div className="flex min-h-0 min-w-0 flex-col gap-4">
           <AcceptedResultsTable
-            deliveries={deliveries}
-            loading={deliveriesLoading}
-            hasMore={deliveriesNextBefore != null}
-            loadingMore={deliveriesLoadingMore}
-            onLoadMore={() => selectedId && void loadDeliveries(selectedId, deliveriesNextBefore, true)}
+            deliveries={deliveriesPager.items}
+            loading={deliveriesPager.loading}
+            pager={{
+              page: deliveriesPager.page,
+              pageSize: deliveriesPager.pageSize,
+              total: deliveriesPager.total,
+              startIndex: deliveriesPager.startIndex,
+              hasNext: deliveriesPager.hasNext,
+              changing: deliveriesPager.changing,
+              onPrev: deliveriesPager.goPrev,
+              onNext: deliveriesPager.goNext,
+              onPageSizeChange: deliveriesPager.setPageSize,
+            }}
           />
           <RepairsTable
-            repairs={repairs}
-            loading={repairsLoading}
-            hasMore={repairsNextBefore != null}
-            loadingMore={repairsLoadingMore}
-            onLoadMore={() => selectedId && void loadRepairs(selectedId, repairsNextBefore, true)}
+            repairs={repairsPager.items}
+            loading={repairsPager.loading}
+            pager={{
+              page: repairsPager.page,
+              pageSize: repairsPager.pageSize,
+              total: repairsPager.total,
+              startIndex: repairsPager.startIndex,
+              hasNext: repairsPager.hasNext,
+              changing: repairsPager.changing,
+              onPrev: repairsPager.goPrev,
+              onNext: repairsPager.goNext,
+              onPageSizeChange: repairsPager.setPageSize,
+            }}
           />
         </div>
       </div>

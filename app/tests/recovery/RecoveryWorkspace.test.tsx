@@ -94,10 +94,10 @@ function baseCollectors() {
 }
 
 function emptyDeliveries() {
-  return { items: [], next_before: null };
+  return { items: [], next_before: null, total: 0 };
 }
 function emptyRepairs() {
-  return { items: [], next_before: null };
+  return { items: [], next_before: null, total: 0 };
 }
 
 beforeEach(() => {
@@ -255,26 +255,100 @@ describe('RecoveryWorkspace — sign out', () => {
   });
 });
 
-describe('RecoveryWorkspace — load more appends', () => {
-  it('appends the next page of deliveries onto the existing rows', async () => {
-    mockApi({
+describe('RecoveryWorkspace — pagination', () => {
+  function delivery(id: number, runId: string, receivedAt: string) {
+    return {
+      id,
+      received_at: receivedAt,
+      source: 'webhook',
+      provider_run_id: runId,
+      row_count: 5,
+      verdict: 'PASS',
+      cause: null,
+      is_baseline: false,
+      preview: [],
+    };
+  }
+
+  it('replaces the page (not appends) when Next is clicked, and Prev returns to page 1', async () => {
+    const fetchMock = mockApi({
       'GET /api/recovery/collectors': () => ({ collectors: baseCollectors() }),
       'GET /api/recovery/deliveries': ({ params }) => {
         if (!params.get('before')) {
-          return { items: [{ id: 1, received_at: '2026-08-22T10:00:00.000Z', source: 'webhook', provider_run_id: 'run-page-1', row_count: 5, verdict: 'PASS', cause: null, is_baseline: false, preview: [] }], next_before: 1 };
+          return { items: [delivery(1, 'run-page-1', '2026-08-22T10:00:00.000Z')], next_before: 1, total: 2 };
         }
-        return { items: [{ id: 2, received_at: '2026-08-22T09:00:00.000Z', source: 'webhook', provider_run_id: 'run-page-2', row_count: 4, verdict: 'PASS', cause: null, is_baseline: false, preview: [] }], next_before: null };
+        return { items: [delivery(2, 'run-page-2', '2026-08-21T10:00:00.000Z')], next_before: null, total: 2 };
       },
       'GET /api/recovery/repairs': () => emptyRepairs(),
     });
     render(<MemoryRouter><RecoveryWorkspace /></MemoryRouter>);
 
     expect(await screen.findByText('run-page-1')).toBeInTheDocument();
-    expect(screen.queryByText('run-page-2')).not.toBeInTheDocument();
+    expect(screen.getByText('Showing 1–1 of 2')).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole('button', { name: /load more/i })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Next' })[0]);
 
     expect(await screen.findByText('run-page-2')).toBeInTheDocument();
-    expect(screen.getByText('run-page-1')).toBeInTheDocument();
+    expect(screen.queryByText('run-page-1')).not.toBeInTheDocument();
+    expect(screen.getByText('Showing 2–2 of 2')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('before=1'))).toBe(true);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Prev' })[0]);
+
+    expect(await screen.findByText('run-page-1')).toBeInTheDocument();
+    expect(screen.queryByText('run-page-2')).not.toBeInTheDocument();
+    expect(screen.getByText('Showing 1–1 of 2')).toBeInTheDocument();
+  });
+
+  it('changing the page size refetches page 1 at the new limit', async () => {
+    const fetchMock = mockApi({
+      'GET /api/recovery/collectors': () => ({ collectors: baseCollectors() }),
+      'GET /api/recovery/deliveries': ({ params }) => {
+        const limit = params.get('limit');
+        return { items: [delivery(1, `run-limit-${limit}`, '2026-08-22T10:00:00.000Z')], next_before: null, total: 1 };
+      },
+      'GET /api/recovery/repairs': () => emptyRepairs(),
+    });
+    render(<MemoryRouter><RecoveryWorkspace /></MemoryRouter>);
+
+    expect(await screen.findByText('run-limit-25')).toBeInTheDocument();
+
+    const [pageSizeSelect] = screen.getAllByRole('combobox');
+    fireEvent.change(pageSizeSelect, { target: { value: '10' } });
+
+    expect(await screen.findByText('run-limit-10')).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).includes('/api/recovery/deliveries') && String(input).includes('limit=10')),
+    ).toBe(true);
+  });
+
+  it('resets to page 1 when a different collector is selected', async () => {
+    mockApi({
+      'GET /api/recovery/collectors': () => ({ collectors: baseCollectors() }),
+      'GET /api/recovery/deliveries': ({ params }) => {
+        const collectorId = params.get('collector_id');
+        if (collectorId === 'c_waiting') {
+          if (!params.get('before')) {
+            return { items: [delivery(1, 'run-waiting-page-1', '2026-08-22T10:00:00.000Z')], next_before: 1, total: 2 };
+          }
+          return { items: [delivery(2, 'run-waiting-page-2', '2026-08-21T10:00:00.000Z')], next_before: null, total: 2 };
+        }
+        return { items: [delivery(3, 'run-monitoring', '2026-08-22T11:00:00.000Z')], next_before: null, total: 1 };
+      },
+      'GET /api/recovery/repairs': () => emptyRepairs(),
+    });
+    render(<MemoryRouter><RecoveryWorkspace /></MemoryRouter>);
+
+    expect(await screen.findByText('run-waiting-page-1')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Next' })[0]);
+    expect(await screen.findByText('run-waiting-page-2')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Monitoring collector/ }));
+    expect(await screen.findByText('run-monitoring')).toBeInTheDocument();
+    expect(screen.getByText('Showing 1–1 of 1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Waiting collector/ }));
+    expect(await screen.findByText('run-waiting-page-1')).toBeInTheDocument();
+    expect(screen.queryByText('run-waiting-page-2')).not.toBeInTheDocument();
   });
 });

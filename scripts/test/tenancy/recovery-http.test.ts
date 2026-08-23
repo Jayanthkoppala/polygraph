@@ -451,27 +451,32 @@ describe('automatic recovery HTTP contract', () => {
     }
 
     const first = await get(base, account.cookie, '/api/recovery/deliveries?collector_id=c_customer&limit=2');
-    const page1 = (await first.json()) as { items: Array<Record<string, unknown>>; next_before: string | null };
+    const page1 = (await first.json()) as { items: Array<Record<string, unknown>>; next_before: string | null; total: number };
     expect(page1.items).toHaveLength(2);
     expect(page1.items[0].received_at).toBe('2026-08-24T10:00:00.000Z');
     expect(page1.next_before).toBe(page1.items[1].id);
+    // `total` counts every delivery for the collector, independent of `limit`
+    // — the same value a later page and a different page size must agree on.
+    expect(page1.total).toBe(5);
 
     const second = await get(
       base,
       account.cookie,
       `/api/recovery/deliveries?collector_id=c_customer&limit=2&before=${page1.next_before}`
     );
-    const page2 = (await second.json()) as { items: Array<Record<string, unknown>>; next_before: string | null };
+    const page2 = (await second.json()) as { items: Array<Record<string, unknown>>; next_before: string | null; total: number };
     expect(page2.items[0].received_at).toBe('2026-08-22T10:00:00.000Z');
+    expect(page2.total).toBe(5);
 
     const last = await get(
       base,
       account.cookie,
       `/api/recovery/deliveries?collector_id=c_customer&limit=50`
     );
-    const all = (await last.json()) as { items: unknown[]; next_before: string | null };
+    const all = (await last.json()) as { items: unknown[]; next_before: string | null; total: number };
     expect(all.items).toHaveLength(5);
     expect(all.next_before).toBeNull();
+    expect(all.total).toBe(5);
 
     // Preview only: clipped strings, no `input`, no `rows_json`.
     const item = page1.items[0] as { preview: Array<Record<string, unknown>> };
@@ -491,7 +496,7 @@ describe('automatic recovery HTTP contract', () => {
     seedReceipt(tenantId, 'c_customer', '2026-08-21T10:00:00.000Z');
 
     const res = await get(base, account.cookie, '/api/recovery/repairs?collector_id=c_customer&limit=1');
-    const page = (await res.json()) as { items: Array<Record<string, unknown>>; next_before: string | null };
+    const page = (await res.json()) as { items: Array<Record<string, unknown>>; next_before: string | null; total: number };
     expect(page.items).toHaveLength(1);
     expect(page.items[0]).toMatchObject({
       collector_id: 'c_customer',
@@ -504,6 +509,8 @@ describe('automatic recovery HTTP contract', () => {
     });
     expect(String(page.items[0].receipt_sha256)).toMatch(/^[0-9a-f]{64}$/);
     expect(page.next_before).toBe(page.items[0].id);
+    // `total` counts both seeded receipts even though `limit=1` returned one.
+    expect(page.total).toBe(2);
   });
 
   // -- controls ------------------------------------------------------------

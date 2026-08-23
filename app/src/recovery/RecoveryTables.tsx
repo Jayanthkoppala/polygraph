@@ -24,34 +24,102 @@ export function isVerifiedReceipt(repair: RecoveryRepair): boolean {
   return repair.status === undefined || repair.status.toUpperCase() === 'VERIFIED';
 }
 
-function LoadMore({ loading, onClick }: { loading: boolean; onClick: () => void }) {
+export const PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
+
+/** The pagination controls shared by both tables. `page`/`total` are 1-indexed
+ * and server-reported; `changing` covers the brief window between clicking
+ * Prev/Next/page-size and the new page landing, so the old rows stay visible
+ * (no flash to an empty state) while it spins. */
+function PaginationFooter({
+  page,
+  pageSize,
+  total,
+  rowCount,
+  startIndex,
+  hasNext,
+  changing,
+  onPrev,
+  onNext,
+  onPageSizeChange,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  rowCount: number;
+  startIndex: number;
+  hasNext: boolean;
+  changing: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+  onPageSizeChange: (size: number) => void;
+}) {
+  const start = total === 0 ? 0 : startIndex + 1;
+  const end = total === 0 ? 0 : startIndex + rowCount;
   return (
-    <div className="flex justify-center border-t border-[var(--color-line)] py-2.5">
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={loading}
-        className="flex items-center gap-1.5 rounded-lg border border-[#313131] bg-[#1B1B1B] px-3 py-1.5 text-xs font-medium text-[#EDEDED] transition-[background-color,border-color] hover:border-[#4B4B4B] disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {loading && <CircleNotch size={12} className="animate-spin" aria-hidden />}
-        {loading ? 'Loading…' : 'Load more'}
-      </button>
+    <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--color-line)] px-4 py-2 font-mono text-[11px] text-[#8B949E]">
+      <span>
+        Showing {start}–{end} of {total}
+        {changing && <CircleNotch size={11} className="ml-1.5 inline animate-spin align-[-1px]" aria-hidden />}
+      </span>
+      <div className="flex items-center gap-3">
+        <label className="flex items-center gap-1.5">
+          <span className="sr-only">Rows per page</span>
+          <select
+            value={pageSize}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+            className="rounded-md border border-[#313131] bg-[#1B1B1B] px-1.5 py-1 text-[11px] text-[#EDEDED] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#EDEDED]"
+          >
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size} / page
+              </option>
+            ))}
+          </select>
+        </label>
+        <span>Page {page}</span>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onPrev}
+            disabled={page <= 1 || changing}
+            className="rounded-md border border-[#313131] bg-[#1B1B1B] px-2 py-1 text-[11px] font-medium text-[#EDEDED] transition-[background-color,border-color] hover:border-[#4B4B4B] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            onClick={onNext}
+            disabled={!hasNext || changing}
+            className="rounded-md border border-[#313131] bg-[#1B1B1B] px-2 py-1 text-[11px] font-medium text-[#EDEDED] transition-[background-color,border-color] hover:border-[#4B4B4B] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
+      </div>
     </div>
   );
+}
+
+export interface PagerProps {
+  page: number;
+  pageSize: number;
+  total: number;
+  startIndex: number;
+  hasNext: boolean;
+  changing: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+  onPageSizeChange: (size: number) => void;
 }
 
 export function AcceptedResultsTable({
   deliveries,
   loading,
-  hasMore,
-  loadingMore,
-  onLoadMore,
+  pager,
 }: {
   deliveries: RecoveryDelivery[];
   loading: boolean;
-  hasMore: boolean;
-  loadingMore: boolean;
-  onLoadMore: () => void;
+  pager: PagerProps;
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#272727] bg-[#111111]/90">
@@ -99,7 +167,7 @@ export function AcceptedResultsTable({
           </Table>
         )}
       </div>
-      {hasMore && <LoadMore loading={loadingMore} onClick={onLoadMore} />}
+      <PaginationFooter {...pager} rowCount={deliveries.length} />
     </div>
   );
 }
@@ -107,15 +175,11 @@ export function AcceptedResultsTable({
 export function RepairsTable({
   repairs,
   loading,
-  hasMore,
-  loadingMore,
-  onLoadMore,
+  pager,
 }: {
   repairs: RecoveryRepair[];
   loading: boolean;
-  hasMore: boolean;
-  loadingMore: boolean;
-  onLoadMore: () => void;
+  pager: PagerProps;
 }) {
   const verified = repairs.filter(isVerifiedReceipt);
   return (
@@ -169,7 +233,7 @@ export function RepairsTable({
           </Table>
         )}
       </div>
-      {hasMore && <LoadMore loading={loadingMore} onClick={onLoadMore} />}
+      <PaginationFooter {...pager} rowCount={verified.length} />
     </div>
   );
 }

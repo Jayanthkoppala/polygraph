@@ -675,6 +675,21 @@ export class RepairReceiptStore {
   latestForCollector(tenantId: string, collectorId: string): RepairReceiptRow | undefined {
     return this.list(tenantId, { collectorId, limit: 1 })[0];
   }
+
+  /** Total verified receipts, independent of any page's cursor — `collectorId`
+   * absent counts the whole tenant, matching `list`'s scoping. */
+  count(tenantId: string, options: { collectorId?: string } = {}): number {
+    const where: string[] = ['tenant_id = ?'];
+    const params: unknown[] = [tenantId];
+    if (options.collectorId) {
+      where.push('collector_id = ?');
+      params.push(options.collectorId);
+    }
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM repair_receipts WHERE ${where.join(' AND ')}`)
+      .get(...params) as { n: number };
+    return row.n;
+  }
 }
 
 // ---------------------------------------------------------------------------

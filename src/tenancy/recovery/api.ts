@@ -231,6 +231,10 @@ export interface RecoveryDeliveryItem {
 export interface Page<T> {
   items: T[];
   next_before: string | null;
+  /** Total rows matching the query, independent of `limit`/`before` — lets the
+   * UI show "Showing a–b of total" and compute a page count without a second
+   * unbounded fetch. */
+  total: number;
 }
 
 /** Clamps a caller-supplied `limit` into 1..200. A missing or unparseable
@@ -242,12 +246,12 @@ export function clampLimit(raw: string | null, fallback = 50): number {
   return Math.min(Math.max(parsed, 1), 200);
 }
 
-function pageOf<T>(rows: T[], limit: number, idOf: (row: T) => string): Page<T> {
+function pageOf<T>(rows: T[], limit: number, total: number, idOf: (row: T) => string): Page<T> {
   // A full page means "there may be more"; a short page is the end of the
   // list. `next_before` is the last id of THIS page, which is what the store's
   // keyset predicate expects.
   const next = rows.length === limit && rows.length > 0 ? idOf(rows[rows.length - 1]) : null;
-  return { items: rows, next_before: next };
+  return { items: rows, next_before: next, total };
 }
 
 function previewOf(row: DeliveryRow): unknown[] {
@@ -286,7 +290,8 @@ export function listRecoveryDeliveries(
     is_baseline: row.is_baseline === 1,
     preview: previewOf(row),
   }));
-  return pageOf(items, options.limit, (item) => item.id);
+  const total = store.countDeliveries(tenantId, collectorId);
+  return pageOf(items, options.limit, total, (item) => item.id);
 }
 
 export interface RecoveryRepairItem {
@@ -323,7 +328,8 @@ export function listRecoveryRepairs(
 ): Page<RecoveryRepairItem> {
   const scope = scopeFor(db, tenantId, genesisHash);
   const names = new Map(scope.collectors.list().map((c) => [c.collector_id, c.name]));
-  const rows = new RepairReceiptStore(db).list(tenantId, {
+  const store = new RepairReceiptStore(db);
+  const rows = store.list(tenantId, {
     ...(options.collectorId ? { collectorId: options.collectorId } : {}),
     ...(options.before ? { before: options.before } : {}),
     limit: options.limit,
@@ -340,5 +346,6 @@ export function listRecoveryRepairs(
     template_after: row.template_after,
     receipt_sha256: row.receipt_sha256,
   }));
-  return pageOf(items, options.limit, (item) => item.id);
+  const total = store.count(tenantId, options.collectorId ? { collectorId: options.collectorId } : {});
+  return pageOf(items, options.limit, total, (item) => item.id);
 }

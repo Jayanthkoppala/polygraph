@@ -344,6 +344,15 @@ export class DeliveryStore {
       .all(tenantId, collectorId, limit) as DeliveryRow[];
   }
 
+  /** Total deliveries for this collector, independent of any page's cursor —
+   * what the workspace's "Showing a–b of total" footer needs. */
+  countDeliveries(tenantId: string, collectorId: string): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM collector_deliveries WHERE tenant_id = ? AND collector_id = ?`)
+      .get(tenantId, collectorId) as { n: number };
+    return row.n;
+  }
+
   /**
    * An existing `source = 'verification'` delivery whose provider run id is
    * one of `runIds` or whose payload digest equals `payloadSha256`. Ingest

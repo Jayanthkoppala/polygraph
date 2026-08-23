@@ -72,6 +72,8 @@ export interface RecoveryRepair {
 export interface Page<T> {
   items: T[];
   nextBefore: string | number | null;
+  /** Total rows matching the query, independent of `limit`/`before`. */
+  total: number;
 }
 
 async function getJson<T>(path: string): Promise<T> {
@@ -159,7 +161,7 @@ export async function fetchRecoveryDeliveries(
   const params = new URLSearchParams({ collector_id: collectorId });
   if (opts.before != null) params.set('before', String(opts.before));
   params.set('limit', String(Math.max(1, Math.floor(opts.limit ?? 50))));
-  const body = await getJson<{ items?: unknown; next_before?: unknown }>(
+  const body = await getJson<{ items?: unknown; next_before?: unknown; total?: unknown }>(
     `/api/recovery/deliveries?${params.toString()}`,
   );
   const rows = Array.isArray(body.items) ? body.items : [];
@@ -182,7 +184,8 @@ export async function fetchRecoveryDeliveries(
     });
   }
   const nextBefore = typeof body.next_before === 'string' || typeof body.next_before === 'number' ? body.next_before : null;
-  return { items, nextBefore };
+  const total = typeof body.total === 'number' ? body.total : items.length;
+  return { items, nextBefore, total };
 }
 
 /** GET /api/recovery/repairs?collector_id?=&before=&limit= — `collectorId` is
@@ -195,7 +198,7 @@ export async function fetchRecoveryRepairs(
   if (collectorId) params.set('collector_id', collectorId);
   if (opts.before != null) params.set('before', String(opts.before));
   params.set('limit', String(Math.max(1, Math.floor(opts.limit ?? 50))));
-  const body = await getJson<{ items?: unknown; next_before?: unknown }>(
+  const body = await getJson<{ items?: unknown; next_before?: unknown; total?: unknown }>(
     `/api/recovery/repairs?${params.toString()}`,
   );
   const rows = Array.isArray(body.items) ? body.items : [];
@@ -223,7 +226,8 @@ export async function fetchRecoveryRepairs(
     });
   }
   const nextBefore = typeof body.next_before === 'string' || typeof body.next_before === 'number' ? body.next_before : null;
-  return { items, nextBefore };
+  const total = typeof body.total === 'number' ? body.total : items.length;
+  return { items, nextBefore, total };
 }
 
 /** POST /api/recovery/collectors/:id/auto-heal — emergency opt-out toggle. */
