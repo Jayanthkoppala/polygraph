@@ -222,6 +222,65 @@ describe('retry policy', () => {
     expect(instantSleep).not.toHaveBeenCalled();
   });
 
+  it('S2-1: refactorTemplate is NEVER retried — a network throw on the first attempt surfaces at once', async () => {
+    const fetchImpl = vi.fn().mockRejectedValueOnce(new Error('socket hang up')).mockResolvedValue(jsonResponse(200, { id: 'ia_1' }));
+    const client = makeClient(fetchImpl);
+    await expect(client.refactorTemplate('c_1', 'fix price', [{ url: 'https://x' }])).rejects.toBeInstanceOf(BrightDataError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(instantSleep).not.toHaveBeenCalled();
+  });
+
+  it('S2-1: refactorTemplate is not retried on a 5xx either', async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(textResponse(502, 'bad gateway')).mockResolvedValue(jsonResponse(200, { id: 'ia_1' }));
+    const client = makeClient(fetchImpl);
+    await expect(client.refactorTemplate('c_1', 'fix price')).rejects.toBeInstanceOf(BrightDataError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('S2-1: resumeAutomationJob is NEVER retried', async () => {
+    const fetchImpl = vi.fn().mockRejectedValueOnce(new Error('ETIMEDOUT')).mockResolvedValue(textResponse(200, ''));
+    const client = makeClient(fetchImpl);
+    await expect(client.resumeAutomationJob('c_1', { message: true, autoSave: true })).rejects.toBeInstanceOf(BrightDataError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('S2-1: GET progress polling keeps the client-wide retry policy', async () => {
+    const fetchImpl = vi.fn().mockRejectedValueOnce(new Error('socket hang up')).mockResolvedValue(jsonResponse(200, { id: 'ia_1', status: 'running' }));
+    const client = makeClient(fetchImpl);
+    await expect(client.refactorTemplateProgress('c_1')).resolves.toMatchObject({ id: 'ia_1' });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('S2-5: pollDataset calls onPoll once per iteration, before each request', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(textResponse(202, '{"status":"building"}', 'application/json'))
+      .mockResolvedValueOnce(textResponse(202, '{"status":"building"}', 'application/json'))
+      .mockResolvedValueOnce(jsonResponse(200, [{ sku: '1' }]));
+    const client = makeClient(fetchImpl);
+    const onPoll = vi.fn();
+    const result = await client.pollDataset('j_1', { intervalMs: 1, onPoll });
+    expect(result.rows).toEqual([{ sku: '1' }]);
+    expect(onPoll).toHaveBeenCalledTimes(3);
+    expect(onPoll.mock.invocationCallOrder[0]).toBeLessThan(fetchImpl.mock.invocationCallOrder[0]);
+  });
+
+  it('S2-5: an onPoll that throws aborts the poll and propagates', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(textResponse(202, '{"status":"building"}', 'application/json'));
+    const client = makeClient(fetchImpl);
+    let n = 0;
+    await expect(
+      client.pollDataset('j_1', {
+        intervalMs: 1,
+        onPoll: () => {
+          n += 1;
+          if (n === 2) throw new Error('lease lost');
+        },
+      })
+    ).rejects.toThrow(/lease lost/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('retries a network-level throw the same as a 5xx', async () => {
     const fetchImpl = vi
       .fn()

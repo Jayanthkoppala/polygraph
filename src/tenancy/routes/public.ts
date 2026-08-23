@@ -31,9 +31,11 @@ function recoveryFields(decision: {
   state?: string;
   cycleId?: string | null;
   duplicate?: boolean;
+  source?: 'webhook' | 'verification';
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (decision.deliveryId !== undefined) out.delivery_id = decision.deliveryId;
+  if (decision.source !== undefined) out.source = decision.source;
   if (decision.state !== undefined) out.state = decision.state;
   if (decision.cycleId !== undefined && decision.cycleId !== null) out.cycle_id = decision.cycleId;
   // A redelivered webhook is a success, not a conflict: Bright Data retries,
@@ -115,12 +117,16 @@ export async function handlePublicRoutes(ctx: RouteContext): Promise<boolean> {
       }
       const rows = payload.rows;
       assertDeliveryStructure(rows);
-      const candidateRunId = req.headers['x-brightdata-job-id'];
-      const externalRunId = typeof candidateRunId === 'string' && /^[A-Za-z0-9._:-]{1,200}$/.test(candidateRunId)
-        ? candidateRunId
-        : undefined;
+      // Bright Data names the run in one of several headers depending on the
+      // delivery product; the first well-formed one is the run id, and all of
+      // them are matched against recovery cycles' verification runs.
+      const candidateRunIds = ['x-brightdata-job-id', 'x-brd-delivery-id', 'x-brd-delivery-batch-id']
+        .map((name) => req.headers[name])
+        .filter((v): v is string => typeof v === 'string' && /^[A-Za-z0-9._:-]{1,200}$/.test(v));
+      const externalRunId = candidateRunIds[0];
       const decision = await recordDeliveredRows(deps.writer, target, rows, nowIso, externalRunId, {
         masterKey: deps.masterKey,
+        candidateRunIds,
       });
       const recovery = recoveryFields(decision);
       sendJson(res, 200, {

@@ -48,6 +48,11 @@ export interface FreshRunResult {
   template?: { id: string; version: number };
 }
 
+export interface FreshRunHooks {
+  onPoll?: () => void;
+  onStarted?: (jobId: string) => void;
+}
+
 export interface RecoveryProvider {
   /** POST refactor_template. Returns the provider job id when the envelope
    * carries one. */
@@ -55,8 +60,11 @@ export interface RecoveryProvider {
   readProgress(collectorId: string): Promise<ProviderProgress>;
   /** resume_automation_job {message:true, auto_save:true}. */
   approveWithAutoSave(collectorId: string): Promise<void>;
-  /** trigger + pollDataset + jobLog for one verification run. */
-  freshRun(collectorId: string, inputs: unknown[]): Promise<FreshRunResult>;
+  /** trigger + pollDataset + jobLog for one verification run. `hooks.onPoll`
+   * fires once per dataset poll so the worker can renew its lease while a
+   * slow run builds; `hooks.onStarted` fires with the job id as soon as the
+   * trigger is accepted, before any polling, so the worker can persist it. */
+  freshRun(collectorId: string, inputs: unknown[], hooks?: FreshRunHooks): Promise<FreshRunResult>;
   /** Template version (`t_x.N`) of the collector's most recent job, for the
    * before/after publication proof. `undefined` when it cannot be read. */
   templateVersionFromLatestJob(collectorId: string): Promise<{ id: string; version: number } | undefined>;
@@ -119,9 +127,13 @@ export function createBrightDataRecoveryProvider(
     async approveWithAutoSave(collectorId) {
       await client.resumeAutomationJob(collectorId, { message: true, autoSave: true });
     },
-    async freshRun(collectorId, inputs) {
+    async freshRun(collectorId, inputs, hooks = {}) {
       const jobId = await client.trigger(collectorId, inputs);
-      const dataset = await client.pollDataset(jobId, pollOptions);
+      hooks.onStarted?.(jobId);
+      const dataset = await client.pollDataset(jobId, {
+        ...pollOptions,
+        ...(hooks.onPoll ? { onPoll: hooks.onPoll } : {}),
+      });
       let template: FreshRunResult['template'];
       try {
         const log = await client.jobLog(jobId);

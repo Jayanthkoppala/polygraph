@@ -127,8 +127,6 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Runnin
       fetchImpl: opts.fetchImpl,
       baseUrl: opts.baseUrl,
     });
-    await recoveryWorker.resumeOrphans();
-    recoveryWorker.start();
   }
 
   const reader = openReader(dbPath);
@@ -166,6 +164,17 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Runnin
 
   await listenAsync(server, port, host);
 
+  // Listen FIRST, then the boot scan. A resumed cycle can poll the provider
+  // for minutes; /healthz and ingest must not wait for it, and a failure in
+  // the scan is a logged fault, not a refused boot.
+  if (recoveryWorker) {
+    const worker = recoveryWorker;
+    void worker.resumeOrphans().catch((err: unknown) => {
+      console.error(`[recovery] boot scan failed: ${err instanceof Error ? err.message.slice(0, 300) : String(err)}`);
+    });
+    worker.start();
+  }
+
   // `port` may have been requested as 0 (ephemeral — "OS picks one", used by
   // tests). The actually-bound port only exists on `server.address()` AFTER
   // `listen` resolves; report that instead of echoing back the request.
@@ -173,7 +182,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Runnin
   const actualPort = boundAddress && typeof boundAddress === 'object' ? boundAddress.port : port;
 
   const stop = async (): Promise<void> => {
-    recoveryWorker?.stop();
+    // The worker is awaited before the writer closes: an in-flight tick that
+    // loses its connection mid-CAS would leave a leased cycle for the next
+    // boot to take over, which is safe but slow.
+    await recoveryWorker?.stop();
     stopScheduler();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     writer.close();

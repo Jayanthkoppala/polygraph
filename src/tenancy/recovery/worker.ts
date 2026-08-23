@@ -48,6 +48,7 @@ import type { DeliveryStore } from '../delivery-store.js';
 import { loadRunnerOverridesFor } from '../onboarding.js';
 import { scopeFor, type TenantCollectorRow } from '../scope.js';
 import { ScopedSecrets, revealPlaintext } from '../secrets.js';
+import type { HeldReasonCode } from './api.js';
 import { LoggingRecoveryNotifier, type RecoveryNotifier } from './notify.js';
 import { judgeRepair, RECOVERY_POLICY, type RecoveryPolicyEvidence } from './policy.js';
 import { createBrightDataRecoveryProvider, type ProviderProgress, type RecoveryProvider } from './provider.js';
@@ -105,15 +106,40 @@ export interface RecoveryWorkerDeps {
   baseUrl?: string;
 }
 
-/** Thrown internally to end a cycle in a specific terminal status. */
+type StopStatus = Extract<CycleStatus, 'FAILED' | 'HELD_PROVIDER_STATE_UNKNOWN' | 'HELD_POLICY' | 'HELD_BUDGET'>;
+
+/** Thrown internally to end a cycle in a specific terminal status.
+ * `code` is the bare `HeldReasonCode` written to the collector's state row
+ * (the only thing the UI maps to copy); `reason` is the free-text detail,
+ * which goes to `recovery_cycles.terminal_reason`, the ledger and the log —
+ * never to the state row, because it can quote provider error text. */
 class CycleStop extends Error {
   constructor(
-    readonly status: Extract<CycleStatus, 'FAILED' | 'HELD_PROVIDER_STATE_UNKNOWN' | 'HELD_POLICY' | 'HELD_BUDGET'>,
+    readonly status: StopStatus,
+    readonly code: HeldReasonCode,
     readonly reason: string
   ) {
     super(reason);
     this.name = 'CycleStop';
   }
+}
+
+/** The code a bare status maps to when nothing more specific is known. */
+function defaultCodeFor(status: StopStatus): HeldReasonCode {
+  switch (status) {
+    case 'HELD_PROVIDER_STATE_UNKNOWN':
+      return 'PROVIDER_STATE_UNKNOWN';
+    case 'HELD_POLICY':
+      return 'POLICY';
+    case 'HELD_BUDGET':
+      return 'BUDGET';
+    default:
+      return 'PROVIDER_ERROR';
+  }
+}
+
+function stopWith(status: StopStatus, reason: string, code: HeldReasonCode = defaultCodeFor(status)): CycleStop {
+  return new CycleStop(status, code, reason);
 }
 
 interface CycleContext {
@@ -133,7 +159,10 @@ interface CycleContext {
 export class RecoveryWorker {
   readonly owner: string;
   private interval: ReturnType<typeof setInterval> | undefined;
-  private ticking = false;
+  /** The in-flight tick, so `stop()` can wait for it before the caller
+   * closes the database underneath it. */
+  private inFlight: Promise<number> | undefined;
+  private stopping = false;
   private readonly notifier: RecoveryNotifier;
   private readonly log: (line: string) => void;
 
@@ -157,15 +186,28 @@ export class RecoveryWorker {
 
   start(intervalMs = DEFAULT_WORKER_INTERVAL_MS): void {
     if (this.interval) return;
+    this.stopping = false;
     this.interval = setInterval(() => {
       void this.tick();
     }, intervalMs);
     this.interval.unref?.();
   }
 
-  stop(): void {
+  /** Stops the interval and resolves once any in-flight tick has finished.
+   * A cycle mid-flight finishes its current step (its lease keeps it safe);
+   * the next tick is simply not scheduled. serve.ts awaits this before
+   * closing the writer connection. */
+  async stop(): Promise<void> {
+    this.stopping = true;
     if (this.interval) clearInterval(this.interval);
     this.interval = undefined;
+    if (this.inFlight) {
+      try {
+        await this.inFlight;
+      } catch {
+        // tick() never rejects, but never let stop() do so either.
+      }
+    }
   }
 
   /** Boot scan: every non-terminal cycle whose lease is free or expired.
@@ -175,14 +217,33 @@ export class RecoveryWorker {
     return this.tick();
   }
 
-  /** Returns how many cycles this worker took a lease on. */
+  /** Returns how many cycles this worker took a lease on. Never rejects:
+   * every cycle is isolated in its own try/catch so one cycle's failure —
+   * including one inside `finish()` itself — is logged (redacted) and the
+   * loop moves to the next cycle. */
   async tick(): Promise<number> {
-    if (this.ticking) return 0;
-    this.ticking = true;
-    let taken = 0;
+    if (this.inFlight) return 0;
+    const run = this.tickInner();
+    this.inFlight = run;
     try {
-      const rows = this.deps.recovery.cycles.listResumable(this.now());
-      for (const row of rows) {
+      return await run;
+    } finally {
+      this.inFlight = undefined;
+    }
+  }
+
+  private async tickInner(): Promise<number> {
+    let taken = 0;
+    let rows: RecoveryCycleRow[];
+    try {
+      rows = this.deps.recovery.cycles.listResumable(this.now());
+    } catch (err) {
+      this.log(`[recovery] tick could not list resumable cycles: ${safeMessage(err)}`);
+      return 0;
+    }
+    for (const row of rows) {
+      if (this.stopping) break;
+      try {
         const leased = this.deps.recovery.cycles.acquireLease(
           row.tenant_id,
           row.id,
@@ -193,9 +254,9 @@ export class RecoveryWorker {
         if (!leased) continue;
         taken += 1;
         await this.runCycle(leased);
+      } catch (err) {
+        this.log(`[recovery] cycle ${row.id} errored outside its state machine: ${safeMessage(err)}`);
       }
-    } finally {
-      this.ticking = false;
     }
     return taken;
   }
@@ -213,16 +274,16 @@ export class RecoveryWorker {
     let ctx: CycleContext | undefined;
     try {
       if (!tenant || !collector || collector.setup_state !== 'confirmed') {
-        throw new CycleStop('FAILED', 'tenant or collector no longer available');
+        throw stopWith('FAILED', 'tenant or collector no longer available');
       }
       const provider = await this.providerFor(leased.tenant_id);
-      if (!provider) throw new CycleStop('HELD_POLICY', 'tenant Bright Data key unavailable');
+      if (!provider) throw stopWith('HELD_POLICY', 'tenant Bright Data key unavailable');
 
       let evidence: RecoveryPolicyEvidence;
       try {
         evidence = JSON.parse(leased.policy_evidence_json) as RecoveryPolicyEvidence;
       } catch {
-        throw new CycleStop('FAILED', 'stored policy evidence unreadable');
+        throw stopWith('FAILED', 'stored policy evidence unreadable');
       }
 
       ctx = {
@@ -240,7 +301,7 @@ export class RecoveryWorker {
         this.log(`[recovery] cycle ${leased.id} lost its lease; abandoning (${err.message})`);
         return;
       }
-      const stop = err instanceof CycleStop ? err : new CycleStop('FAILED', safeMessage(err));
+      const stop = err instanceof CycleStop ? err : stopWith('FAILED', safeMessage(err));
       if (!ctx) {
         // No context means we could not even start: release the lease as a
         // terminal status so the scan does not retry it forever.
@@ -288,9 +349,19 @@ export class RecoveryWorker {
     }
 
     if (status === 'AWAITING_APPROVAL' || status === 'APPROVED_AUTOSAVE') {
-      // A resumed APPROVED_AUTOSAVE whose provider job already published
-      // needs no second approval.
       if (ctx.progress?.state === 'PUBLISHED') {
+        // A resumed cycle whose provider job already published needs no
+        // second approval.
+        status = await this.markPublished(ctx);
+      } else if (entered === 'APPROVED_AUTOSAVE') {
+        // The previous owner persisted the intent to approve and may or may
+        // not have sent it before dying. Approving again is a mutation this
+        // worker cannot prove is needed, so it only watches: the job either
+        // publishes (continue), ends APPROVED_NOT_SAVED / FAILED (cycle
+        // fails), or is still awaiting approval when the budget runs out —
+        // HELD_PROVIDER_STATE_UNKNOWN, for an operator to resolve.
+        const progress = await this.pollUntil(ctx, ['PUBLISHED'], ctx.progress);
+        ctx.progress = progress;
         status = await this.markPublished(ctx);
       } else {
         await this.approve(ctx);
@@ -310,7 +381,7 @@ export class RecoveryWorker {
       return;
     }
 
-    throw new CycleStop('FAILED', `cycle in unexpected status ${status}`);
+    throw stopWith('FAILED', `cycle in unexpected status ${status}`);
   }
 
   // ---- steps ----------------------------------------------------------------
@@ -322,24 +393,24 @@ export class RecoveryWorker {
    * otherwise trip its own cooldown, and budget is spent per attempt, not
    * per step. */
   private checkGates(ctx: CycleContext, recordAttempt: boolean): void {
-    if (!this.enabled()) throw new CycleStop('HELD_POLICY', 'automatic recovery disabled on this server');
+    if (!this.enabled()) throw stopWith('HELD_POLICY', 'automatic recovery disabled on this server');
     const state = this.deps.recovery.state.get(ctx.cycle.tenant_id, ctx.cycle.collector_id);
-    if (!state || state.auto_heal !== 1) throw new CycleStop('HELD_POLICY', 'auto-heal switched off for this collector');
+    if (!state || state.auto_heal !== 1) throw stopWith('HELD_POLICY', 'auto-heal switched off for this collector');
     if (!this.deps.deliveries.activeInput(ctx.cycle.tenant_id, ctx.cycle.collector_id)) {
-      throw new CycleStop('HELD_POLICY', 'reusable run input no longer available');
+      throw stopWith('HELD_POLICY', 'reusable run input no longer available');
     }
     if (!recordAttempt) return;
     const governor = new Governor(this.deps.db, { tenantId: ctx.cycle.tenant_id });
     const nowIso = this.now().toISOString();
     const gate = governor.canHeal(ctx.cycle.collector_id, nowIso, RECOVERY_POLICY);
-    if (!gate.allowed) throw new CycleStop('HELD_BUDGET', `heal budget: ${gate.reason ?? 'not allowed'}`);
+    if (!gate.allowed) throw stopWith('HELD_BUDGET', `heal budget: ${gate.reason ?? 'not allowed'}`);
     governor.recordAttempt(ctx.cycle.collector_id, nowIso);
   }
 
   private async startRefactor(ctx: CycleContext): Promise<void> {
     this.checkGates(ctx, true);
     const prompt = ctx.evidence.heal_prompt;
-    if (!prompt) throw new CycleStop('FAILED', 'stored policy evidence carries no heal prompt');
+    if (!prompt) throw stopWith('FAILED', 'stored policy evidence carries no heal prompt');
 
     const input = this.revealInput(ctx);
     const before = await ctx.provider.templateVersionFromLatestJob(ctx.cycle.collector_id);
@@ -369,19 +440,17 @@ export class RecoveryWorker {
     try {
       progress = await ctx.provider.readProgress(ctx.cycle.collector_id);
     } catch (err) {
-      throw new CycleStop('HELD_PROVIDER_STATE_UNKNOWN', `provider progress unreadable: ${safeMessage(err)}`);
+      throw stopWith('HELD_PROVIDER_STATE_UNKNOWN', `provider progress unreadable: ${safeMessage(err)}`);
     }
     if (progress.state === 'NO_JOB') {
-      throw new CycleStop('HELD_PROVIDER_STATE_UNKNOWN', 'provider reports no heal job for this collector');
+      throw stopWith('HELD_PROVIDER_STATE_UNKNOWN', 'provider reports no heal job for this collector');
     }
     const stored = ctx.cycle.provider_job_id;
     if (!stored || !progress.jobId || stored !== progress.jobId) {
-      throw new CycleStop(
-        'HELD_PROVIDER_STATE_UNKNOWN',
-        `provider job ${progress.jobId ?? 'unknown'} does not match recorded job ${stored ?? 'unknown'}`
+      throw stopWith('HELD_PROVIDER_STATE_UNKNOWN', `provider job ${progress.jobId ?? 'unknown'} does not match recorded job ${stored ?? 'unknown'}`
       );
     }
-    if (progress.state === 'FAILED') throw new CycleStop('FAILED', 'provider heal job failed');
+    if (progress.state === 'FAILED') throw stopWith('FAILED', 'provider heal job failed');
     return progress;
   }
 
@@ -399,18 +468,21 @@ export class RecoveryWorker {
     for (;;) {
       if (progress) {
         if (targets.includes(progress.state)) return progress;
-        if (progress.state === 'FAILED') throw new CycleStop('FAILED', 'provider heal job failed');
+        if (progress.state === 'FAILED') throw stopWith('FAILED', 'provider heal job failed');
         if (progress.state === 'APPROVED_NOT_SAVED') {
-          throw new CycleStop('FAILED', 'provider approved the draft but did not save it to production');
+          throw stopWith('FAILED', 'provider approved the draft but did not save it to production', 'VERIFICATION_FAILED');
         }
         if (progress.state === 'NO_JOB') {
-          throw new CycleStop('HELD_PROVIDER_STATE_UNKNOWN', 'provider lost track of the heal job');
+          throw stopWith('HELD_PROVIDER_STATE_UNKNOWN', 'provider lost track of the heal job');
         }
         if (ctx.cycle.provider_job_id && progress.jobId && progress.jobId !== ctx.cycle.provider_job_id) {
-          throw new CycleStop('HELD_PROVIDER_STATE_UNKNOWN', 'provider is running a different heal job');
+          throw stopWith('HELD_PROVIDER_STATE_UNKNOWN', 'provider is running a different heal job');
         }
         if (this.now().getTime() - start > budgetMs) {
-          throw new CycleStop('HELD_PROVIDER_STATE_UNKNOWN', 'provider heal job exceeded the polling budget');
+          throw stopWith(
+            'HELD_PROVIDER_STATE_UNKNOWN',
+            `provider heal job exceeded the polling budget while ${progress.state}`
+          );
         }
         await this.sleep(interval);
         interval = Math.min(maxInterval, Math.round(interval * 1.5));
@@ -419,7 +491,7 @@ export class RecoveryWorker {
       try {
         progress = await ctx.provider.readProgress(ctx.cycle.collector_id);
       } catch (err) {
-        throw new CycleStop('HELD_PROVIDER_STATE_UNKNOWN', `provider progress unreadable: ${safeMessage(err)}`);
+        throw stopWith('HELD_PROVIDER_STATE_UNKNOWN', `provider progress unreadable: ${safeMessage(err)}`);
       }
     }
   }
@@ -433,28 +505,64 @@ export class RecoveryWorker {
     await ctx.provider.approveWithAutoSave(ctx.cycle.collector_id);
   }
 
+  /** Records the provider's publication. `template_after` is deliberately
+   * left null here: the only job that runs on the NEW template is the
+   * verification run, so the version it reports (in `verify`) is the proof,
+   * not whatever the latest pre-repair job happens to carry. */
   private async markPublished(ctx: CycleContext): Promise<CycleStatus> {
-    const after = await ctx.provider.templateVersionFromLatestJob(ctx.cycle.collector_id);
     ctx.cycle = this.cas(ctx, {
       status: 'PUBLISHED',
-      templateAfter: after ? `${after.id}.${after.version}` : null,
-      publicationProof: {
-        completed_steps: ctx.progress?.completedSteps ?? [],
-        provider_status: ctx.progress?.status ?? null,
-        template_before: ctx.cycle.provider_template_before,
-        template_after: after ? `${after.id}.${after.version}` : null,
-      },
+      templateAfter: null,
+      publicationProof: this.proofOf(ctx, { template_after: null }),
     });
     return 'PUBLISHED';
+  }
+
+  /** The publication proof as stored, merged with `patch`. */
+  private proofOf(ctx: CycleContext, patch: Record<string, unknown>): Record<string, unknown> {
+    let existing: Record<string, unknown> = {};
+    if (ctx.cycle.publication_proof_json) {
+      try {
+        existing = JSON.parse(ctx.cycle.publication_proof_json) as Record<string, unknown>;
+      } catch {
+        existing = {};
+      }
+    }
+    return {
+      completed_steps: ctx.progress?.completedSteps ?? existing.completed_steps ?? [],
+      provider_status: ctx.progress?.status ?? existing.provider_status ?? null,
+      template_before: ctx.cycle.provider_template_before,
+      template_after: existing.template_after ?? null,
+      ...patch,
+    };
   }
 
   private async verify(ctx: CycleContext): Promise<void> {
     const { tenant_id: tenantId, collector_id: collectorId } = ctx.cycle;
     const input = this.revealInput(ctx);
-    const run = await ctx.provider.freshRun(collectorId, [input]);
+    const run = await ctx.provider.freshRun(collectorId, [input], {
+      // Persist the verification job id the moment the provider accepts the
+      // trigger — before any rows exist — so ingest can recognise this run's
+      // output arriving over the webhook and never grade it as an incident.
+      onStarted: (jobId) => {
+        ctx.cycle = this.cas(ctx, { verificationRunId: jobId });
+      },
+      // Lease heartbeat: a slow dataset build must not let the lease lapse
+      // and hand this cycle to a second worker mid-verification.
+      onPoll: () => this.renewIfDue(ctx),
+    });
+    if (ctx.cycle.verification_run_id !== run.jobId) {
+      ctx.cycle = this.cas(ctx, { verificationRunId: run.jobId });
+    }
     this.renewIfDue(ctx);
 
     const templateAfter = run.template ? `${run.template.id}.${run.template.version}` : ctx.cycle.provider_template_after;
+    if (templateAfter !== ctx.cycle.provider_template_after) {
+      ctx.cycle = this.cas(ctx, {
+        templateAfter,
+        publicationProof: this.proofOf(ctx, { template_after: templateAfter }),
+      });
+    }
     const graded = await this.grade(ctx, run.jobId, run.rows);
     const schema = loadRunnerOverridesFor(ctx.collector).schema;
     const baseline = ctx.cycle.baseline_delivery_id
@@ -487,7 +595,7 @@ export class RecoveryWorker {
       ]
         .filter(Boolean)
         .join('; ');
-      throw new CycleStop('FAILED', why || 'verification failed');
+      throw stopWith('FAILED', why || 'verification failed', 'VERIFICATION_FAILED');
     }
 
     const state = this.requireState(ctx);
@@ -573,13 +681,13 @@ export class RecoveryWorker {
    * the provider and nothing else; it is never logged or persisted. */
   private revealInput(ctx: CycleContext): Record<string, unknown> {
     const secret = this.deps.deliveries.revealActiveInput(ctx.cycle.tenant_id, ctx.cycle.collector_id);
-    if (!secret) throw new CycleStop('HELD_POLICY', 'reusable run input no longer available');
+    if (!secret) throw stopWith('HELD_POLICY', 'reusable run input no longer available');
     return JSON.parse(secret.reveal()) as Record<string, unknown>;
   }
 
   private requireState(ctx: CycleContext): RecoveryStateRow {
     const state = this.deps.recovery.state.get(ctx.cycle.tenant_id, ctx.cycle.collector_id);
-    if (!state) throw new CycleStop('FAILED', 'collector recovery state row missing');
+    if (!state) throw stopWith('FAILED', 'collector recovery state row missing');
     return state;
   }
 
@@ -648,7 +756,7 @@ export class RecoveryWorker {
           ctx.cycle.tenant_id,
           ctx.cycle.collector_id,
           state.state_version,
-          { state: 'HELD', heldReason: stop.reason, activeCycleId: null },
+          { state: 'HELD', heldReason: stop.code, activeCycleId: null },
           nowIso
         );
         if (pendingWritten) {
@@ -666,7 +774,9 @@ export class RecoveryWorker {
       }
       throw err;
     }
-    this.log(`[recovery] cycle ${ctx.cycle.id} ${stop.status} collector=${ctx.cycle.collector_id} reason=${stop.reason}`);
+    this.log(
+      `[recovery] cycle ${ctx.cycle.id} ${stop.status} code=${stop.code} collector=${ctx.cycle.collector_id} reason=${stop.reason}`
+    );
     void this.notify((n) => n.cycleHeld(ctx.cycle, stop.reason));
   }
 
@@ -685,7 +795,7 @@ export class RecoveryWorker {
       if (state) {
         this.deps.recovery.state.transition(leased.tenant_id, leased.collector_id, state.state_version, {
           state: 'HELD',
-          heldReason: stop.reason,
+          heldReason: stop.code,
           activeCycleId: null,
         });
       }

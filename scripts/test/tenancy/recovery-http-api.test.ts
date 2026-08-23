@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   clampLimit,
   deriveCollectorView,
+  HELD_REASON_CODES,
   HELD_REASON_COPY,
   safeHeldReason,
   STATE_COPY,
 } from '../../../src/tenancy/recovery/api.js';
+import { HOLDING_REASONS, MONITORING_ONLY_REASON } from '../../../src/tenancy/recovery/policy.js';
 
 /**
  * Unit cover for the read-model's two pure decisions: what a collector's chip
@@ -110,6 +112,22 @@ describe('deriveCollectorView', () => {
     expect(view.state_copy).toBe('Recovery held — an unexpected condition — contact support');
     expect(JSON.stringify(view)).not.toContain('sekrit');
     expect(JSON.stringify(view)).not.toContain('brightdata');
+  });
+
+  it('S2-6: every code a producer can write maps to real copy, never the fallback', () => {
+    const producers = [
+      // worker (CycleStop.code)
+      'PROVIDER_STATE_UNKNOWN', 'VERIFICATION_FAILED', 'PROVIDER_ERROR', 'POLICY', 'BUDGET',
+      // ingest
+      ...HOLDING_REASONS, 'HELD', 'UNRESOLVED_PROVIDER_JOB', MONITORING_ONLY_REASON,
+    ];
+    for (const code of producers) {
+      expect(HELD_REASON_CODES, code).toContain(code);
+      expect(safeHeldReason(code), code).toBe(HELD_REASON_COPY[code as keyof typeof HELD_REASON_COPY]);
+      expect(safeHeldReason(code), code).not.toBe('an unexpected condition — contact support');
+    }
+    // A free-text detail (what used to be written) is NOT a code.
+    expect(safeHeldReason('GOVERNOR: heal budget used')).toBe('an unexpected condition — contact support');
   });
 
   it('falls back for a held collector with no reason recorded at all', () => {

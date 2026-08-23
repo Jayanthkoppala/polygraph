@@ -16,6 +16,20 @@ export type VerificationInputStatus = 'captured' | 'unavailable';
  * repair. The column is therefore load-bearing, not descriptive. */
 export type DeliverySource = 'webhook' | 'verification';
 
+/** Mirrors `NON_TERMINAL_CYCLE_STATUSES` in recovery/store.ts (which imports
+ * this module, so the list is repeated here rather than imported). */
+const NON_TERMINAL_CYCLE_STATUSES_SQL = [
+  'PENDING',
+  'LEASED',
+  'REFACTOR_STARTED',
+  'AWAITING_APPROVAL',
+  'APPROVED_AUTOSAVE',
+  'PUBLISHED',
+  'VERIFYING',
+]
+  .map((s) => `'${s}'`)
+  .join(', ');
+
 const PREVIEW_ROWS = 3;
 const PREVIEW_STRING_MAX = 40;
 /** D9: payloads are retained for 30 days, hashes and previews forever. */
@@ -144,6 +158,12 @@ export function redactedPreview(rows: Record<string, unknown>[]): Record<string,
   });
 }
 
+/** The payload digest `record()` stores, exposed so ingest can match an
+ * incoming body against existing rows before deciding how to grade it. */
+export function deliveryPayloadHash(rows: Record<string, unknown>[]): string {
+  return sha256(canonicalJson(rows));
+}
+
 function dedupeKey(providerRunId: string | undefined, payloadHash: string): string {
   return providerRunId ? `provider:${providerRunId}` : `payload:${payloadHash}`;
 }
@@ -175,7 +195,7 @@ export class DeliveryStore {
   }
 
   record(delivery: AcceptedDelivery): StoredDelivery {
-    const payloadHash = sha256(canonicalJson(delivery.rows));
+    const payloadHash = deliveryPayloadHash(delivery.rows);
     const history = rowsForHistory(delivery.rows);
     const rowsJson = canonicalJson(history);
     const previewJson = canonicalJson(redactedPreview(history));
@@ -324,6 +344,31 @@ export class DeliveryStore {
       .all(tenantId, collectorId, limit) as DeliveryRow[];
   }
 
+  /**
+   * An existing `source = 'verification'` delivery whose provider run id is
+   * one of `runIds` or whose payload digest equals `payloadSha256`. Ingest
+   * uses this (with `RecoveryCycleStore.hasVerificationRun`) to recognise
+   * the worker's own post-repair run when Bright Data also delivers it over
+   * the webhook, so it is never graded as a fresh incident.
+   */
+  findVerificationDelivery(
+    tenantId: string,
+    collectorId: string,
+    match: { runIds: string[]; payloadSha256: string }
+  ): DeliveryRow | undefined {
+    const runClause = match.runIds.length > 0
+      ? `OR provider_run_id IN (${match.runIds.map(() => '?').join(', ')})`
+      : '';
+    return this.db
+      .prepare(
+        `SELECT * FROM collector_deliveries
+          WHERE tenant_id = ? AND collector_id = ? AND source = 'verification'
+            AND (payload_sha256 = ? ${runClause})
+          ORDER BY received_at DESC, id DESC LIMIT 1`
+      )
+      .get(tenantId, collectorId, match.payloadSha256, ...match.runIds) as DeliveryRow | undefined;
+  }
+
   /** The comparison point the policy grades an incident against. */
   baselineDelivery(tenantId: string, collectorId: string): DeliveryRow | undefined {
     return this.db
@@ -409,6 +454,12 @@ export class DeliveryStore {
    * receipt or a cycle, and losing the row would break those pointers and the
    * "this happened" evidence they rest on.
    *
+   * Two kinds of row are exempt however old they are: the current baseline
+   * (`is_baseline = 1`), whose rows are the comparison point every future
+   * grading needs, and the incident delivery of a cycle that has not reached
+   * a terminal status, whose rows the worker may still read while verifying.
+   * Both become eligible again as soon as they stop being referenced.
+   *
    * `now` is injected rather than read from the clock so the sweep is
    * testable without waiting 30 days.
    */
@@ -418,7 +469,12 @@ export class DeliveryStore {
       .prepare(
         `UPDATE collector_deliveries
             SET rows_json = NULL, purged_at = ?
-          WHERE rows_json IS NOT NULL AND received_at < ?`
+          WHERE rows_json IS NOT NULL AND received_at < ?
+            AND is_baseline = 0
+            AND id NOT IN (
+              SELECT incident_delivery_id FROM recovery_cycles
+               WHERE status IN (${NON_TERMINAL_CYCLE_STATUSES_SQL})
+            )`
       )
       .run(now.toISOString(), cutoff);
     return result.changes;

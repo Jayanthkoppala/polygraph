@@ -134,6 +134,35 @@ Secrets never belong in a config file — set them in the service environment.
 | `PORT` | no | Listen port, default 8080. |
 | `POLYGRAPH_CONCURRENCY` | no | Scheduler fan-out. |
 | `BRIGHTDATA_API_KEY` | no | Only for the CLI. Hosted tenants supply their own. |
+| `POLYGRAPH_AUTO_RECOVERY` | no | `1` turns on automatic collector recovery (the worker that repairs a broken collector through Bright Data Self-Healing and verifies the repair). Default off in code; on in prod/staging env files. See `docs/recovery.md`. |
+| `POLYGRAPH_TELEGRAM_BOT_TOKEN` / `POLYGRAPH_TELEGRAM_CHAT_ID` | no | Recovery notifications to Telegram. Unset = log lines only. |
+
+### Automatic recovery
+
+Full description, state machine and held codes: [`docs/recovery.md`](../docs/recovery.md).
+Operational summary:
+
+- **Migration 012** runs at every boot (non-destructive, idempotent): five
+  new tables (`collector_deliveries`, `collector_verification_inputs`,
+  `collector_recovery_state`, `recovery_cycles`, `repair_receipts`) plus
+  `collector_ingest_tokens.revoked_at`. It runs whether or not
+  `POLYGRAPH_AUTO_RECOVERY` is set.
+- **Changes that apply even with the flag unset:** unknown, rotated or
+  revoked ingest tokens answer `401`; deliveries are rate-limited per
+  collector (`429` + `Retry-After`, 120/hour); bodies are capped at 1 MB,
+  2000 rows, 200 keys per row, depth 6 (`413`/`400`); the scheduler runs an
+  hourly payload purge (no-op until deliveries exist).
+- **With the flag set:** ingest persists deliveries, captures the reusable
+  run input (encrypted under the master key) and may enqueue a recovery
+  cycle; the worker starts after the server is listening (boot scan of
+  orphaned cycles, then a 15 s interval). Boot never blocks on a cycle.
+- **Shutdown order:** worker (awaits its in-flight tick) → scheduler → HTTP
+  → database. A cycle interrupted mid-flight is resumed after restart by the
+  lease takeover; a cycle that may have a provider job in an unknown state
+  ends `HELD_PROVIDER_STATE_UNKNOWN` and waits for an operator.
+- **Emergency stop:** unset the variable and restart, or toggle auto-heal
+  off per collector in the workspace (`POST /api/recovery/collectors/:id/auto-heal`).
+  Neither clears an existing hold; only a healthy delivery does.
 
 ### Demo-mission variables
 

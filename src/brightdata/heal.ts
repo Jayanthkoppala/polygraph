@@ -360,7 +360,7 @@ function collectorViewUrl(collectorId: string): string {
   return `https://brightdata.com/cp/scrapers/${collectorId}`;
 }
 
-const DEFAULT_POLL: Required<PollOptions> = { intervalMs: 10_000, deadlineMs: 20 * 60_000 };
+const DEFAULT_POLL: Required<Pick<PollOptions, 'intervalMs' | 'deadlineMs'>> = { intervalMs: 10_000, deadlineMs: 20 * 60_000 };
 
 function resolvePollOptions(opts: PollOptions | undefined): PollOptions {
   return {

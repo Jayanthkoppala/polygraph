@@ -62,12 +62,19 @@ export type IneligibilityReason =
 
 /** Reasons that put the collector into HELD (operator attention), as opposed
  * to reasons that simply leave it READY and watching. */
-export const HOLDING_REASONS: ReadonlySet<IneligibilityReason> = new Set<IneligibilityReason>([
+export type HoldingReason = Extract<
+  IneligibilityReason,
+  'BLOCKED' | 'IDENTITY_UNSTABLE' | 'RETAINED_FIELDS_DAMAGED' | 'GOVERNOR'
+>;
+export const HOLDING_REASONS: ReadonlySet<IneligibilityReason> = new Set<HoldingReason>([
   'BLOCKED',
   'IDENTITY_UNSTABLE',
   'RETAINED_FIELDS_DAMAGED',
   'GOVERNOR',
 ]);
+export function isHoldingReason(reason: IneligibilityReason | 'ELIGIBLE'): reason is HoldingReason {
+  return reason !== 'ELIGIBLE' && HOLDING_REASONS.has(reason);
+}
 
 export type FieldRegression = 'missing' | 'type_change' | 'fill_collapse';
 

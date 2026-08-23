@@ -115,6 +115,8 @@ export interface RecoveryCycleRow {
   provider_template_before: string | null;
   provider_template_after: string | null;
   publication_proof_json: string | null;
+  /** Provider job id of this cycle's own verification run (S1-1c). */
+  verification_run_id: string | null;
   verification_delivery_id: string | null;
   lease_owner: string | null;
   lease_expires_at: string | null;
@@ -412,6 +414,7 @@ export class RecoveryCycleStore {
       templateBefore?: string | null;
       templateAfter?: string | null;
       publicationProof?: unknown;
+      verificationRunId?: string | null;
       verificationDeliveryId?: string | null;
       terminalReason?: string | null;
     },
@@ -438,6 +441,10 @@ export class RecoveryCycleStore {
     if (patch.publicationProof !== undefined) {
       sets.push('publication_proof_json = ?');
       params.push(patch.publicationProof === null ? null : canonicalJson(patch.publicationProof));
+    }
+    if (patch.verificationRunId !== undefined) {
+      sets.push('verification_run_id = ?');
+      params.push(patch.verificationRunId);
     }
     if (patch.verificationDeliveryId !== undefined) {
       sets.push('verification_delivery_id = ?');
@@ -505,6 +512,38 @@ export class RecoveryCycleStore {
           ORDER BY created_at ASC LIMIT ?`
       )
       .all(...NON_TERMINAL_CYCLE_STATUSES, nowIso, limit) as RecoveryCycleRow[];
+  }
+
+  /** The most recent cycle for a collector in any status, or `undefined`. */
+  latestForCollector(tenantId: string, collectorId: string): RecoveryCycleRow | undefined {
+    return this.listForCollector(tenantId, collectorId, 1)[0];
+  }
+
+  /** The most recent VERIFIED cycle for a collector, or `undefined`. */
+  latestVerifiedForCollector(tenantId: string, collectorId: string): RecoveryCycleRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM recovery_cycles
+          WHERE tenant_id = ? AND collector_id = ? AND status = 'VERIFIED'
+          ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(tenantId, collectorId) as RecoveryCycleRow | undefined;
+  }
+
+  /** Whether any cycle of this collector recorded one of `runIds` as its
+   * verification run. Used by ingest to recognise the worker's own
+   * post-repair run arriving through the webhook. */
+  hasVerificationRun(tenantId: string, collectorId: string, runIds: string[]): boolean {
+    if (runIds.length === 0) return false;
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM recovery_cycles
+          WHERE tenant_id = ? AND collector_id = ?
+            AND verification_run_id IN (${runIds.map(() => '?').join(', ')})
+          LIMIT 1`
+      )
+      .get(tenantId, collectorId, ...runIds);
+    return row !== undefined;
   }
 
   listForCollector(tenantId: string, collectorId: string, limit = 50): RecoveryCycleRow[] {

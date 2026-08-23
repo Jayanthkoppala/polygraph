@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MONITORING_ONLY_REASON } from '../../../src/tenancy/recovery/policy.js';
-import { healthyRows, setupHarness, type Harness } from './recovery-harness.js';
+import { HELD_REASON_COPY } from '../../../src/tenancy/recovery/api.js';
+import { FakeProvider, healthyRows, setupHarness, type Harness } from './recovery-harness.js';
+
+const BROKEN = () => healthyRows().map(({ price: _p, ...row }) => row);
 
 /** The ingest half of R2 (build plan D6/D7) through the real
  * `recordDeliveredRows` against a real migrated database. */
@@ -148,7 +151,7 @@ describe('recordDeliveredRows — recovery path', () => {
     expect(decision.cycleId).toBeNull();
     expect(h.recovery.cycles.listForCollector(h.tenantId, h.collectorId)).toEqual([]);
     expect(decision.state).toBe('HELD');
-    expect(h.state()!.held_reason).toMatch(/^IDENTITY_UNSTABLE/);
+    expect(h.state()!.held_reason).toBe('IDENTITY_UNSTABLE');
   });
 
   it('a verification-source delivery never opens a cycle even when structurally broken', async () => {
@@ -177,6 +180,165 @@ describe('recordDeliveredRows — recovery path', () => {
     expect(healed.state).toBe('READY');
     expect(h.state()!.held_reason).toBeNull();
     expect(h.state()!.baseline_delivery_id).toBe(healed.deliveryId);
+  });
+
+  it('S1-1a: HELD is a veto — a structural incident on a held collector never opens a cycle, and the hold code is kept', async () => {
+    await h.ingest(healthyRows());
+    const wrongEntity = healthyRows().map(({ price: _p, ...row }) => ({ ...row, sku: 'OTHER' }));
+    await h.ingest(wrongEntity);
+    expect(h.state()!.state).toBe('HELD');
+    expect(h.state()!.held_reason).toBe('IDENTITY_UNSTABLE');
+    expect(HELD_REASON_COPY.IDENTITY_UNSTABLE).toBeTruthy();
+
+    // Exactly the incident shape that opens a cycle on a READY collector.
+    const decision = await h.ingest(BROKEN());
+    expect(decision.deliveryId).toBeDefined();
+    expect(decision.cycleId).toBeNull();
+    expect(decision.state).toBe('HELD');
+    expect(h.recovery.cycles.listForCollector(h.tenantId, h.collectorId)).toEqual([]);
+    expect(h.state()!.held_reason).toBe('IDENTITY_UNSTABLE');
+  });
+
+  it('S1-1a: turning auto-heal on does not clear HELD; only a healthy delivery does', async () => {
+    await h.ingest(healthyRows());
+    await h.ingest(healthyRows().map(({ price: _p, ...row }) => ({ ...row, sku: 'OTHER' })));
+    expect(h.state()!.state).toBe('HELD');
+    let state = h.state()!;
+    h.recovery.state.setAutoHeal(h.tenantId, h.collectorId, false, state.state_version);
+    state = h.state()!;
+    h.recovery.state.setAutoHeal(h.tenantId, h.collectorId, true, state.state_version);
+    expect(h.state()!.state).toBe('HELD');
+    const incident = await h.ingest(BROKEN());
+    expect(incident.cycleId).toBeNull();
+    const healed = await h.ingest(healthyRows());
+    expect(healed.state).toBe('READY');
+    expect(h.state()!.held_reason).toBeNull();
+  });
+
+  it('S1-1b: an unresolved provider job from the last cycle vetoes a new cycle with UNRESOLVED_PROVIDER_JOB', async () => {
+    await h.ingest(healthyRows());
+    const first = await h.ingest(BROKEN());
+    // The worker started a heal job, then lost track of it.
+    let row = h.recovery.cycles.acquireLease(h.tenantId, first.cycleId!, 'w1', 60_000)!;
+    row = h.recovery.cycles.transition(h.tenantId, row.id, row.state_version, 'w1', { status: 'REFACTOR_STARTED', providerJobId: 'ia_lost' });
+    h.recovery.cycles.finish(h.tenantId, row.id, row.state_version, 'w1', 'HELD_PROVIDER_STATE_UNKNOWN', 'provider progress unreadable');
+    // Simulate the collector being READY again without a healthy delivery
+    // (the state the veto exists to guard, however it comes about).
+    const state = h.state()!;
+    h.recovery.state.transition(h.tenantId, h.collectorId, state.state_version, { state: 'READY', heldReason: null, activeCycleId: null });
+
+    const second = await h.ingest(BROKEN().map((r) => ({ ...r, title: `${r.title} v2` })));
+    expect(second.cycleId).toBeNull();
+    expect(second.state).toBe('HELD');
+    expect(h.state()!.held_reason).toBe('UNRESOLVED_PROVIDER_JOB');
+    expect(HELD_REASON_COPY.UNRESOLVED_PROVIDER_JOB).toBeTruthy();
+    expect(h.recovery.cycles.listForCollector(h.tenantId, h.collectorId)).toHaveLength(1);
+
+    // A healthy delivery after the failed cycle proves the collector moved
+    // on: the baseline refreshes and the next incident can open a cycle.
+    const healed = await h.ingest(healthyRows());
+    expect(healed.state).toBe('READY');
+    const third = await h.ingest(BROKEN().map((r) => ({ ...r, title: `${r.title} v3` })));
+    expect(third.cycleId).toBeTruthy();
+  });
+
+  it('S1-1b: a cycle that published and then failed verification is resolved at the provider and does not veto', async () => {
+    await h.ingest(healthyRows());
+    const first = await h.ingest(BROKEN());
+    let row = h.recovery.cycles.acquireLease(h.tenantId, first.cycleId!, 'w1', 60_000)!;
+    row = h.recovery.cycles.transition(h.tenantId, row.id, row.state_version, 'w1', {
+      status: 'PUBLISHED',
+      providerJobId: 'ia_done',
+      publicationProof: { completed_steps: ['save_new_template'] },
+    });
+    h.recovery.cycles.finish(h.tenantId, row.id, row.state_version, 'w1', 'FAILED', 'verification failed');
+    const state = h.state()!;
+    h.recovery.state.transition(h.tenantId, h.collectorId, state.state_version, { state: 'READY', heldReason: null, activeCycleId: null });
+    const second = await h.ingest(BROKEN().map((r) => ({ ...r, title: `${r.title} v2` })));
+    expect(second.cycleId).toBeTruthy();
+  });
+
+  it('S1-1c: while a cycle is mid-flight (RECOVERING) webhook deliveries are recorded but never open a second cycle', async () => {
+    await h.ingest(healthyRows());
+    const first = await h.ingest(BROKEN());
+    let row = h.recovery.cycles.acquireLease(h.tenantId, first.cycleId!, 'w1', 60_000)!;
+    row = h.recovery.cycles.transition(h.tenantId, row.id, row.state_version, 'w1', { status: 'REFACTOR_STARTED', providerJobId: 'ia_1' });
+    expect(h.state()!.state).toBe('RECOVERING');
+    const during = await h.ingest(BROKEN().map((r) => ({ ...r, title: `${r.title} again` })));
+    expect(during.deliveryId).toBeDefined();
+    expect(during.cycleId).toBe(first.cycleId);
+    expect(during.state).toBe('RECOVERING');
+    expect(h.recovery.cycles.listForCollector(h.tenantId, h.collectorId)).toHaveLength(1);
+    expect(h.deliveries.listDeliveries(h.tenantId, h.collectorId)).toHaveLength(3);
+  });
+
+  it('S1-1c: the verification run delivered back over the webhook is recorded as source=verification and never graded', async () => {
+    await h.ingest(healthyRows());
+    const incident = await h.ingest(BROKEN());
+    await h.worker({ providerFor: async () => new FakeProvider() }).tick();
+    expect(h.recovery.cycles.get(h.tenantId, incident.cycleId!)!.status).toBe('VERIFIED');
+    const ledgerBefore = h.ledgerVerdicts();
+    const failuresBefore = (h.db.prepare(`SELECT consecutive_failures FROM tenant_collectors WHERE collector_id = ?`).get(h.collectorId) as { consecutive_failures: number }).consecutive_failures;
+
+    // (1) by job id — the same rows Bright Data already handed the worker.
+    const byRun = await h.ingest(healthyRows(), { runId: 'j_verify_1' });
+    expect(byRun.source).toBe('verification');
+    expect(byRun.duplicate).toBe(true);
+    expect(byRun.ledgerId).toBeNull();
+    expect(byRun.cycleId).toBeNull();
+
+    // (2) by an alternate header id (x-brd-delivery-id) with a BROKEN body:
+    // still never an incident.
+    const byAlt = await h.ingest(BROKEN(), { runId: 'batch_9', candidateRunIds: ['batch_9', 'j_verify_1'] });
+    expect(byAlt.source).toBe('verification');
+    expect(byAlt.cycleId).toBeNull();
+    expect(h.deliveries.findById(h.tenantId, byAlt.deliveryId!)!.source).toBe('verification');
+
+    // (3) by payload digest with an unknown run id.
+    const byHash = await h.ingest(healthyRows(), { runId: 'j_unknown' });
+    expect(byHash.source).toBe('verification');
+    expect(byHash.cycleId).toBeNull();
+
+    expect(h.ledgerVerdicts()).toEqual(ledgerBefore);
+    expect(h.recovery.cycles.listForCollector(h.tenantId, h.collectorId)).toHaveLength(1);
+    expect(h.state()!.state).toBe('READY');
+    const failuresAfter = (h.db.prepare(`SELECT consecutive_failures FROM tenant_collectors WHERE collector_id = ?`).get(h.collectorId) as { consecutive_failures: number }).consecutive_failures;
+    expect(failuresAfter).toBe(failuresBefore);
+  });
+
+  it('S1-1c: a webhook carrying the job id of a verification run still in flight is recognised before the worker stores its rows', async () => {
+    await h.ingest(healthyRows());
+    const incident = await h.ingest(BROKEN());
+    let row = h.recovery.cycles.acquireLease(h.tenantId, incident.cycleId!, 'w1', 60_000)!;
+    row = h.recovery.cycles.transition(h.tenantId, row.id, row.state_version, 'w1', {
+      status: 'VERIFYING',
+      providerJobId: 'ia_1',
+      verificationRunId: 'j_verify_live',
+    });
+    const decision = await h.ingest(BROKEN(), { runId: 'j_verify_live' });
+    expect(decision.source).toBe('verification');
+    expect(decision.ledgerId).toBeNull();
+    expect(h.recovery.cycles.listForCollector(h.tenantId, h.collectorId)).toHaveLength(1);
+    expect(h.deliveries.findById(h.tenantId, decision.deliveryId!)!.source).toBe('verification');
+  });
+
+  it('S3-4: cycle creation and the RECOVERING flip are one transaction — a failed state write leaves no orphan cycle', async () => {
+    await h.ingest(healthyRows());
+    const original = h.recovery.state.transition.bind(h.recovery.state);
+    const { RecoveryStateStore } = await import('../../../src/tenancy/recovery/store.js');
+    const spy = RecoveryStateStore.prototype.transition;
+    RecoveryStateStore.prototype.transition = function (this: unknown, ...args: Parameters<typeof original>) {
+      if (args[3].state === 'RECOVERING') throw new Error('disk full');
+      return spy.apply(this, args);
+    } as typeof spy;
+    try {
+      await expect(h.ingest(BROKEN())).rejects.toThrow(/disk full/);
+    } finally {
+      RecoveryStateStore.prototype.transition = spy;
+    }
+    expect(h.recovery.cycles.listForCollector(h.tenantId, h.collectorId)).toEqual([]);
+    expect(h.state()!.state).toBe('READY');
+    expect(h.state()!.active_cycle_id).toBeNull();
   });
 
   it('auto_heal off: deliveries are still recorded and graded but no cycle opens', async () => {

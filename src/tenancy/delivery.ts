@@ -12,20 +12,22 @@ import type { Cause, Evidence, RunError, RunResult } from '../core/types.js';
 import type { Governor } from '../loop/policy.js';
 import type { TenantCollectorRow } from './scope.js';
 import { scopeFor } from './scope.js';
-import { DeliveryStore } from './delivery-store.js';
+import { DeliveryStore, deliveryPayloadHash } from './delivery-store.js';
 import {
   ActiveCycleExistsError,
+  isTerminalCycleStatus,
   RecoveryStore,
   StaleWriteError,
   type RecoveryState,
 } from './recovery/store.js';
 import {
   evaluateRecoveryEligibility,
-  HOLDING_REASONS,
+  isHoldingReason,
   MONITORING_ONLY_REASON,
   RECOVERY_POLICY,
 } from './recovery/policy.js';
 import { isAutoRecoveryEnabled } from './recovery/worker.js';
+import type { HeldReasonCode } from './recovery/api.js';
 import { loadRunnerOverridesFor } from './onboarding.js';
 
 const DELIVERY_PREFIX = 'pgi_';
@@ -201,7 +203,13 @@ interface DeliveryDecision {
   verdict: string;
   cause: string;
   action: string;
-  ledgerId: number;
+  /** `null` only for a recognised verification-run delivery, which is never
+   * graded and therefore never gets a ledger event of its own. */
+  ledgerId: number | null;
+  /** `'verification'` when the payload was recognised as the recovery
+   * worker's own post-repair run (S1-1c); such a delivery is recorded under
+   * that source and never graded as an incident. */
+  source?: 'webhook' | 'verification';
   /** Set only when automatic recovery is enabled (POLYGRAPH_AUTO_RECOVERY=1
    * and a master key was supplied): the durable delivery id, the collector's
    * recovery state after this delivery, and the cycle it opened, if any. */
@@ -221,6 +229,9 @@ export interface RecoveryIngestOptions {
   enabled?: boolean;
   /** Clock for governor checks; defaults to the delivery's `nowIso`. */
   now?: string;
+  /** Every provider id the request carried (job id, delivery id, batch id),
+   * matched against cycles' verification runs in addition to `externalRunId`. */
+  candidateRunIds?: string[];
 }
 
 /** Grades rows already produced by Bright Data. This never calls the
@@ -240,6 +251,19 @@ export async function recordDeliveredRows(
   const collectorRow = scope.collectors.get(target.collectorId);
   if (!collectorRow || collectorRow.setup_state !== 'confirmed') {
     throw new Error('polygraph: delivery target no longer has a confirmed collector');
+  }
+
+  const recoveryEnabled = recoveryOptions
+    ? (recoveryOptions.enabled ?? isAutoRecoveryEnabled())
+    : false;
+
+  // S1-1c: the worker's own verification run, delivered back over the
+  // webhook, is not an incident. Recognise it BEFORE grading so it never
+  // reaches the ledger as a failure, never bumps consecutive_failures, and
+  // never opens a cycle.
+  if (recoveryOptions && recoveryEnabled) {
+    const verification = recordVerificationRedelivery(db, target, rows, nowIso, externalRunId, recoveryOptions);
+    if (verification) return verification;
   }
 
   const client = new BrightDataClient({ apiKey: 'delivery-does-not-call-brightdata' });
@@ -309,9 +333,6 @@ export async function recordDeliveredRows(
     ledgerId: event.id,
   };
 
-  const recoveryEnabled = recoveryOptions
-    ? (recoveryOptions.enabled ?? isAutoRecoveryEnabled())
-    : false;
   if (!recoveryOptions || !recoveryEnabled) return base;
 
   const recovery = recordForRecovery(db, target, collectorRow, rows, runResult.errors, {
@@ -324,6 +345,64 @@ export async function recordDeliveredRows(
     governor: ctx.governor,
   });
   return { ...base, ...recovery };
+}
+
+/**
+ * Recognises a webhook delivery that is really the output of a recovery
+ * cycle's verification run — by any provider id the request carried
+ * matching a cycle's `verification_run_id` or an existing verification
+ * delivery's run id, or by the payload digest matching one — and records it
+ * as `source = 'verification'` (a duplicate when the worker already stored
+ * the same run). Returns `undefined` when the delivery is an ordinary one.
+ */
+function recordVerificationRedelivery(
+  db: Database.Database,
+  target: DeliveryTarget,
+  rows: Record<string, unknown>[],
+  nowIso: string,
+  externalRunId: string | undefined,
+  options: RecoveryIngestOptions
+): DeliveryDecision | undefined {
+  const { tenantId, collectorId } = target;
+  const runIds = [...new Set([externalRunId, ...(options.candidateRunIds ?? [])].filter((v): v is string => !!v))];
+  const deliveries = new DeliveryStore(db, options.masterKey);
+  const recovery = new RecoveryStore(db, deliveries);
+  const payloadSha256 = deliveryPayloadHash(rows);
+
+  const existing = deliveries.findVerificationDelivery(tenantId, collectorId, { runIds, payloadSha256 });
+  const knownRun = existing !== undefined || recovery.cycles.hasVerificationRun(tenantId, collectorId, runIds);
+  if (!knownRun) return undefined;
+
+  const stored = deliveries.record({
+    tenantId,
+    collectorId,
+    rows,
+    receivedAt: nowIso,
+    source: 'verification',
+    ...(externalRunId ? { providerRunId: externalRunId } : {}),
+    ...(existing?.verdict ? { verdict: existing.verdict } : {}),
+    ...(existing?.cause ? { cause: existing.cause } : {}),
+  });
+  db.prepare(
+    `UPDATE collector_ingest_tokens SET last_seen_at = ?
+      WHERE tenant_id = ? AND collector_id = ?`
+  ).run(nowIso, tenantId, collectorId);
+  const state = recovery.state.ensure(tenantId, collectorId, nowIso);
+  return {
+    collectorId,
+    runId: externalRunId ?? `delivery_${randomUUID()}`,
+    rowCount: rows.length,
+    verdict: existing?.verdict ?? 'VERIFICATION',
+    cause: existing?.cause ?? 'NONE',
+    action: 'NONE',
+    ledgerId: null,
+    source: 'verification',
+    deliveryId: stored.id,
+    state: state.state,
+    heldReason: state.held_reason,
+    cycleId: state.active_cycle_id,
+    duplicate: !stored.inserted || existing !== undefined,
+  };
 }
 
 interface RecordForRecoveryInput {
@@ -436,30 +515,60 @@ function recordForRecovery(
     // A genuinely healthy delivery (PASS, and policy found nothing
     // structurally different from the baseline) refreshes the baseline —
     // unless a cycle is mid-flight, whose verification owns that decision.
+    // This is the ONLY way a HELD collector returns to READY: the operator's
+    // auto-heal toggle never clears a hold (see docs/recovery.md).
     if (input.verdict === 'PASS' && eligibility.reason === 'HEALTHY' && state.state !== 'RECOVERING') {
       return refreshBaseline();
     }
 
+    // S1-1a: HELD is a veto, not a hint. A held collector never opens a
+    // cycle, whatever policy would otherwise say about this delivery.
+    if (state.state === 'HELD') return outcome();
+
+    // S1-1b: a previous cycle left a provider job that never reached
+    // publication (its status is terminal but not VERIFIED, it recorded a
+    // job id, and nothing since has proven the job resolved). Starting a
+    // second refactor on top of it is exactly the double mutation the worker
+    // exists to prevent, so hold here instead.
+    if (eligibility.eligible && hasUnresolvedProviderJob(recovery, tenantId, collectorId, baseline)) {
+      state = recovery.state.transition(
+        tenantId,
+        collectorId,
+        state.state_version,
+        { state: 'HELD', heldReason: 'UNRESOLVED_PROVIDER_JOB' satisfies HeldReasonCode },
+        input.nowIso
+      );
+      return outcome();
+    }
+
     if (eligibility.eligible) {
       try {
-        const cycle = recovery.cycles.create(
-          {
+        // S3-4: the cycle row and the state flip to RECOVERING are one
+        // transaction — a cycle nobody's state row points at, or a
+        // RECOVERING state with no cycle, are both unrecoverable by the
+        // worker's scan.
+        const created = db.transaction(() => {
+          const cycle = recovery.cycles.create(
+            {
+              tenantId,
+              collectorId,
+              incidentDeliveryId: stored.id,
+              baselineDeliveryId: baseline!.id,
+              policyEvidence: eligibility.evidence,
+            },
+            input.nowIso
+          );
+          const next = recovery.state.transition(
             tenantId,
             collectorId,
-            incidentDeliveryId: stored.id,
-            baselineDeliveryId: baseline!.id,
-            policyEvidence: eligibility.evidence,
-          },
-          input.nowIso
-        );
-        state = recovery.state.transition(
-          tenantId,
-          collectorId,
-          state.state_version,
-          { state: 'RECOVERING', heldReason: null, activeCycleId: cycle.id },
-          input.nowIso
-        );
-        return outcome(cycle.id);
+            state.state_version,
+            { state: 'RECOVERING', heldReason: null, activeCycleId: cycle.id },
+            input.nowIso
+          );
+          return { cycle, next };
+        })();
+        state = created.next;
+        return outcome(created.cycle.id);
       } catch (err) {
         if (!(err instanceof ActiveCycleExistsError)) throw err;
         // Already recovering — the existing cycle covers this incident.
@@ -468,16 +577,14 @@ function recordForRecovery(
       }
     }
 
-    if (
-      eligibility.reason !== 'ELIGIBLE' &&
-      HOLDING_REASONS.has(eligibility.reason) &&
-      state.state === 'READY'
-    ) {
+    if (isHoldingReason(eligibility.reason) && state.state === 'READY') {
+      // S2-6: the state row carries the bare code only; `eligibility.detail`
+      // is operator-safe but still free text, and the UI maps codes to copy.
       state = recovery.state.transition(
         tenantId,
         collectorId,
         state.state_version,
-        { state: 'HELD', heldReason: `${eligibility.reason}: ${eligibility.detail}` },
+        { state: 'HELD', heldReason: eligibility.reason satisfies HeldReasonCode },
         input.nowIso
       );
     }
@@ -487,4 +594,28 @@ function recordForRecovery(
     state = recovery.state.get(tenantId, collectorId) ?? state;
     return outcome();
   }
+}
+
+/**
+ * S1-1b. True when the collector's most recent cycle ended in a terminal,
+ * non-VERIFIED status with a provider job id recorded but no publication
+ * proof, and nothing since has shown the provider moved on: no later
+ * VERIFIED cycle, and no healthy baseline received after that cycle was
+ * opened. (A cycle that reached PUBLISHED and then failed verification is
+ * resolved at the provider — its job completed — so it does not count.)
+ */
+function hasUnresolvedProviderJob(
+  recovery: RecoveryStore,
+  tenantId: string,
+  collectorId: string,
+  baseline: { received_at: string } | undefined
+): boolean {
+  const latest = recovery.cycles.latestForCollector(tenantId, collectorId);
+  if (!latest) return false;
+  if (latest.status === 'VERIFIED' || !isTerminalCycleStatus(latest.status)) return false;
+  if (!latest.provider_job_id || latest.publication_proof_json) return false;
+  const verified = recovery.cycles.latestVerifiedForCollector(tenantId, collectorId);
+  if (verified && verified.created_at > latest.created_at) return false;
+  if (baseline && baseline.received_at > latest.created_at) return false;
+  return true;
 }

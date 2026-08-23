@@ -131,12 +131,13 @@ describe('automatic recovery HTTP contract', () => {
     });
   }
 
-  function ingest(url: string, rows: unknown, runId?: string) {
+  function ingest(url: string, rows: unknown, runId?: string, extraHeaders: Record<string, string> = {}) {
     return fetch(url, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         ...(runId ? { 'x-brightdata-job-id': runId } : {}),
+        ...extraHeaders,
       },
       body: JSON.stringify(rows),
     });
@@ -200,6 +201,21 @@ describe('automatic recovery HTTP contract', () => {
 
     const live = await ingest(fresh.replace(ORIGIN, base), [{ sku: 'S1', title: 'T', price: 1 }]);
     expect(live.status).toBe(200);
+  });
+
+  it('S1-1c: accepts x-brd-delivery-id / x-brd-delivery-batch-id as the run id when x-brightdata-job-id is absent', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    const { webhookUrl } = await account.connect('c_customer');
+    const rows = [{ input: { url: 'https://x/1' }, sku: 'S1', title: 'T', price: 1 }];
+    const byDelivery = await ingest(webhookUrl, rows, undefined, { 'x-brd-delivery-id': 'd_123' });
+    expect(byDelivery.status).toBe(200);
+    expect(((await byDelivery.json()) as { run_id: string }).run_id).toBe('d_123');
+    const byBatch = await ingest(webhookUrl, rows.map((r) => ({ ...r, price: 2 })), undefined, { 'x-brd-delivery-batch-id': 'b_7' });
+    expect(((await byBatch.json()) as { run_id: string }).run_id).toBe('b_7');
+    // The job id header wins when several are present.
+    const both = await ingest(webhookUrl, rows.map((r) => ({ ...r, price: 3 })), 'j_1', { 'x-brd-delivery-id': 'd_9' });
+    expect(((await both.json()) as { run_id: string }).run_id).toBe('j_1');
   });
 
   it('rate-limits deliveries per collector and answers 429 with a Retry-After', async () => {

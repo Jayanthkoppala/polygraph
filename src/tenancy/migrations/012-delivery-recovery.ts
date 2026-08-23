@@ -178,6 +178,7 @@ export function up012DeliveryRecovery(db: Database.Database): void {
     provider_template_before TEXT,
     provider_template_after  TEXT,
     publication_proof_json   TEXT,
+    verification_run_id      TEXT,
     verification_delivery_id TEXT REFERENCES collector_deliveries(id) ON DELETE SET NULL,
     lease_owner              TEXT,
     lease_expires_at         TEXT,
@@ -199,6 +200,16 @@ export function up012DeliveryRecovery(db: Database.Database): void {
     WHERE status IN (${quotedList(NON_TERMINAL)})`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_recovery_cycles_collector
     ON recovery_cycles(tenant_id, collector_id, created_at DESC)`);
+  // `verification_run_id` is the provider job id of the worker's own
+  // post-repair run, written BEFORE that run's rows are graded. Ingest
+  // consults it so a webhook delivery of the verification run's output is
+  // recorded as `source = 'verification'` and can never be graded as a new
+  // incident (the "repair of the repair" recursion). Guarded ADD COLUMN so a
+  // database created from an earlier draft of this migration is upgraded in
+  // place and the migration stays idempotent.
+  if (!columnExists(db, 'recovery_cycles', 'verification_run_id')) {
+    db.exec(`ALTER TABLE recovery_cycles ADD COLUMN verification_run_id TEXT`);
+  }
 
   // -------------------------------------------------------------------------
   // Repair receipts — the durable read model for the UI's Repairs table, and

@@ -113,13 +113,15 @@ export interface BrightDataClientOptions {
  * replaced: dataset/unlocker result polls, and the (much slower) Self-Healing
  * refactor_template progress poll — Bright Data documents a heal as taking up
  * to ~15 minutes, so its deadline leaves headroom above that. */
-const DATASET_POLL_DEFAULTS: Required<PollOptions> = { intervalMs: 5000, deadlineMs: 600_000 };
-const REFACTOR_POLL_DEFAULTS: Required<PollOptions> = { intervalMs: 10_000, deadlineMs: 20 * 60_000 };
+type PollDefaults = Required<Pick<PollOptions, 'intervalMs' | 'deadlineMs'>>;
+const DATASET_POLL_DEFAULTS: PollDefaults = { intervalMs: 5000, deadlineMs: 600_000 };
+const REFACTOR_POLL_DEFAULTS: PollDefaults = { intervalMs: 10_000, deadlineMs: 20 * 60_000 };
 
-function resolvePoll(opts: PollOptions, defaults: Required<PollOptions>): Required<PollOptions> {
+function resolvePoll(opts: PollOptions, defaults: PollDefaults): Required<PollOptions> {
   return {
     intervalMs: opts.intervalMs ?? defaults.intervalMs,
     deadlineMs: opts.deadlineMs ?? defaults.deadlineMs,
+    onPoll: opts.onPoll ?? (() => {}),
   };
 }
 
@@ -128,6 +130,19 @@ export interface PollOptions {
   intervalMs?: number;
   /** Total time to keep polling before giving up. Default 600_000ms (10min). */
   deadlineMs?: number;
+  /** Called once per poll iteration, before the request. The recovery
+   * worker uses it as a lease heartbeat during long dataset polls; an
+   * exception thrown here aborts the poll and propagates to the caller. */
+  onPoll?: () => void;
+}
+
+/** Per-request override of the client-wide retry policy. */
+interface RequestOptions {
+  /** Max retries for THIS request. `0` = exactly one attempt, whatever the
+   * client's `maxRetries`. Mutating POSTs that are not idempotent at the
+   * provider (Self-Healing start/approve) must pass 0: a retry after a
+   * timed-out first attempt could start or approve a job twice. */
+  retries?: number;
 }
 
 /**
@@ -431,8 +446,9 @@ export class BrightDataClient {
     this.baseDelayMs = options.baseDelayMs ?? 500;
   }
 
-  private async fetchWithRetry(path: string, init: RequestInit = {}): Promise<Response> {
+  private async fetchWithRetry(path: string, init: RequestInit = {}, options: RequestOptions = {}): Promise<Response> {
     const url = `${this.baseUrl}${path}`;
+    const maxRetries = options.retries ?? this.maxRetries;
     const headers = {
       Authorization: `Bearer ${this.apiKey}`,
       'Content-Type': 'application/json',
@@ -445,7 +461,7 @@ export class BrightDataClient {
       try {
         res = await this.fetchImpl(url, { ...init, headers });
       } catch (err) {
-        if (attempt >= this.maxRetries) {
+        if (attempt >= maxRetries) {
           throw new BrightDataError(
             `request to ${path} failed after ${attempt} retr${attempt === 1 ? 'y' : 'ies'}: ${(err as Error).message}`
           );
@@ -454,7 +470,7 @@ export class BrightDataClient {
         continue;
       }
 
-      if (res.status >= 500 && attempt < this.maxRetries) {
+      if (res.status >= 500 && attempt < maxRetries) {
         await this.backoff(attempt++);
         continue;
       }
@@ -505,6 +521,7 @@ export class BrightDataClient {
     const start = Date.now();
 
     for (;;) {
+      poll.onPoll();
       const res = await this.fetchWithRetry(`/dca/dataset?id=${encodeURIComponent(jobId)}`);
 
       if (res.status === 202) {
@@ -719,10 +736,18 @@ export class BrightDataClient {
    * envelope as-is; Bright Data's docs don't publish its exact shape.
    */
   async refactorTemplate(collectorId: string, prompt: string, customInput: unknown[] = []): Promise<unknown> {
-    const res = await this.fetchWithRetry(`/dca/collectors/${encodeURIComponent(collectorId)}/refactor_template`, {
-      method: 'POST',
-      body: JSON.stringify({ prompt, custom_input: customInput }),
-    });
+    // `retries: 0`: a refactor_template POST that timed out may still have
+    // started a job. Retrying could start a second one; the caller's state
+    // machine (recovery worker) records the intent and resumes as
+    // "provider state unknown" instead.
+    const res = await this.fetchWithRetry(
+      `/dca/collectors/${encodeURIComponent(collectorId)}/refactor_template`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ prompt, custom_input: customInput }),
+      },
+      { retries: 0 }
+    );
     await ensureOk(res, `refactorTemplate(${collectorId})`);
     return safeJson(res);
   }
@@ -793,7 +818,9 @@ export class BrightDataClient {
       {
         method: 'POST',
         body: JSON.stringify({ message: opts.message, auto_save: opts.autoSave }),
-      }
+      },
+      // Never retried at the HTTP layer — see refactorTemplate.
+      { retries: 0 }
     );
     await ensureOk(res, `resumeAutomationJob(${collectorId})`);
   }

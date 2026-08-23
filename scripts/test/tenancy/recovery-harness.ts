@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import { recordDeliveredRows } from '../../../src/tenancy/delivery.js';
 import { DeliveryStore } from '../../../src/tenancy/delivery-store.js';
 import { RecoveryStore } from '../../../src/tenancy/recovery/store.js';
-import type { FreshRunResult, ProviderProgress, RecoveryProvider } from '../../../src/tenancy/recovery/provider.js';
+import type { FreshRunHooks, FreshRunResult, ProviderProgress, RecoveryProvider } from '../../../src/tenancy/recovery/provider.js';
 import { RecoveryWorker, type RecoveryWorkerDeps } from '../../../src/tenancy/recovery/worker.js';
 import { scopeFor } from '../../../src/tenancy/scope.js';
 import { setupRecoveryFixture, type RecoveryFixture } from './recovery-fixtures.js';
@@ -35,7 +35,7 @@ export interface Harness {
   recovery: RecoveryStore;
   ingest(
     rows: Record<string, unknown>[],
-    options?: { runId?: string; now?: string; enabled?: boolean; withRecovery?: boolean }
+    options?: { runId?: string; now?: string; enabled?: boolean; withRecovery?: boolean; candidateRunIds?: string[] }
   ): ReturnType<typeof recordDeliveredRows>;
   state(): ReturnType<RecoveryStore['state']['get']>;
   ledgerVerdicts(): string[];
@@ -93,7 +93,11 @@ export function setupHarness(): Harness {
         now,
         runId,
         withRecovery
-          ? { masterKey: f.masterKey, ...('enabled' in options ? { enabled: options.enabled } : { enabled: true }) }
+          ? {
+              masterKey: f.masterKey,
+              ...('enabled' in options ? { enabled: options.enabled } : { enabled: true }),
+              ...(options.candidateRunIds ? { candidateRunIds: options.candidateRunIds } : {}),
+            }
           : undefined
       );
     },
@@ -192,8 +196,10 @@ export class FakeProvider implements RecoveryProvider {
     this.published = true;
   }
 
-  async freshRun(collectorId: string, inputs: unknown[]): Promise<FreshRunResult> {
+  async freshRun(collectorId: string, inputs: unknown[], hooks: FreshRunHooks = {}): Promise<FreshRunResult> {
     this.calls.push({ method: 'freshRun', args: [collectorId, inputs] });
+    hooks.onStarted?.('j_verify_1');
+    hooks.onPoll?.();
     return {
       jobId: 'j_verify_1',
       rows: this.opts.freshRows ?? healthyRows(),

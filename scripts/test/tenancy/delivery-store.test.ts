@@ -8,6 +8,7 @@ import {
 import { SecretDecryptionError, SecretString } from '../../../src/tenancy/crypto.js';
 import { decryptVerificationInput } from '../../../src/tenancy/verification-input-crypto.js';
 import { setupRecoveryFixture, type RecoveryFixture } from './recovery-fixtures.js';
+import { RecoveryStore } from '../../../src/tenancy/recovery/store.js';
 
 const fixtures: RecoveryFixture[] = [];
 
@@ -366,6 +367,41 @@ describe('DeliveryStore.purgeExpiredPayloads', () => {
 
     // Idempotent: a second sweep finds nothing left to purge.
     expect(store.purgeExpiredPayloads(new Date('2026-08-23T00:00:00.000Z'))).toBe(0);
+  });
+});
+
+describe('DeliveryStore.purgeExpiredPayloads exemptions (S3-2)', () => {
+  it('never purges the baseline, nor the incident of a cycle that is still advancing — until they stop being referenced', () => {
+    const f = fixture();
+    const store = new DeliveryStore(f.db, f.masterKey);
+    const recovery = new RecoveryStore(f.db, store);
+    const at = (runId: string, received: string) =>
+      store.record({ tenantId: f.tenantId, collectorId: f.collectorId, rows: rows(2), receivedAt: received, source: 'webhook', providerRunId: runId });
+    const baseline = at('run_base', '2026-05-01T00:00:00.000Z');
+    store.markBaseline(f.tenantId, f.collectorId, baseline.id);
+    const incident = at('run_incident', '2026-05-02T00:00:00.000Z');
+    const plain = at('run_plain', '2026-05-03T00:00:00.000Z');
+    const cycle = recovery.cycles.create({ tenantId: f.tenantId, collectorId: f.collectorId, incidentDeliveryId: incident.id, baselineDeliveryId: baseline.id, policyEvidence: {} });
+
+    const now = new Date('2026-08-23T00:00:00.000Z');
+    expect(store.purgeExpiredPayloads(now)).toBe(1);
+    expect(store.findById(f.tenantId, plain.id)!.rows_json).toBeNull();
+    expect(store.findById(f.tenantId, baseline.id)!.rows_json).not.toBeNull();
+    expect(store.findById(f.tenantId, incident.id)!.rows_json).not.toBeNull();
+
+    // Cycle ends: its incident is purgeable; the baseline still is not.
+    const leased = recovery.cycles.acquireLease(f.tenantId, cycle.id, 'w', 60_000)!;
+    recovery.cycles.finish(f.tenantId, cycle.id, leased.state_version, 'w', 'FAILED', 'x');
+    expect(store.purgeExpiredPayloads(now)).toBe(1);
+    expect(store.findById(f.tenantId, incident.id)!.rows_json).toBeNull();
+    expect(store.findById(f.tenantId, baseline.id)!.rows_json).not.toBeNull();
+
+    // A newer baseline demotes the old one, which then purges.
+    const fresh = at('run_fresh', '2026-08-22T00:00:00.000Z');
+    store.markBaseline(f.tenantId, f.collectorId, fresh.id);
+    expect(store.purgeExpiredPayloads(now)).toBe(1);
+    expect(store.findById(f.tenantId, baseline.id)!.rows_json).toBeNull();
+    expect(store.findById(f.tenantId, fresh.id)!.rows_json).not.toBeNull();
   });
 });
 

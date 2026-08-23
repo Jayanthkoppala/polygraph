@@ -57,25 +57,65 @@ export const STATE_COPY = {
  * content the rest of this module is careful not to return. An unrecognised
  * code degrades to the generic sentence instead of being shown.
  */
-export const HELD_REASON_COPY: Record<string, string> = {
+/**
+ * The closed set of codes any producer may write into
+ * `collector_recovery_state.held_reason`. The worker (`CycleStop.code`) and
+ * ingest (`recordForRecovery`) write ONLY these bare codes; the free-text
+ * detail of why a cycle stopped lives in `recovery_cycles.terminal_reason`
+ * and the ops log, never in the state row.
+ */
+export type HeldReasonCode =
+  // Worker: terminal cycle outcomes.
+  | 'PROVIDER_STATE_UNKNOWN'
+  | 'VERIFICATION_FAILED'
+  | 'PROVIDER_ERROR'
+  | 'POLICY'
+  | 'BUDGET'
+  // Ingest: policy vetoes that hold the collector (HOLDING_REASONS).
+  | 'BLOCKED'
+  | 'IDENTITY_UNSTABLE'
+  | 'RETAINED_FIELDS_DAMAGED'
+  | 'GOVERNOR'
+  // Ingest: structural vetoes.
+  | 'HELD'
+  | 'UNRESOLVED_PROVIDER_JOB'
+  | 'MONITORING_ONLY'
+  // Reserved for the operator surface.
+  | 'NO_REUSABLE_INPUT'
+  | 'AUTO_HEAL_DISABLED'
+  | 'IDENTITY_CHANGED';
+
+export const HELD_REASON_COPY: Record<HeldReasonCode, string> = {
   PROVIDER_STATE_UNKNOWN: 'the provider state could not be confirmed',
-  POLICY: 'policy no longer allows an automatic repair',
-  BUDGET: 'the automatic repair budget is used up',
   VERIFICATION_FAILED: 'the repaired collector did not pass verification',
   PROVIDER_ERROR: 'Bright Data could not complete the repair',
+  POLICY: 'policy no longer allows an automatic repair',
+  BUDGET: 'the automatic repair budget is used up',
+  BLOCKED: 'the source blocked the collector',
+  IDENTITY_UNSTABLE: 'the collector now returns a different entity',
+  RETAINED_FIELDS_DAMAGED: 'fields that should have survived the break are also damaged',
+  GOVERNOR: 'the automatic repair budget is used up',
+  HELD: 'a previous hold has not been cleared by a healthy delivery',
+  UNRESOLVED_PROVIDER_JOB: 'an earlier repair job is still unresolved at the provider',
+  MONITORING_ONLY: 'no reusable run input was captured',
   NO_REUSABLE_INPUT: 'no reusable run input was captured',
   AUTO_HEAL_DISABLED: 'automatic recovery is switched off for this collector',
   IDENTITY_CHANGED: 'the collector now returns a different entity',
-  BLOCKED: 'the source blocked the collector',
 };
+
+export const HELD_REASON_CODES = Object.keys(HELD_REASON_COPY) as HeldReasonCode[];
+
+export function isHeldReasonCode(value: unknown): value is HeldReasonCode {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(HELD_REASON_COPY, value);
+}
 
 const HELD_REASON_FALLBACK = 'an unexpected condition — contact support';
 
 /** Maps a stored held-reason code to customer-facing words. Never returns the
  * input string itself. */
 export function safeHeldReason(code: string | null | undefined): string {
-  if (!code) return HELD_REASON_FALLBACK;
-  return HELD_REASON_COPY[code] ?? HELD_REASON_FALLBACK;
+  if (!isHeldReasonCode(code)) return HELD_REASON_FALLBACK;
+  return HELD_REASON_COPY[code];
 }
 
 export interface CollectorViewInput {
