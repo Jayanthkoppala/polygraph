@@ -116,6 +116,15 @@ export async function saveApiKey(apiKey: string): Promise<SaveKeyOutcome> {
   }
 }
 
+/** A fresh server-side inventory check. This deliberately uses the encrypted
+ * tenant key; the browser never receives it again after the initial save. */
+export async function listAvailableCollectors(): Promise<CollectorCandidate[]> {
+  const res = await fetch('/api/collectors/available', { headers: { accept: 'application/json' } });
+  if (!res.ok) await throwApiError(res);
+  const body = (await res.json()) as { collectors?: unknown };
+  return asCollectorCandidates(body.collectors);
+}
+
 export interface ConnectedCollector {
   id: string;
   name: string;

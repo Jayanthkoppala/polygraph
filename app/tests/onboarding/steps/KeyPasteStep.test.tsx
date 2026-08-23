@@ -7,7 +7,7 @@ import * as api from '@/onboarding/api';
 
 vi.mock('@/onboarding/api', async () => {
   const actual = await vi.importActual<typeof import('@/onboarding/api')>('@/onboarding/api');
-  return { ...actual, saveApiKey: vi.fn() };
+  return { ...actual, saveApiKey: vi.fn(), listAvailableCollectors: vi.fn() };
 });
 
 afterEach(() => {
@@ -39,8 +39,21 @@ describe('KeyPasteStep — the key is never rendered back', () => {
     expect(input.value).toBe('');
     expect(document.body.textContent).not.toContain(FAKE_KEY);
 
+    vi.mocked(api.listAvailableCollectors).mockResolvedValue([{ id: 'a', name: 'a' }]);
     resolvePromise({ kind: 'verified', last4: '2345', collectors: [{ id: 'a', name: 'a' }] });
     await waitFor(() => expect(document.body.textContent).not.toContain(FAKE_KEY));
+  });
+
+  it('uses the refreshed server inventory, not a stale list returned when the key was saved', async () => {
+    vi.mocked(api.saveApiKey).mockResolvedValue({ kind: 'verified', last4: '2345', collectors: [{ id: 'stale', name: 'Stale' }] });
+    vi.mocked(api.listAvailableCollectors).mockResolvedValue([{ id: 'current', name: 'Current' }]);
+    const onVerified = vi.fn();
+    render(<KeyPasteStep onVerified={onVerified} onRejected={vi.fn()} onListUnavailable={vi.fn()} />);
+
+    fireEvent.change(screen.getByTestId('api-key-input'), { target: { value: FAKE_KEY } });
+    fireEvent.click(screen.getByTestId('connect-button'));
+
+    await waitFor(() => expect(onVerified).toHaveBeenCalledWith('2345', [{ id: 'current', name: 'Current' }]));
   });
 
   it('never renders the key on a rejected submission either', async () => {

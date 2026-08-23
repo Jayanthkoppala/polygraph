@@ -131,6 +131,20 @@ describe('customer collector connection', () => {
     expect(await connected.json()).toEqual({ error: 'collector not found in this Bright Data account' });
   });
 
+  it('returns a fresh account inventory before the UI offers a collector for connection', async () => {
+    const { base, cookie } = await boot({
+      total: 1,
+      data: [{ id: 'c_current', name: 'Current collector', output_schema: ['sku'] }],
+    });
+
+    const available = await fetch(`${base}/api/collectors/available`, {
+      headers: { origin: ORIGIN, cookie },
+    });
+
+    expect(available.status).toBe(200);
+    expect(await available.json()).toEqual({ collectors: [{ id: 'c_current', name: 'Current collector' }] });
+  });
+
   it('asks for one real Bright Data run when no published output schema exists instead of inventing a contract', async () => {
     const { base, cookie } = await boot([{ id: 'c_no_schema', name: 'New Collector' }]);
     const connected = await fetch(`${base}/api/collectors/connect`, {

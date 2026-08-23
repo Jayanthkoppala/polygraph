@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { saveApiKey, ApiError } from '../api';
+import { saveApiKey, listAvailableCollectors, ApiError } from '../api';
 import type { CollectorCandidate } from '../machine';
 
 export interface KeyPasteStepProps {
@@ -37,13 +37,27 @@ export function KeyPasteStep({ onVerified, onRejected, onListUnavailable }: KeyP
     setApiKey('');
     try {
       const outcome = await saveApiKey(submitted);
-      setVerifying(false);
       if (outcome.kind === 'verified') {
-        onVerified(outcome.last4, outcome.collectors);
+        // Do not present the first list response as a promise. The server
+        // re-checks the connected account immediately before selection, so a
+        // collector removed or unpublished in the meantime cannot be chosen.
+        try {
+          const collectors = await listAvailableCollectors();
+          if (collectors.length === 0) {
+            onListUnavailable();
+          } else {
+            onVerified(outcome.last4, collectors);
+          }
+        } catch {
+          onListUnavailable();
+        }
+        setVerifying(false);
       } else if (outcome.kind === 'rejected') {
+        setVerifying(false);
         setFailure({ source: 'upstream', message: outcome.message });
         onRejected(outcome.message);
       } else {
+        setVerifying(false);
         onListUnavailable();
       }
     } catch (err) {

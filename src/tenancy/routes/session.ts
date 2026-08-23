@@ -185,6 +185,25 @@ export async function handleSessionRoutes(ctx: RouteContext, session: Session, t
     return;
   }
 
+  // The key-save response is a useful fast payoff, but provider inventories can
+  // change between that response and the user's selection. This route is the
+  // authoritative list immediately before the UI offers a collector to connect.
+  if (method === 'GET' && path === '/api/collectors/available') {
+    const scope = scopeWithSecrets(deps.reader, session.tenantId, tenantRowWriter.genesis_hash, deps);
+    const client = tenantBrightDataClient(scope, deps, res);
+    if (!client) return;
+    try {
+      sendJson(res, 200, { collectors: summarizeCollectorsList(await client.collectorsList()) });
+    } catch (err) {
+      if (err instanceof BrightDataError) {
+        sendJson(res, 503, { error: 'Bright Data was unreachable while refreshing collectors' });
+        return;
+      }
+      throw err;
+    }
+    return;
+  }
+
   if (method === 'POST' && path === '/api/collectors/connect') {
     if (!requireCsrf(req, res, deps.publicOrigin)) return;
     const body = await readJsonBody<{ collector_id?: unknown }>(req, res);

@@ -9,6 +9,7 @@ import {
   fetchGoogleAuthConfig,
   loginWithGoogleCredential,
   connectCollector,
+  listAvailableCollectors,
   ApiError,
 } from '@/onboarding/api';
 
@@ -54,6 +55,14 @@ describe('saveApiKey', () => {
   it('other status codes still throw ApiError rather than being silently swallowed', async () => {
     mockFetchOnce(500, { error: 'internal server error' });
     await expect(saveApiKey('brd_customer_x')).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe('listAvailableCollectors', () => {
+  it('returns the current server inventory as minimal collector candidates', async () => {
+    mockFetchOnce(200, { collectors: [{ id: 'c_current', name: 'Current' }] });
+    await expect(listAvailableCollectors()).resolves.toEqual([{ id: 'c_current', name: 'Current' }]);
+    expect(fetch).toHaveBeenCalledWith('/api/collectors/available', { headers: { accept: 'application/json' } });
   });
 });
 
