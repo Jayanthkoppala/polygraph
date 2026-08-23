@@ -26,12 +26,17 @@ chown 1000:1000 /data
 
 # The e2-small is deliberately cheap. One local source build needs a small,
 # persistent swap file, while the old healthy container continues serving.
-if [ ! -f /swapfile ]; then
+if ! swapon --show=NAME --noheadings | grep -qx /swapfile; then
+  # A previous interrupted boot may leave a partially allocated file behind.
+  # Recreate it atomically enough for startup: only an active swap file is
+  # trusted, and any inactive residue is safe to replace.
+  swapoff /swapfile 2>/dev/null || true
+  rm -f /swapfile
   fallocate -l 1G /swapfile
   chmod 600 /swapfile
   mkswap /swapfile
+  swapon /swapfile
 fi
-swapon --show=NAME | grep -qx /swapfile || swapon /swapfile
 
 metadata_root="http://metadata.google.internal/computeMetadata/v1"
 metadata_header="Metadata-Flavor: Google"
