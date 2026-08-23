@@ -29,15 +29,30 @@ export function CodeComparison({ beforeCode, afterCode, language = 'json', filen
   useEffect(() => {
     let active = true;
     async function highlightCode() {
+      let highlighter: Awaited<ReturnType<typeof import('shiki')['createHighlighter']>> | undefined;
       try {
-        const { codeToHtml } = await import('shiki');
-        const { transformerNotationDiff, transformerNotationFocus, transformerNotationHighlight } = await import('@shikijs/transformers');
+        const [{ createHighlighter }, { createJavaScriptRegexEngine }, { transformerNotationDiff, transformerNotationFocus, transformerNotationHighlight }] = await Promise.all([
+          import('shiki'),
+          import('shiki/engine/javascript'),
+          import('@shikijs/transformers'),
+        ]);
+        // Shiki's default browser path uses Oniguruma WebAssembly. Polygraph's
+        // hosted CSP intentionally does not allow WebAssembly evaluation, so
+        // use Shiki's native JavaScript regex engine instead of weakening CSP.
+        highlighter = await createHighlighter({
+          langs: [language],
+          themes: [selectedTheme],
+          engine: createJavaScriptRegexEngine(),
+        });
         const options = { lang: language, theme: selectedTheme, transformers: [transformerNotationHighlight({ matchAlgorithm: 'v3' }), transformerNotationDiff({ matchAlgorithm: 'v3' }), transformerNotationFocus({ matchAlgorithm: 'v3' })] };
-        const [before, after] = await Promise.all([codeToHtml(beforeCode, options), codeToHtml(afterCode, options)]);
+        const before = highlighter.codeToHtml(beforeCode, options);
+        const after = highlighter.codeToHtml(afterCode, options);
         if (active) { setHighlightedBefore(before); setHighlightedAfter(after); }
       } catch (error) {
         console.error('CodeComparison highlighting failed:', error);
         if (active) { setHighlightedBefore(''); setHighlightedAfter(''); }
+      } finally {
+        highlighter?.dispose();
       }
     }
     void highlightCode();

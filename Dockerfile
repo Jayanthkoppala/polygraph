@@ -37,10 +37,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/app/dist ./app/dist
-COPY package.json ./
+COPY --chown=node:node --from=build /app/node_modules ./node_modules
+COPY --chown=node:node --from=build /app/dist ./dist
+# Vite preserves source modes for public assets. Giving the runtime user
+# ownership here keeps fonts, icons, and future copied assets readable even
+# when a build context supplied a restrictive mode such as 0600.
+COPY --chown=node:node --from=build /app/app/dist ./app/dist
+COPY --chown=node:node package.json ./
 
 # The data directory, owned by the unprivileged `node` user BEFORE the
 # volume is mounted — otherwise the mount creates it root-owned and
