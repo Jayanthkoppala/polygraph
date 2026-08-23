@@ -75,4 +75,19 @@ describe('owned fixture heal permit', () => {
 
     await expect(healOwnedFixture('price moved', { client, policy, permit, previewContract, poll: { intervalMs: 1, deadlineMs: 10 } })).rejects.toThrow(/save_new_template/i);
   });
+
+  it('refuses a terminal heal envelope that omits promotion evidence', async () => {
+    let polls = 0;
+    const client: Pick<BrightDataClient, 'refactorTemplate' | 'pollRefactorTemplateProgress' | 'resumeAutomationJob'> = {
+      refactorTemplate: vi.fn(async () => ({})) as BrightDataClient['refactorTemplate'],
+      pollRefactorTemplateProgress: vi.fn(async () => (++polls === 1
+        ? { status: 'pending_answer', preview_result: [{ product_code: 'SKU-1', title: 'Aster', price: { value: 51.77, currency: 'GBP', symbol: '£' }, availability: 'In stock' }] }
+        : { status: 'done' })) as BrightDataClient['pollRefactorTemplateProgress'],
+      resumeAutomationJob: vi.fn(async () => undefined),
+    };
+    const permit = mintOwnedFixtureHealPermit(collectorId, fixtureUrl, policy);
+    const previewContract = { productCode: 'SKU-1', title: 'Aster', price: { value: 51.77, currency: 'GBP', symbol: '£' }, availability: 'In stock' };
+
+    await expect(healOwnedFixture('title moved', { client, policy, permit, previewContract, poll: { intervalMs: 1, deadlineMs: 10 } })).rejects.toThrow(/save_new_template/i);
+  });
 });

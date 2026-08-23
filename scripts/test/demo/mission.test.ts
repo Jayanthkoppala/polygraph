@@ -143,16 +143,29 @@ describe('demo mission sequence', () => {
       'heal:start', 'heal:poll', 'heal:resume:true:true', 'heal:poll', 'trigger:4', 'poll:4',
     ]);
   });
-  it('refuses a partial B regression before Self-Healing', async () => {
-    const { calls, service } = fakes({ brokenRow: { ...HEALTHY_ROW, price: { value: 0, currency: 'GBP', symbol: '£' } } });
+  it('accepts a title-only B regression and heals only the observed field', async () => {
+    const { title: _omittedTitle, ...liveTitleRegression } = HEALTHY_ROW;
+    const { calls, service } = fakes({ brokenRow: liveTitleRegression });
     const mission = service.create(); await service.whenSettled(mission.id); service.shift(mission.id); await service.whenSettled(mission.id);
-    expect(service.current(mission.id)?.last_error).toMatch(/expected product_code, title, and price regression while preserving availability/);
+    expect(service.current(mission.id)).toMatchObject({ status: 'healed', scene: 'receipt', last_error: null });
+    expect(service.current(mission.id)?.evidence.changed_fields).toEqual(['title']);
+    expect(calls).toContain('heal:start');
+    const prompt = service.current(mission.id)?.events.find((event) => event.step === 'healing_prompt')?.detail ?? '';
+    expect(prompt).toContain('regressed title');
+    expect(prompt).toContain('.old-title -> .title-101');
+    expect(prompt).not.toContain('[data-old-code] -> [data-code-101]');
+    expect(prompt).not.toContain('.old-price -> .price-101');
+  });
+  it('quarantines a conflicting non-empty title without starting Self-Healing', async () => {
+    const { calls, service } = fakes({ brokenRow: { ...HEALTHY_ROW, title: 'A different product title' } });
+    const mission = service.create(); await service.whenSettled(mission.id); service.shift(mission.id); await service.whenSettled(mission.id);
+    expect(service.current(mission.id)?.last_error).toMatch(/different non-empty product title/);
     expect(calls).not.toContain('heal:start');
   });
   it('refuses B when availability changes with the other three fixture fields', async () => {
     const { calls, service } = fakes({ brokenRow: { ...BROKEN_ROW, availability: '' } });
     const mission = service.create(); await service.whenSettled(mission.id); service.shift(mission.id); await service.whenSettled(mission.id);
-    expect(service.current(mission.id)?.last_error).toMatch(/expected product_code, title, and price regression while preserving availability/);
+    expect(service.current(mission.id)?.last_error).toMatch(/changed the stable availability control field/);
     expect(service.current(mission.id)?.evidence).toMatchObject({
       broken_run_id: 'job-2',
       broken_result: { ...BROKEN_ROW, product_code: null, title: null, availability: null },

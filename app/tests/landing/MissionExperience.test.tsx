@@ -185,6 +185,7 @@ describe('MissionExperience live mission story', () => {
     expect(await screen.findByText(/for this test, we built a live evolving store/i)).toBeInTheDocument();
     expect(missionApi.createMission).toHaveBeenCalledOnce();
     expect(screen.getAllByText(/product\/code-123/i).length).toBeGreaterThan(0);
+    expect(screen.getByTestId('live-generation-badge')).toHaveTextContent('LIVE · GENERATION 41');
     expect(screen.getByTitle(/live product page — generation 41/i)).toHaveAttribute('src', 'https://fixture.example/');
     expect(screen.getByTitle(/live product page — generation 41/i).closest('.pg-magic-safari')).not.toBeNull();
     expect(screen.getByLabelText(/mission progress: collect/i)).toBeInTheDocument();
@@ -197,6 +198,7 @@ describe('MissionExperience live mission story', () => {
 
     fireEvent.click(screen.getByTestId('shift-v2-btn'));
     expect(await screen.findByLabelText(/generating new anchors/i)).toBeInTheDocument();
+    expect(screen.getByTestId('live-generation-badge')).toHaveTextContent('LIVE · GENERATION 42');
     expect(screen.getByLabelText(/publishing generation 42/i)).toBeInTheDocument();
     expect(screen.queryByTitle(/live product page/i)).not.toBeInTheDocument();
     expect(missionApi.shiftMission).toHaveBeenCalledWith('mission-1');
@@ -222,6 +224,7 @@ describe('MissionExperience live mission story', () => {
 
     missionApi.getMission.mockResolvedValue(recoveredMission);
     expect(await screen.findByText(/third production run is back/i, {}, { timeout: 7_000 })).toBeInTheDocument();
+    expect(screen.getByTestId('live-generation-badge')).toHaveTextContent('LIVE · GENERATION 42');
     await waitFor(() => expect(screen.getByTestId('proof-route')).toHaveTextContent(/stage=prove/));
     expect(screen.getByText(/4 of 4 fields verified/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/mission progress: prove/i)).toBeInTheDocument();

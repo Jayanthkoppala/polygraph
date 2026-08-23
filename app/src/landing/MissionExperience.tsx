@@ -125,11 +125,16 @@ function LiveStoreFrame({ mission }: { mission: MissionState }) {
   );
 }
 
-function ConversationScene({ state, activeStage, reducedMotion, visual, children }: { state: string; activeStage: MissionProgressStage; reducedMotion: boolean; visual: ReactNode; children: ReactNode }) {
+function LiveGenerationBadge({ generation }: { generation: string }) {
+  return <span className="pg-live-generation" data-testid="live-generation-badge">LIVE · GENERATION {generation}</span>;
+}
+
+function ConversationScene({ state, activeStage, reducedMotion, generation, visual, children }: { state: string; activeStage: MissionProgressStage; reducedMotion: boolean; generation?: string; visual: ReactNode; children: ReactNode }) {
   return (
     <div className={`pg-app pg-conversation-app ${state}`}>
       <main className="pg-conversation-stage" data-testid="conversation-scene">
         <MissionProgressRail active={activeStage} reducedMotion={reducedMotion} />
+        {generation && <LiveGenerationBadge generation={generation} />}
         <section className="pg-conversation" aria-live="polite">{children}</section>
         <div className="pg-conversation-visual">{visual}</div>
       </main>
@@ -210,7 +215,7 @@ function BaselineScene({ mission, request, reducedMotion, onShift }: { mission: 
   const ready = mission.status === 'waiting' && Boolean(baseline);
   const lead = ready ? 'For this test, we built a live evolving store and connected it to a real Bright Data collector.' : 'For this test, we built a live evolving store. Bright Data is collecting its current healthy generation now.';
   return (
-    <ConversationScene state="state-v1" activeStage={0} reducedMotion={reducedMotion} visual={<LiveStoreFrame mission={mission} />}>
+    <ConversationScene state="state-v1" activeStage={0} reducedMotion={reducedMotion} generation={generationLabel(mission, 'baseline')} visual={<LiveStoreFrame mission={mission} />}>
       <StoryLine>{reducedMotion ? lead : <span className="pg-type-guidance"><span className="pg-visually-hidden">{lead}</span><span aria-hidden="true"><TextType as="span" text={lead} loop={false} typingSpeed={18} /></span></span>}</StoryLine>
       <StoryLine quiet>{ready ? `Generation ${generationLabel(mission, 'baseline')} returned ${facts.productCode}, its full product title, ${facts.price}, and ${facts.availability}. Polygraph saved all four fields as the healthy reference before anything changes.` : 'Once that real result arrives, Polygraph will remember the product code, title, price, and availability before anything changes.'}</StoryLine>
       <ProofSources liveUrl={mission.evidence.liveFixtureUrl} />
@@ -226,7 +231,7 @@ function DeployScene({ mission, reducedMotion }: { mission: MissionState; reduce
   const changedGeneration = generationLabel(mission, 'changed');
   const switchMessage = marker ? `The new recorded generation is live in production. GitHub published the change before Polygraph continued.` : 'You asked the test store to evolve. GitHub is generating, committing, and publishing that real change now.';
   return (
-    <ConversationScene state="state-deploying" activeStage={0} reducedMotion={reducedMotion} visual={<EvolutionPublishGraphic baselineGeneration={baselineGeneration} targetGeneration={changedGeneration} deployed={Boolean(marker)} reducedMotion={reducedMotion} />}>
+    <ConversationScene state="state-deploying" activeStage={0} reducedMotion={reducedMotion} generation={changedGeneration} visual={<EvolutionPublishGraphic baselineGeneration={baselineGeneration} targetGeneration={changedGeneration} deployed={Boolean(marker)} reducedMotion={reducedMotion} />}>
       <StoryLine>{marker ? switchMessage : <SplitFlapText words={['GENERATING NEW ANCHORS', 'COMMITTING TO GITHUB', 'WAITING FOR PRODUCTION', 'VERIFYING LIVE MARKER']} loop cycleDelay={1_150} flipDuration={0.09} stagger={0.025} flipsPerChar={4} padTo={22} fontSize={15} gap={2} tileRadius={3} />}</StoryLine>
       <StoryLine quiet>{reducedMotion ? (marker ? 'Polygraph left the collector untouched and automatically started it against the new generation.' : 'Polygraph is waiting for the production marker instead of pretending the new page is live.') : <DecryptedText text={marker ? 'Polygraph left the collector untouched and automatically started it against the new generation.' : 'Polygraph is waiting for the production marker instead of pretending the new page is live.'} animateOn="view" sequential speed={24} />}</StoryLine>
       <StoryLine quiet><span className="pg-auto-status">No more clicks. The proof continues automatically.</span></StoryLine>
@@ -241,7 +246,7 @@ function BrokenScene({ mission, reducedMotion }: { mission: MissionState; reduce
   const changed = generationLabel(mission, 'changed');
   const breakMessage = difference ? `The same collector just ran against generation ${changed}. ${readableFields(changedFields)} no longer match the healthy generation ${baseline} result.` : `The evolved store is live. Polygraph is watching the same collector run against generation ${changed} now.`;
   return (
-    <ConversationScene state="state-broken" activeStage={1} reducedMotion={reducedMotion} visual={difference ? <JsonDifference before={mission.evidence.baselineResult} after={mission.evidence.brokenResult} changedFields={changedFields} /> : <div className="pg-visual-wait">Waiting for the changed collector result.</div>}>
+    <ConversationScene state="state-broken" activeStage={1} reducedMotion={reducedMotion} generation={changed} visual={difference ? <JsonDifference before={mission.evidence.baselineResult} after={mission.evidence.brokenResult} changedFields={changedFields} /> : <div className="pg-visual-wait">Waiting for the changed collector result.</div>}>
       <StoryLine>{difference && !reducedMotion ? <span className="pg-fuzzy-message"><span className="pg-visually-hidden">{breakMessage}</span><FuzzyText fontSize={27} fontWeight={650} color="#8f252d" baseIntensity={0.14} hoverIntensity={0.3} enableHover>{`${changedFields.length} EXTRACTION FIELDS BROKE`}</FuzzyText></span> : breakMessage}</StoryLine>
       <StoryLine quiet>{difference ? <Highlighter action="underline" color="#8f252d" strokeWidth={2}>Polygraph holds the incomplete generation {changed} result instead of sending it downstream. The comparison shows exactly which fields regressed and which evidence remained healthy.</Highlighter> : 'Polygraph will wait for the returned data before deciding whether the generated structure actually broke anything.'}</StoryLine>
       <StoryLine quiet><span className="pg-auto-status">Polygraph is investigating this regression automatically.</span></StoryLine>
@@ -255,7 +260,7 @@ function DiagnosisScene({ mission, reducedMotion }: { mission: MissionState; red
   const changedFields = mission.evidence.changedFields;
   const diagnosis = `Here is what Polygraph found: generation ${generationLabel(mission, 'changed')} moved ${readableFields(changedFields)}, while availability still agrees with healthy generation ${generationLabel(mission, 'baseline')}.`;
   return (
-    <ConversationScene state="state-diagnosis" activeStage={1} reducedMotion={reducedMotion} visual={<PolygraphProcessGraphic phase="diagnosis" proofReady={false} reducedMotion={reducedMotion} changedFields={changedFields} baselineLabel={generationLabel(mission, 'baseline')} changedLabel={generationLabel(mission, 'changed')} />}>
+    <ConversationScene state="state-diagnosis" activeStage={1} reducedMotion={reducedMotion} generation={generationLabel(mission, 'changed')} visual={<PolygraphProcessGraphic phase="diagnosis" proofReady={false} reducedMotion={reducedMotion} changedFields={changedFields} baselineLabel={generationLabel(mission, 'baseline')} changedLabel={generationLabel(mission, 'changed')} />}>
       <StoryLine>{reducedMotion ? diagnosis : <span className="pg-type-guidance"><span className="pg-visually-hidden">{diagnosis}</span><span aria-hidden="true"><TextType as="span" text={diagnosis} typingSpeed={12} loop={false} /></span></span>}</StoryLine>
       <StoryLine quiet>{memory ? 'By comparing the two runs with its incident memory, it recognized a moved selector rather than a legitimate product change.' : 'It is comparing both runs with the failures it already knows, looking for the exact cause.'}</StoryLine>
       <StoryLine quiet>{prompt ? 'Polygraph turned that evidence into precise repair instructions for Bright Data, so Self-Healing knows what broke and what must remain unchanged.' : 'Next, Polygraph will translate the evidence into a focused Self-Healing request.'}</StoryLine>
@@ -270,7 +275,7 @@ function HealScene({ mission, reducedMotion }: { mission: MissionState; reducedM
   const proofReady = mission.status === 'healed' && Boolean(receipt && mission.evidence.recoveryRunId);
   const changedFields = mission.evidence.changedFields;
   return (
-    <ConversationScene state="state-healing" activeStage={proofReady ? 3 : 2} reducedMotion={reducedMotion} visual={<PolygraphProcessGraphic phase="healing" proofReady={proofReady} reducedMotion={reducedMotion} changedFields={changedFields} baselineLabel={generationLabel(mission, 'baseline')} changedLabel={generationLabel(mission, 'changed')} />}>
+    <ConversationScene state="state-healing" activeStage={proofReady ? 3 : 2} reducedMotion={reducedMotion} generation={generationLabel(mission, 'changed')} visual={<PolygraphProcessGraphic phase="healing" proofReady={proofReady} reducedMotion={reducedMotion} changedFields={changedFields} baselineLabel={generationLabel(mission, 'baseline')} changedLabel={generationLabel(mission, 'changed')} />}>
       <StoryLine>{healing ? `Polygraph sent one evidence-backed request for ${readableFields(changedFields)}, and Bright Data returned an autosaved repair candidate for the same collector.` : `Polygraph has handed Bright Data the exact ${changedFields.length}-field diff. Self-Healing is preparing a candidate for the same collector now.`}</StoryLine>
       <StoryLine quiet>{healing ? `But a “repair completed” message is not proof. Polygraph keeps the old result held and runs the repaired collector against live generation ${generationLabel(mission, 'changed')} again.` : 'While Bright Data works, Polygraph keeps the broken result safely held.'}</StoryLine>
       <StoryLine quiet>{proofReady ? `That separate generation ${generationLabel(mission, 'changed')} run has arrived. Polygraph checked product code, title, price, and availability before unlocking the final proof.` : reducedMotion ? `Now Polygraph is waiting for a completely fresh generation ${generationLabel(mission, 'changed')} collection.` : <DecryptedText text={`Now Polygraph is waiting for a completely fresh generation ${generationLabel(mission, 'changed')} collection.`} animateOn="view" sequential speed={24} />}</StoryLine>
@@ -282,7 +287,7 @@ function HealScene({ mission, reducedMotion }: { mission: MissionState; reducedM
 function ProofScene({ mission, reducedMotion }: { mission: MissionState; reducedMotion: boolean }) {
   const facts = missionFacts(mission, 'receipt');
   return (
-    <ConversationScene state="state-proof" activeStage={3} reducedMotion={reducedMotion} visual={<RecoverySuccess productCode={facts.productCode} price={facts.price} />}>
+    <ConversationScene state="state-proof" activeStage={3} reducedMotion={reducedMotion} generation={generationLabel(mission, 'changed')} visual={<RecoverySuccess productCode={facts.productCode} price={facts.price} />}>
       <StoryLine>The third production run is back. Product code, title, price, and availability all match the healthy generation {generationLabel(mission, 'baseline')} reference again.</StoryLine>
       <StoryLine quiet>Polygraph now has fresh evidence that Bright Data repaired every regressed field, not merely a “repair completed” message.</StoryLine>
       <StoryLine><Highlighter action="highlight" color="#245b3d" iterations={1}>{`${facts.productCode} is back at ${facts.price} with 4 of 4 fields verified.`}</Highlighter></StoryLine>
@@ -296,7 +301,7 @@ function ProofScene({ mission, reducedMotion }: { mission: MissionState; reduced
 
 function EvidenceScene({ mission, reducedMotion }: { mission: MissionState; reducedMotion: boolean }) {
   return (
-    <ConversationScene state="state-evidence" activeStage={3} reducedMotion={reducedMotion} visual={<div className="pg-conversation-events">{mission.events.map((event) => <div key={`${event.step}-${event.at}`}><time>{providerTime(event.at)}</time><span>{readableStep(event.step)}</span><span>{event.detail}</span></div>)}</div>}>
+    <ConversationScene state="state-evidence" activeStage={3} reducedMotion={reducedMotion} generation={generationLabel(mission, 'changed')} visual={<div className="pg-conversation-events">{mission.events.map((event) => <div key={`${event.step}-${event.at}`}><time>{providerTime(event.at)}</time><span>{readableStep(event.step)}</span><span>{event.detail}</span></div>)}</div>}>
       <StoryLine>Here is the evidence trail behind the story. Every line came from this live mission, from the first generation {generationLabel(mission, 'baseline')} collection to the final generation {generationLabel(mission, 'changed')} proof.</StoryLine>
     </ConversationScene>
   );
