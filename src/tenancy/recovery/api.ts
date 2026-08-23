@@ -203,7 +203,17 @@ export function listRecoveryCollectors(
       hasReceipt: receipt !== undefined,
     });
     const latest = deliveries.listDeliveries(tenantId, collectorId, { limit: 1 })[0];
-    const baseline = deliveries.baselineDelivery(tenantId, collectorId);
+    // The STATE row is what decides whether this collector has a baseline —
+    // it is the flag ingest reads before grading anything (delivery.ts's
+    // `hasBaseline`). The `is_baseline` column on the delivery is downstream
+    // of that decision and outlives it: a collector that was removed and
+    // added back is `WAITING_BASELINE` with its pointer cleared, while the
+    // old delivery still carries the flag until a new baseline supersedes
+    // it. Reading the column here would print a baseline date next to
+    // "Waiting for first healthy delivery".
+    const baseline = state?.baseline_delivery_id
+      ? deliveries.findById(tenantId, state.baseline_delivery_id)
+      : undefined;
     return {
       collector_id: collectorId,
       name: collector.name,

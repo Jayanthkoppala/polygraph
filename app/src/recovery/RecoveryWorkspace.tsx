@@ -16,6 +16,7 @@ import {
   fetchRecoveryCollectors,
   fetchRecoveryDeliveries,
   fetchRecoveryRepairs,
+  removeCollector,
   revealIngestToken,
   rotateIngestToken,
   setCollectorAutoHeal,
@@ -39,6 +40,7 @@ interface PendingWebhook {
 export function RecoveryWorkspace() {
   const navigate = useNavigate();
   const [collectors, setCollectors] = useState<RecoveryCollector[] | null>(null);
+  const [telegramConfigured, setTelegramConfigured] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -58,13 +60,16 @@ export function RecoveryWorkspace() {
   const [addingCollector, setAddingCollector] = useState(false);
   const [pendingWebhook, setPendingWebhook] = useState<PendingWebhook | null>(null);
   const [pendingAutoHeal, setPendingAutoHeal] = useState<string | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
 
   const pollCollectors = useCallback(async () => {
     try {
-      const next = await fetchRecoveryCollectors();
+      const { collectors: next, telegramConfigured: telegram } = await fetchRecoveryCollectors();
       setCollectors(next);
+      setTelegramConfigured(telegram);
       setError(null);
       setSelectedId((current) => {
         if (current && next.some((c) => c.collectorId === current)) return current;
@@ -111,6 +116,25 @@ export function RecoveryWorkspace() {
       })
       .finally(() => setPendingAutoHeal(null));
   }, []);
+
+  const handleRemoveCollector = useCallback(
+    (collector: RecoveryCollector) => {
+      setPendingRemove(collector.collectorId);
+      setRemoveError(null);
+      void removeCollector(collector.collectorId)
+        .then(() => pollCollectors())
+        .catch((err: unknown) => {
+          // The 409 ("a repair is in flight") is the case worth surfacing
+          // verbatim: it tells the operator what to do next, and the server
+          // owns the wording.
+          setRemoveError(
+            err instanceof ApiError ? err.message : `Could not remove ${collector.name}.`,
+          );
+        })
+        .finally(() => setPendingRemove(null));
+    },
+    [pollCollectors],
+  );
 
   const handleAddCollector = useCallback(async (collectorId: string) => {
     const connected = await connectCollector(collectorId);
@@ -219,10 +243,14 @@ export function RecoveryWorkspace() {
         <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[#9B9B9B]">Polygraph</span>
         <span className="font-mono text-xs text-[#9B9B9B]">Recovery workspace</span>
         <span
-          title="Telegram approvals — coming soon"
-          className="ml-auto flex items-center gap-1.5 rounded-full border border-[#313131] bg-[#1B1B1B] px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-[#71717A]"
+          title={telegramConfigured ? 'Telegram alerts — on' : 'Telegram alerts — coming soon'}
+          className={`ml-auto flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide ${
+            telegramConfigured
+              ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
+              : 'border-[#313131] bg-[#1B1B1B] text-[#71717A]'
+          }`}
         >
-          Telegram approvals — coming soon
+          {telegramConfigured ? 'Telegram alerts — on' : 'Telegram alerts — coming soon'}
         </span>
         <button
           type="button"
@@ -250,6 +278,12 @@ export function RecoveryWorkspace() {
         </p>
       )}
 
+      {removeError && (
+        <p role="alert" className="shrink-0 border-b border-red-400/20 bg-red-400/10 px-4 py-2 text-xs text-red-200">
+          {removeError}
+        </p>
+      )}
+
       <div className="grid min-h-0 flex-1 gap-4 overflow-hidden p-4" style={{ gridTemplateColumns: '280px 1fr' }}>
         <div className="flex min-h-0 min-w-0 flex-col gap-3">
           {/* No rail-level "Rotate token" any more: rotation applied to
@@ -265,7 +299,9 @@ export function RecoveryWorkspace() {
             onSelect={handleSelect}
             onToggleAutoHeal={handleToggleAutoHeal}
             onRevealWebhook={handleRevealWebhook}
+            onRemove={handleRemoveCollector}
             pendingAutoHeal={pendingAutoHeal}
+            pendingRemove={pendingRemove}
           />
         </div>
 

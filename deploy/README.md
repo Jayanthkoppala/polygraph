@@ -145,7 +145,8 @@ Secrets never belong in a config file — set them in the service environment.
 | `POLYGRAPH_CONCURRENCY` | no | Scheduler fan-out. |
 | `BRIGHTDATA_API_KEY` | no | Only for the CLI. Hosted tenants supply their own. |
 | `POLYGRAPH_AUTO_RECOVERY` | no | `1` turns on automatic collector recovery (the worker that repairs a broken collector through Bright Data Self-Healing and verifies the repair). Default off in code; on in prod/staging env files. See `docs/recovery.md`. |
-| `POLYGRAPH_TELEGRAM_BOT_TOKEN` / `POLYGRAPH_TELEGRAM_CHAT_ID` | no | Recovery notifications to Telegram. Unset = log lines only. |
+| `POLYGRAPH_TELEGRAM_BOT_TOKEN` | no | Bot API token from @BotFather. Set BOTH this and the chat id or neither — half-configured sends nothing. |
+| `POLYGRAPH_TELEGRAM_CHAT_ID` | no | Chat the bot posts recovery alerts into (negative id for a group; the bot must be a member). Unset = log lines only. |
 
 ### Automatic recovery
 
@@ -157,6 +158,13 @@ Operational summary:
   `collector_recovery_state`, `recovery_cycles`, `repair_receipts`) plus
   `collector_ingest_tokens.revoked_at`. It runs whether or not
   `POLYGRAPH_AUTO_RECOVERY` is set.
+- **Telegram alerts.** With both `POLYGRAPH_TELEGRAM_*` variables set, the
+  recovery worker posts to that chat when a repair starts, verifies, or is
+  held. Sends are fire-and-forget (5s timeout, no retry, never throws), carry
+  no row content, provider error text, or keys, and the bot token is redacted
+  out of any failure the server logs. Leaving them unset is a supported
+  configuration: the same facts go to the ops log and the workspace header
+  reads "Telegram alerts — coming soon". See `docs/recovery.md`.
 - **Changes that apply even with the flag unset:** unknown, rotated or
   revoked ingest tokens answer `401`; deliveries are rate-limited per
   collector (`429` + `Retry-After`, 120/hour); bodies are capped at 1 MB,

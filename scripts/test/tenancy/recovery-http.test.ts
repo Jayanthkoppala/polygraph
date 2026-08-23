@@ -68,6 +68,8 @@ describe('automatic recovery HTTP contract', () => {
     running = undefined;
     delete process.env.POLYGRAPH_MASTER_KEY;
     delete process.env.POLYGRAPH_AUTO_RECOVERY;
+    delete process.env.POLYGRAPH_TELEGRAM_BOT_TOKEN;
+    delete process.env.POLYGRAPH_TELEGRAM_CHAT_ID;
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
@@ -958,6 +960,145 @@ describe('automatic recovery HTTP contract', () => {
 
     const bad = await post(base, account.cookie, '/api/recovery/collectors/c_customer/auto-heal', { enabled: 'yes' });
     expect(bad.status).toBe(400);
+  });
+
+  // -- remove collector ----------------------------------------------------
+
+  it('removes a collector: it leaves the workspace, its webhook URL dies, and its receipts survive', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    const { webhookUrl } = await account.connect('c_customer');
+    const tenantId = tenantIdOf('tenant-a');
+    seedReceipt(tenantId, 'c_customer', '2026-08-20T10:00:00.000Z');
+
+    const removed = await post(base, account.cookie, '/api/recovery/collectors/c_customer/remove', {});
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toMatchObject({ ok: true, collector_id: 'c_customer' });
+
+    // Gone from the workspace.
+    const list = (await (await get(base, account.cookie, '/api/recovery/collectors')).json()) as {
+      collectors: unknown[];
+    };
+    expect(list.collectors).toEqual([]);
+
+    // The capability is dead: a delivery on the old URL is refused exactly
+    // like an unknown token.
+    expect((await ingest(webhookUrl, shopRows(6), 'run-after-removal')).status).toBe(401);
+
+    // Auto-heal is off on the row that stays behind.
+    const state = new RecoveryStateStore(writer()).get(tenantId, 'c_customer');
+    expect(state?.auto_heal).toBe(0);
+
+    // The receipt is untouched, and still names the collector it repaired.
+    const repairs = (await (await get(base, account.cookie, '/api/recovery/repairs')).json()) as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(repairs.items).toHaveLength(1);
+    expect(repairs.items[0]).toMatchObject({ collector_id: 'c_customer', collector_name: 'Daily Products' });
+  });
+
+  it('refuses to remove a collector with a repair in flight, and allows it once the cycle is terminal', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    await account.connect('c_customer');
+    const tenantId = tenantIdOf('tenant-a');
+
+    const incident = seedDelivery(tenantId, 'c_customer', '2026-08-22T10:00:00.000Z', { verdict: 'FAILED_STRUCTURAL' });
+    const cycles = new RecoveryCycleStore(writer());
+    const cycle = cycles.create({
+      tenantId,
+      collectorId: 'c_customer',
+      incidentDeliveryId: incident,
+      policyEvidence: { reason: 'structural' },
+    });
+    const states = new RecoveryStateStore(writer());
+    const current = states.ensure(tenantId, 'c_customer');
+    states.transition(tenantId, 'c_customer', current.state_version, {
+      state: 'RECOVERING',
+      activeCycleId: cycle.id,
+    });
+
+    const blocked = await post(base, account.cookie, '/api/recovery/collectors/c_customer/remove', {});
+    expect(blocked.status).toBe(409);
+    expect(((await blocked.json()) as { error: string }).error).toContain('finish or hold first');
+    // Nothing happened: still listed, still ingesting.
+    const still = (await (await get(base, account.cookie, '/api/recovery/collectors')).json()) as {
+      collectors: Array<Record<string, unknown>>;
+    };
+    expect(still.collectors.map((c) => c.collector_id)).toEqual(['c_customer']);
+
+    // Once the cycle ends, removal is allowed.
+    const leased = cycles.acquireLease(tenantId, cycle.id, 'test-owner', 60_000)!;
+    cycles.finish(tenantId, cycle.id, leased.state_version, 'test-owner', 'FAILED', 'gave up');
+    const ok = await post(base, account.cookie, '/api/recovery/collectors/c_customer/remove', {});
+    expect(ok.status).toBe(200);
+  });
+
+  it('a removed collector can be added back: same row, fresh webhook URL, WAITING_BASELINE again', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    const first = await account.connect('c_customer');
+    const tenantId = tenantIdOf('tenant-a');
+    // Give it a hold and a baseline to prove the re-add really resets them.
+    const states = new RecoveryStateStore(writer());
+    const seeded = states.ensure(tenantId, 'c_customer');
+    states.transition(tenantId, 'c_customer', seeded.state_version, {
+      state: 'HELD',
+      heldReason: 'VERIFICATION_FAILED',
+      baselineDeliveryId: seedDelivery(tenantId, 'c_customer', '2026-08-21T10:00:00.000Z', { isBaseline: true }),
+    });
+
+    expect((await post(base, account.cookie, '/api/recovery/collectors/c_customer/remove', {})).status).toBe(200);
+
+    const again = await account.connect('c_customer');
+    expect(again.webhookUrl).not.toBe(first.webhookUrl);
+    // The old URL stays dead even though the collector is back.
+    expect((await ingest(first.webhookUrl, shopRows(6), 'run-old-url')).status).toBe(401);
+
+    const list = (await (await get(base, account.cookie, '/api/recovery/collectors')).json()) as {
+      collectors: Array<Record<string, unknown>>;
+    };
+    expect(list.collectors).toHaveLength(1);
+    expect(list.collectors[0]).toMatchObject({
+      collector_id: 'c_customer',
+      state: 'WAITING_BASELINE',
+      auto_heal: true,
+      held_reason: null,
+      baseline_at: null,
+    });
+    // One row, not two: the removal was a tombstone on the original.
+    const rows = writer()
+      .prepare(`SELECT COUNT(*) AS n FROM tenant_collectors WHERE tenant_id = ?`)
+      .get(tenantId) as { n: number };
+    expect(rows.n).toBe(1);
+  });
+
+  it('removing is idempotent from the API\'s point of view: the second attempt is a 404, like a foreign collector', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    await account.connect('c_customer');
+    expect((await post(base, account.cookie, '/api/recovery/collectors/c_customer/remove', {})).status).toBe(200);
+    expect((await post(base, account.cookie, '/api/recovery/collectors/c_customer/remove', {})).status).toBe(404);
+    expect((await post(base, account.cookie, '/api/recovery/collectors/c_nonexistent/remove', {})).status).toBe(404);
+  });
+
+  it('reports whether Telegram alerts are configured, and never the credentials', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    await account.connect('c_customer');
+
+    const off = (await (await get(base, account.cookie, '/api/recovery/collectors')).json()) as {
+      telegram_configured: boolean;
+    };
+    expect(off.telegram_configured).toBe(false);
+
+    process.env.POLYGRAPH_TELEGRAM_BOT_TOKEN = '123456:super-secret-bot-token';
+    process.env.POLYGRAPH_TELEGRAM_CHAT_ID = '-1001234567890';
+    const res = await get(base, account.cookie, '/api/recovery/collectors');
+    const body = await res.text();
+    expect(JSON.parse(body).telegram_configured).toBe(true);
+    expect(body).not.toContain('super-secret-bot-token');
+    expect(body).not.toContain('-1001234567890');
   });
 
   it('refuses a mutation without a matching Origin', async () => {

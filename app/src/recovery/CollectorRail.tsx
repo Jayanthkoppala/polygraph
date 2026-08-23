@@ -2,7 +2,7 @@
 // opt-out toggle. Selecting a row swaps both tables in RecoveryWorkspace — this
 // component owns no delivery/repair data itself.
 import { useState } from 'react';
-import { CircleNotch, LinkSimple } from '@phosphor-icons/react';
+import { CircleNotch, LinkSimple, Trash } from '@phosphor-icons/react';
 import { StateChip } from './StateChip';
 import type { RecoveryCollector } from '@/lib/recoveryApi';
 
@@ -12,14 +12,18 @@ export function CollectorRail({
   onSelect,
   onToggleAutoHeal,
   onRevealWebhook,
+  onRemove,
   pendingAutoHeal,
+  pendingRemove,
 }: {
   collectors: RecoveryCollector[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onToggleAutoHeal: (collector: RecoveryCollector, enabled: boolean) => void;
   onRevealWebhook: (collector: RecoveryCollector) => void;
+  onRemove: (collector: RecoveryCollector) => void;
   pendingAutoHeal: string | null;
+  pendingRemove: string | null;
 }) {
   if (collectors.length === 0) {
     return (
@@ -43,7 +47,9 @@ export function CollectorRail({
           onSelect={onSelect}
           onToggleAutoHeal={onToggleAutoHeal}
           onRevealWebhook={onRevealWebhook}
+          onRemove={onRemove}
           pending={pendingAutoHeal === collector.collectorId}
+          removing={pendingRemove === collector.collectorId}
         />
       ))}
     </ul>
@@ -56,16 +62,21 @@ function CollectorRow({
   onSelect,
   onToggleAutoHeal,
   onRevealWebhook,
+  onRemove,
   pending,
+  removing,
 }: {
   collector: RecoveryCollector;
   selected: boolean;
   onSelect: (id: string) => void;
   onToggleAutoHeal: (collector: RecoveryCollector, enabled: boolean) => void;
   onRevealWebhook: (collector: RecoveryCollector) => void;
+  onRemove: (collector: RecoveryCollector) => void;
   pending: boolean;
+  removing: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   function requestToggle() {
     // Turning auto-heal OFF is the sensitive direction (an emergency opt-out mid
@@ -153,6 +164,51 @@ function CollectorRow({
             </button>
           )}
         </div>
+
+        {/* Removal is destructive to the INGRESS but not to the record, and the
+            confirm says so in both directions — an operator who reads only this
+            sentence should still know the receipts survive. Inline rather than a
+            modal, for the same reason the auto-heal opt-out is: it belongs to
+            this card, and a dialog raised from a rail can act on the wrong row. */}
+        {confirmingRemove ? (
+          <div className="flex flex-col gap-2 border-t border-[var(--color-line)] pt-2">
+            <p className="text-[11px] leading-4 text-[#9B9B9B]">
+              Removes this collector from Polygraph and invalidates its webhook URL. Receipts stay.
+            </p>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmingRemove(false);
+                  onRemove(collector);
+                }}
+                className="rounded-md border border-red-400/30 bg-red-400/10 px-2 py-1 text-[11px] font-medium text-red-200 hover:bg-red-400/20"
+              >
+                Remove collector
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingRemove(false)}
+                className="rounded-md border border-[#313131] px-2 py-1 text-[11px] text-[#9B9B9B] hover:bg-[var(--color-raised)]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center border-t border-[var(--color-line)] pt-2">
+            <button
+              type="button"
+              onClick={() => setConfirmingRemove(true)}
+              disabled={removing}
+              aria-label={`Remove ${collector.name}`}
+              className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-[#9B9B9B] transition-colors hover:bg-[var(--color-raised)] hover:text-red-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED] disabled:cursor-wait disabled:opacity-60"
+            >
+              {removing ? <CircleNotch size={12} className="animate-spin" aria-hidden /> : <Trash size={12} aria-hidden />}
+              {removing ? 'Removing…' : 'Remove'}
+            </button>
+          </div>
+        )}
       </div>
     </li>
   );

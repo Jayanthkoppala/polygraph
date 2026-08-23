@@ -118,7 +118,10 @@ export function tenantBrightDataClient(scope: TenantScope, deps: TenantServerDep
  * is already on the list never counts against it, so only genuinely new
  * ones can be refused. Writes the 400 and returns false when over cap. */
 export function withinCollectorCap(scope: TenantScope, tenantRow: TenantRow, collectorId: string, res: ServerResponse): boolean {
-  const existing = scope.collectors.list();
+  // M019: a removed collector holds no slot. Counting tombstones would make
+  // the cap a ratchet — an operator who added and removed the same collector
+  // five times would be told they were out of room.
+  const existing = scope.collectors.list().filter((collector) => collector.removed_at === null);
   const cap = tenantRow.max_collectors || MAX_COLLECTORS_DEFAULT;
   const alreadyListed = existing.some((collector) => collector.collector_id === collectorId);
   if (!alreadyListed && existing.length >= cap) {

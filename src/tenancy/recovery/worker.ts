@@ -467,7 +467,7 @@ export class RecoveryWorker {
       action: 'REPAIR',
       evidence: [{ check: 'repair_prompt', ok: true, detail: prompt }],
     });
-    void this.notify((n) => n.cycleStarted(ctx.cycle));
+    void this.notify((n) => n.cycleStarted(ctx.cycle, { collectorName: ctx.collector.name }));
 
     const started = await ctx.provider.startRefactor(ctx.cycle.collector_id, prompt, [input]);
     ctx.cycle = this.cas(ctx, {
@@ -788,7 +788,7 @@ export class RecoveryWorker {
       nowIso
     );
     ctx.cycle = result.cycle;
-    void this.notify((n) => n.cycleVerified(result.cycle, result.receipt));
+    void this.notify((n) => n.cycleVerified(result.cycle, result.receipt, { collectorName: ctx.collector.name }));
   }
 
   // ---- helpers --------------------------------------------------------------
@@ -946,7 +946,12 @@ export class RecoveryWorker {
     this.log(
       `[recovery] cycle ${ctx.cycle.id} ${stop.status} code=${stop.code} collector=${ctx.cycle.collector_id} reason=${stop.reason}`
     );
-    void this.notify((n) => n.cycleHeld(ctx.cycle, stop.reason));
+    // The free-text reason still goes to the log notifier; `code` is what a
+    // customer-facing notifier is allowed to render, because it maps through
+    // api.ts's closed table instead of quoting the provider.
+    void this.notify((n) =>
+      n.cycleHeld(ctx.cycle, stop.reason, { collectorName: ctx.collector.name, heldReasonCode: stop.code })
+    );
   }
 
   private finishWithoutContext(leased: RecoveryCycleRow, stop: CycleStop): void {
@@ -968,7 +973,9 @@ export class RecoveryWorker {
           activeCycleId: null,
         });
       }
-      void this.notify((n) => n.cycleHeld(finished, stop.reason));
+      // No context row here by construction: `finishWithoutContext` is the
+      // path where the tenant or collector could not be read at all.
+      void this.notify((n) => n.cycleHeld(finished, stop.reason, { heldReasonCode: stop.code }));
     } catch (err) {
       if (!(err instanceof StaleWriteError)) throw err;
     }

@@ -18,6 +18,7 @@ import {
   BrightDataClient,
   isAwaitingApproval,
   parseTemplateVersion,
+  type CollectorJob,
   type PollOptions,
   type RefactorProgress,
 } from '../../brightdata/client.js';
@@ -84,6 +85,32 @@ export interface RecoveryProvider {
 }
 
 const FAILURE_STATES = new Set(['failed', 'error', 'errored', 'cancelled', 'canceled']);
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+/** How far back `templateVersionFromLatestJob` looks for a job to read a
+ * template version off. Long enough to cover a collector that runs weekly. */
+const JOB_HISTORY_WINDOW_DAYS = 30;
+/** How many recent jobs it will read logs for before giving up. */
+const TEMPLATE_LOOKBACK_JOBS = 5;
+
+/** `YYYY-MM-DD`, the form `/dca/collector/jobs` takes for both dates. */
+function isoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+/** Newest first, by the most specific timestamp a job carries. Jobs with no
+ * usable timestamp sort last rather than winning by accident. */
+function compareJobsNewestFirst(a: CollectorJob, b: CollectorJob): number {
+  return jobTime(b) - jobTime(a);
+}
+
+function jobTime(job: CollectorJob): number {
+  for (const value of [job?.finished, job?.started, job?.queued]) {
+    if (typeof value !== 'string') continue;
+    const ms = Date.parse(value);
+    if (Number.isFinite(ms)) return ms;
+  }
+  return Number.NEGATIVE_INFINITY;
+}
 const DONE_STATES = new Set(['ready', 'done', 'completed', 'success', 'finished']);
 const SAVE_STEP = 'save_new_template';
 
@@ -180,14 +207,41 @@ export function createBrightDataRecoveryProvider(
     },
     async templateVersionFromLatestJob(collectorId) {
       try {
-        const to = new Date();
-        const from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
-        const page = await client.listJobs(collectorId, from.toISOString().slice(0, 10), to.toISOString().slice(0, 10));
-        const latest = page.data[0];
-        if (!latest) return undefined;
-        const log = await client.jobLog(latest.id);
-        const parsed = parseTemplateVersion(log.template);
-        return parsed ? { id: parsed.templateId, version: parsed.version } : undefined;
+        const now = new Date();
+        // `to_date` is a DATE, and Bright Data resolves a bare date to the
+        // START of that day: a window ending "today" excludes every job that
+        // has run today. That is the whole history of a collector connected
+        // this morning, which is exactly the case that matters — a break is
+        // detected from a job that just ran. Live cycle cdaeede5 (2026-08-23)
+        // recorded `template=?->t_...0.2` for precisely this reason: the
+        // window was empty, so there was no "before" to compare against and
+        // the receipt could not show v1 -> v2. Ending the window TOMORROW
+        // costs nothing and includes today under either reading of the
+        // parameter.
+        const to = new Date(now.getTime() + ONE_DAY_MS);
+        const from = new Date(now.getTime() - JOB_HISTORY_WINDOW_DAYS * ONE_DAY_MS);
+        const page = await client.listJobs(collectorId, isoDate(from), isoDate(to));
+        // The response's own order is not documented, so it is not trusted:
+        // the jobs are sorted here by their most reliable timestamp. Taking
+        // `data[0]` on faith would compare against whichever job the API felt
+        // like listing first — on an ascending list, the OLDEST one.
+        const candidates = [...page.data].sort(compareJobsNewestFirst);
+        // A job log without a parseable `template` is not the end of the
+        // search: a cancelled or still-queued run can carry none, while the
+        // completed run before it does. Bounded so a collector with a long
+        // history of unreadable logs cannot turn one cycle start into
+        // hundreds of provider calls.
+        for (const job of candidates.slice(0, TEMPLATE_LOOKBACK_JOBS)) {
+          if (typeof job?.id !== 'string' || job.id === '') continue;
+          try {
+            const log = await client.jobLog(job.id);
+            const parsed = parseTemplateVersion(log.template);
+            if (parsed) return { id: parsed.templateId, version: parsed.version };
+          } catch {
+            // One unreadable log is not proof the next one is unreadable too.
+          }
+        }
+        return undefined;
       } catch {
         return undefined;
       }

@@ -54,7 +54,7 @@ describe('M016 — collector_deliveries error-record columns', () => {
     const present = columns(db, 'collector_deliveries');
     for (const column of ERROR_COLUMNS) expect(present).toContain(column);
     const versions = db.prepare(`SELECT COUNT(*) AS n FROM schema_migrations`).get() as { n: number };
-    expect(versions.n).toBe(18);
+    expect(versions.n).toBe(19);
   });
 
   it('is idempotent: re-running over an already-migrated database is a no-op', () => {

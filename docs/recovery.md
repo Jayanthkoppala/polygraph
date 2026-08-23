@@ -37,7 +37,78 @@ worker runs.
 |---|---|
 | `POLYGRAPH_AUTO_RECOVERY=1` | Server-wide switch. Read live at every gate, so unsetting it and restarting stops new mutations; a cycle in flight ends `HELD_POLICY` at its next gate. |
 | `POLYGRAPH_MASTER_KEY` | Already required by `serve`; also encrypts each collector's reusable run input. |
-| `POLYGRAPH_TELEGRAM_BOT_TOKEN`, `POLYGRAPH_TELEGRAM_CHAT_ID` | Optional. Notifications go to Telegram when both are set, to the log otherwise. Nothing is sent without both. |
+| `POLYGRAPH_TELEGRAM_BOT_TOKEN` | Optional. A Bot API token from @BotFather. Half-configured is the same as unconfigured. |
+| `POLYGRAPH_TELEGRAM_CHAT_ID` | Optional. The chat the bot posts into (a negative number for a group; the bot must be a member). |
+
+### Telegram notifications
+
+With both variables set, the worker posts to `sendMessage` at three moments:
+a cycle starting, a cycle verifying, and a cycle being held. With either
+unset it writes the same facts as log lines and sends nothing — there is no
+half-configured state and no accidental send.
+
+What a message may contain: the collector's name, the customer-facing state
+sentence, the mapped held-reason copy, the receipt hash, both template
+versions, and the cycle id. What it may never contain: a row, an input, a
+heal prompt, a provider error string, or a key. The copy comes from the same
+closed maps `/api/recovery/collectors` renders from (`recovery/api.ts`), so a
+chat message can never say more than the dashboard does — in particular
+`recovery_cycles.terminal_reason`, which can quote provider text, is not sent.
+
+Operationally it is fire-and-forget: a 5s timeout, no retry, and no throw. A
+chat server that is down or misconfigured produces a log line (with the bot
+token redacted out of it — the token is a path segment of the request URL) and
+changes nothing about the repair. `GET /api/recovery/collectors` returns
+`telegram_configured` so the workspace header can read "Telegram alerts — on"
+instead of "coming soon"; it is a boolean, and no route ever returns the token
+or the chat id.
+
+## Removing a collector
+
+`POST /api/recovery/collectors/:id/remove` takes a collector out of the
+workspace. It is deliberately **not** a delete: `repair_receipts` is
+insert-only (a `BEFORE DELETE` trigger fires for cascaded deletes too), and
+the promise a receipt makes is that the proof of a repair outlives the thing
+it repaired.
+
+| | |
+|---|---|
+| Route | `POST /api/recovery/collectors/:id/remove` (session + CSRF) |
+| Answers | `200 {ok, collector_id, removed_at}` |
+| `404` | Not this session's collector, or already removed — the same answer either way. |
+| `409` | A repair is in flight (`a repair is in flight for this collector — finish or hold first`). |
+
+What it does, in one transaction:
+
+- revokes the ingest token, so the webhook URL starts answering `401`
+  immediately and Bright Data cannot deliver into the collector again;
+- sets `collector_recovery_state.auto_heal = 0`;
+- stamps `tenant_collectors.removed_at` (M019), which is what removes it from
+  `listConfirmed()` and therefore from `/api/recovery/collectors`, the
+  scheduler, and the collector cap.
+
+What it does not touch: deliveries (rows, hashes, previews, verdicts),
+recovery cycles, repair receipts, and ledger events. `/api/recovery/repairs`
+still lists a removed collector's receipts, still named — the name lookup
+reads `list()`, which includes removed rows.
+
+**Mid-flight is refused, not cancelled.** Bright Data has no "abandon this
+heal" call, so removing a collector whose cycle is still advancing would
+revoke the ingress its verification run is about to deliver into and strand
+the cycle at the provider. The operator switches auto-heal off (which holds
+the cycle at its next gate) or waits, then removes. A cycle in a terminal
+status does not block anything.
+
+**Re-adding is the same row.** Connecting the collector again clears
+`removed_at`, issues a *fresh* ingest token (the URL that removal invalidated
+never comes back), and resets the recovery state to `WAITING_BASELINE` with
+auto-heal on, no hold, and no baseline. The baseline reset matters: the
+collector may have been edited at the provider while it was away, and grading
+its first new delivery against a pre-removal baseline would call a deliberate
+change a break. Its old deliveries and receipts are still there, attached to
+the row they always were.
+
+## Auto-heal
 
 Per collector, the workspace toggle (`POST /api/recovery/collectors/:id/auto-heal {enabled}`)
 sets `collector_recovery_state.auto_heal`. Off = deliveries are still recorded

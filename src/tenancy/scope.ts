@@ -154,13 +154,20 @@ export interface TenantCollectorRow {
   last_run_at: string | null;
   consecutive_failures: number;
   created_at: string;
+  /** M019. Set when the operator removed this collector from Polygraph;
+   * NULL for every live collector. A removed row is a tombstone, not a
+   * delete — see migrations/019-collector-removed-at.ts. */
+  removed_at: string | null;
 }
 
 /** `tenant_collectors`, scoped to one tenant. */
 export class ScopedCollectors {
   constructor(private readonly db: Database.Database, private readonly tenantId: string) {}
 
-  /** Every collector row for this tenant, regardless of setup_state/enabled. */
+  /** Every collector row for this tenant, regardless of setup_state/enabled
+   * — removed ones included. Receipts name collectors that may since have
+   * been removed, so the name lookup behind `/api/recovery/repairs` has to
+   * still see them. */
   list(): TenantCollectorRow[] {
     const rows = this.db
       .prepare('SELECT * FROM tenant_collectors WHERE tenant_id = ? ORDER BY collector_id')
@@ -169,12 +176,41 @@ export class ScopedCollectors {
   }
 
   /** Only collectors that have finished the onboarding wizard and are live —
-   * the set `buildTenantContext` (Task 3/4) turns into `FleetConfig.collectors`. */
+   * the set `buildTenantContext` (Task 3/4) turns into `FleetConfig.collectors`.
+   *
+   * M019: a REMOVED collector is not live. It is excluded here rather than
+   * filtered at each call site, so "removed" means the same thing to the
+   * recovery workspace, the scheduler, and anything else that asks this
+   * class what this tenant runs. `list()` still returns it. */
   listConfirmed(): TenantCollectorRow[] {
     const rows = this.db
-      .prepare(`SELECT * FROM tenant_collectors WHERE tenant_id = ? AND setup_state = 'confirmed' ORDER BY collector_id`)
+      .prepare(
+        `SELECT * FROM tenant_collectors
+          WHERE tenant_id = ? AND setup_state = 'confirmed' AND removed_at IS NULL
+          ORDER BY collector_id`
+      )
       .all(this.tenantId) as TenantCollectorRow[];
     return assertOwned(rows, this.tenantId);
+  }
+
+  /**
+   * Marks a collector removed (M019). Idempotent: a collector already
+   * removed keeps its original `removed_at` rather than having the clock
+   * reset, so "when did this stop being monitored" survives a double click.
+   * Returns the row, or undefined when the collector does not exist.
+   *
+   * Nothing else is touched here. The ingest token, the auto-heal switch and
+   * the ledger are the caller's business (routes/session.ts) — this class
+   * only owns `tenant_collectors`.
+   */
+  markRemoved(collectorId: string, nowIso = new Date().toISOString()): TenantCollectorRow | undefined {
+    this.db
+      .prepare(
+        `UPDATE tenant_collectors SET removed_at = COALESCE(removed_at, ?), enabled = 0, next_run_at = NULL
+          WHERE tenant_id = ? AND collector_id = ?`
+      )
+      .run(nowIso, this.tenantId, collectorId);
+    return this.get(collectorId);
   }
 
   /** One collector row, or undefined. */
@@ -198,7 +234,12 @@ export class ScopedCollectors {
          VALUES (@tenant_id, @collector_id, @name, 'brightdata', @canary_inputs_json, 'draft', 0, @created_at)
          ON CONFLICT(tenant_id, collector_id) DO UPDATE SET
            name = excluded.name,
-           canary_inputs_json = excluded.canary_inputs_json`
+           canary_inputs_json = excluded.canary_inputs_json,
+           -- M019: re-opening the wizard for a REMOVED collector is how it
+           -- comes back. Same row, tombstone cleared; its deliveries,
+           -- cycles and receipts were never deleted, so they reappear with
+           -- it rather than being orphaned behind a second row.
+           removed_at = NULL`
       )
       .run({
         tenant_id: this.tenantId,

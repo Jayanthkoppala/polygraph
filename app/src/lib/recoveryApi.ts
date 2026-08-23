@@ -231,9 +231,18 @@ function asPreviewRows(value: unknown): DeliveryPreviewRow[] {
   return value.filter((row): row is DeliveryPreviewRow => Boolean(row) && typeof row === 'object');
 }
 
+/** The `/api/recovery/collectors` envelope: the rows, plus deployment-level
+ *  facts about them. `telegramConfigured` says whether this deployment can
+ *  actually send a chat alert — it is a boolean and nothing more; no token or
+ *  chat id is ever part of this response. */
+export interface RecoveryCollectorsResult {
+  collectors: RecoveryCollector[];
+  telegramConfigured: boolean;
+}
+
 /** GET /api/recovery/collectors */
-export async function fetchRecoveryCollectors(): Promise<RecoveryCollector[]> {
-  const body = await getJson<{ collectors?: unknown }>('/api/recovery/collectors');
+export async function fetchRecoveryCollectors(): Promise<RecoveryCollectorsResult> {
+  const body = await getJson<{ collectors?: unknown; telegram_configured?: unknown }>('/api/recovery/collectors');
   const rows = Array.isArray(body.collectors) ? body.collectors : [];
   const out: RecoveryCollector[] = [];
   for (const entry of rows) {
@@ -253,7 +262,9 @@ export async function fetchRecoveryCollectors(): Promise<RecoveryCollector[]> {
       lastReceiptAt: asString(rec.last_receipt_at),
     });
   }
-  return out;
+  // Absent (an older server) reads as "not configured", which is the same
+  // answer the pill gave before the field existed.
+  return { collectors: out, telegramConfigured: body.telegram_configured === true };
 }
 
 /** GET /api/recovery/deliveries?collector_id=&before=&limit= */
@@ -436,6 +447,14 @@ export async function fetchRecoveryRepairs(
   const nextBefore = typeof body.next_before === 'string' || typeof body.next_before === 'number' ? body.next_before : null;
   const total = typeof body.total === 'number' ? body.total : items.length;
   return { items, nextBefore, total };
+}
+
+/** POST /api/recovery/collectors/:id/remove — takes the collector out of the
+ *  workspace and kills its webhook URL. Not a delete: deliveries, repair
+ *  receipts and ledger events survive, and re-adding the collector reuses the
+ *  same row. 409 while a repair is still in flight. */
+export async function removeCollector(collectorId: string): Promise<void> {
+  await postJson(`/api/recovery/collectors/${encodeURIComponent(collectorId)}/remove`, {});
 }
 
 /** POST /api/recovery/collectors/:id/auto-heal — emergency opt-out toggle. */

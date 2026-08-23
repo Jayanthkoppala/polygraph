@@ -160,6 +160,10 @@ export function resolveDeliveryTarget(db: Database.Database, token: string): Del
          ON c.tenant_id = i.tenant_id
         AND c.collector_id = i.collector_id
         AND c.setup_state = 'confirmed'
+        -- M019: a removed collector has no ingress. Its token is revoked at
+        -- removal, so this is belt and braces — but it also closes the gap
+        -- for a token that somehow outlived the revoke.
+        AND c.removed_at IS NULL
       WHERE i.token_sha256 = ? AND i.revoked_at IS NULL`
   ).get(tokenHash(token)) as
     | { tenant_id: string; display_name: string; genesis_hash: string; collector_id: string }

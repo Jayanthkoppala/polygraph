@@ -12,10 +12,15 @@ import { buildConfirmedSchema, persistConfirmedSetup, type ConfirmedFieldInput }
 import type { EntityKeyRule } from '../entity-key.js';
 import { checkAndIncrementRateLimit, dailyWindowKey, hourlyWindowKey } from '../rate-limit.js';
 import { recordVerifyResult } from '../scheduler.js';
-import { issueDeliveryToken, rotateDeliveryToken } from '../delivery.js';
+import { issueDeliveryToken, revokeDeliveryToken, rotateDeliveryToken } from '../delivery.js';
 import { recordIngestTokenReveal, revealDeliveryToken } from '../ingest-token-reveal.js';
 import { DeliveryStore } from '../delivery-store.js';
-import { RecoveryStateStore, RepairReceiptStore } from '../recovery/store.js';
+import {
+  isTerminalCycleStatus,
+  RecoveryCycleStore,
+  RecoveryStateStore,
+  RepairReceiptStore,
+} from '../recovery/store.js';
 import {
   clampLimit,
   deriveCollectorView,
@@ -23,6 +28,7 @@ import {
   listRecoveryDeliveries,
   listRecoveryRepairs,
 } from '../recovery/api.js';
+import { isTelegramConfigured } from '../recovery/notify.js';
 import {
   scopeWithSecrets,
   readJsonBody,
@@ -253,6 +259,12 @@ export async function handleSessionRoutes(ctx: RouteContext, session: Session, t
 
       if (!withinCollectorCap(scope, tenantRowWriter, collectorId, res)) return;
 
+      // M019: adding back a collector that was removed reuses its original
+      // row (createDraft clears `removed_at`), so this has to be read BEFORE
+      // the upsert — afterwards the tombstone is gone and nothing downstream
+      // could tell a re-add from a first connect.
+      const wasRemoved = scope.collectors.get(collectorId)?.removed_at != null;
+
       const listed = summarizeCollectorsList(collectorsListResponse).find((collector) => collector.id === collectorId);
       scope.collectors.createDraft({ collectorId, name: listed?.name ?? collectorId, canaryInputs: [] });
       const outputSchema = buildConfirmedSchema(
@@ -264,12 +276,23 @@ export async function handleSessionRoutes(ctx: RouteContext, session: Session, t
         { outputSchema, entityKey: null, entityKeyRule: null },
         { scheduledByPolygraph: false }
       );
+      // A fresh capability every time. Re-adding a removed collector must not
+      // resurrect the URL that removal invalidated — whoever that URL leaked
+      // to still cannot deliver into the collector's second life.
       const issued = issueDeliveryToken(deps.writer, session.tenantId, collectorId, nowFn(), deps.masterKey);
       // Every connected collector starts monitored: WAITING_BASELINE with the
       // switch on. Created here rather than lazily on first delivery so the
       // workspace can show the collector — and its auto-heal opt-out — the
       // moment it is added, before Bright Data has pushed anything.
-      new RecoveryStateStore(deps.writer).ensure(session.tenantId, collectorId, nowFn());
+      const states = new RecoveryStateStore(deps.writer);
+      const ensured = states.ensure(session.tenantId, collectorId, nowFn());
+      // `ensure` is a no-op on an existing row, which is right for a repeat
+      // connect but wrong for a re-add: the row it finds is the removed
+      // collector's, carrying auto-heal off and whatever hold or baseline it
+      // had when it left. A re-added collector starts over.
+      if (wasRemoved) {
+        states.reactivate(session.tenantId, collectorId, ensured.state_version, nowFn());
+      }
       const deliveryUrl = webhookUrl(deps.publicOrigin, issued.token);
       sendJson(res, 200, {
         collector,
@@ -516,7 +539,66 @@ export async function handleSessionRoutes(ctx: RouteContext, session: Session, t
         tenantRowWriter.genesis_hash,
         deps.masterKey
       ),
+      // Whether this deployment can actually send a Telegram alert, so the
+      // header pill can say "on" instead of "coming soon". A boolean, read
+      // from the environment at request time: never the bot token, never the
+      // chat id, and deliberately not per-tenant — the bot is a property of
+      // the deployment, and one tenant learning that alerts are wired up
+      // tells them nothing about another.
+      telegram_configured: isTelegramConfigured(),
     });
+    return;
+  }
+
+  // The operator's "Remove" control. Not a delete: M013's repair receipts are
+  // insert-only, and the customer-visible promise is that the proof of a
+  // repair outlives the collector it repaired. So removal is a tombstone plus
+  // a revoked capability — the collector leaves the workspace, its webhook URL
+  // stops working, auto-heal is switched off, and every delivery, cycle,
+  // receipt and ledger event it produced stays byte-for-byte where it was.
+  const removeMatch = /^\/api\/recovery\/collectors\/([^/]+)\/remove$/.exec(path);
+  if (method === 'POST' && removeMatch) {
+    if (!requireCsrf(req, res, deps.publicOrigin)) return;
+    const collectorId = decodeURIComponent(removeMatch[1]);
+    const scope = scopeFor(deps.writer, session.tenantId, tenantRowWriter.genesis_hash);
+    const collector = scope.collectors.get(collectorId);
+    // An already-removed collector is not in this tenant's workspace any more,
+    // so it answers exactly like one that never existed — the same rule the
+    // rest of these routes follow for a foreign collector.
+    if (!collector || collector.removed_at !== null) {
+      sendJson(res, 404, { error: 'no such collector' });
+      return;
+    }
+
+    const states = new RecoveryStateStore(deps.writer);
+    const state = states.get(session.tenantId, collectorId);
+    // A repair in flight owns a provider job this route cannot safely cancel:
+    // Bright Data has no "abandon this heal" call, so removing now would
+    // revoke the ingress a verification run is about to deliver into and
+    // strand the cycle. The operator switches auto-heal off (which holds the
+    // cycle at its next gate) or waits for it to finish, then removes.
+    if (state?.active_cycle_id) {
+      const cycle = new RecoveryCycleStore(deps.reader).get(session.tenantId, state.active_cycle_id);
+      if (cycle && !isTerminalCycleStatus(cycle.status)) {
+        sendJson(res, 409, { error: 'a repair is in flight for this collector — finish or hold first' });
+        return;
+      }
+    }
+
+    const now = nowFn();
+    // One transaction: a collector that is half-removed — token revoked but
+    // still listed, or delisted but still ingesting — is worse than either
+    // outcome on its own.
+    deps.writer.transaction(() => {
+      revokeDeliveryToken(deps.writer, session.tenantId, collectorId, now);
+      const current = states.ensure(session.tenantId, collectorId, now);
+      if (current.auto_heal === 1) {
+        states.setAutoHeal(session.tenantId, collectorId, false, current.state_version, now);
+      }
+      scope.collectors.markRemoved(collectorId, now);
+    })();
+
+    sendJson(res, 200, { ok: true, collector_id: collectorId, removed_at: now });
     return;
   }
 

@@ -303,6 +303,43 @@ export class RecoveryStateStore {
     return this.get(tenantId, collectorId) as RecoveryStateRow;
   }
 
+  /**
+   * Re-arms a collector that was removed and has just been added back
+   * (M019). The row is the same one — its history, and the receipts that
+   * point at it, are untouched — but everything that describes the CURRENT
+   * monitoring relationship is reset: back to `WAITING_BASELINE` with
+   * auto-heal on, no hold, no baseline, no active cycle.
+   *
+   * The baseline in particular has to go. Re-adding issues a fresh ingest
+   * token, and the deliveries that arrive on it are a new run of a collector
+   * that may have been edited at the provider while it was away; grading
+   * them against a baseline captured before the removal would call a
+   * deliberate change a break.
+   *
+   * Still a compare-and-swap: an operator re-adding a collector must not be
+   * able to stamp over a worker mid-transition.
+   */
+  reactivate(
+    tenantId: string,
+    collectorId: string,
+    expectedVersion: number,
+    now = new Date().toISOString()
+  ): RecoveryStateRow {
+    return this.transition(
+      tenantId,
+      collectorId,
+      expectedVersion,
+      {
+        state: 'WAITING_BASELINE',
+        autoHeal: true,
+        heldReason: null,
+        baselineDeliveryId: null,
+        activeCycleId: null,
+      },
+      now
+    );
+  }
+
   /** Emergency opt-out (D5). Still a compare-and-swap so it cannot race a
    * worker mid-transition and be lost. */
   setAutoHeal(

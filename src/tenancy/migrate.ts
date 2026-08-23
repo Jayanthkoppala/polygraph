@@ -9,6 +9,7 @@ import { up015IngestTokenReveal } from './migrations/015-ingest-token-reveal.js'
 import { up016DeliveryErrorRecords } from './migrations/016-delivery-error-records.js';
 import { up017SchemaProviderMetadata } from './migrations/017-schema-provider-metadata.js';
 import { up018RecoveryCycleTimeline } from './migrations/018-recovery-cycle-timeline.js';
+import { up019CollectorRemovedAt } from './migrations/019-collector-removed-at.js';
 
 /**
  * The migration runner, per tenant-architecture.md §8. Idempotent and
@@ -515,6 +516,12 @@ const MIGRATIONS: Migration[] = [
   // ALTER TABLE ADD COLUMN; pre-M018 cycles read NULL. Defined in
   // ./migrations/.
   { version: 18, destructive: false, up: up018RecoveryCycleTimeline },
+  // M019 — `tenant_collectors.removed_at`: the tombstone behind the "Remove
+  // collector" control. Receipts are insert-only, so a removed collector's
+  // row stays and is marked instead of deleted; re-adding the collector
+  // clears the column and reuses the same row. One guarded, nullable ALTER
+  // TABLE ADD COLUMN. Defined in ./migrations/.
+  { version: 19, destructive: false, up: up019CollectorRemovedAt },
 ];
 
 /** One consistent snapshot before the first destructive step. VACUUM INTO
