@@ -79,6 +79,7 @@ install -m 600 /dev/null "$env_file"
   printf 'POLYGRAPH_PUBLIC_ORIGIN=https://%s\n' "$hostname"
   printf 'POLYGRAPH_CONCURRENCY=4\n'
   printf 'POLYGRAPH_HEAL_ENABLED=1\n'
+  printf 'POLYGRAPH_AUTO_RECOVERY=1\n'
   printf 'POLYGRAPH_DEMO_LIVE=1\n'
   printf 'POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE=1\n'
   printf 'POLYGRAPH_DEMO_FIXTURE_REPO=Jayanthkoppala/polygraph-version-shift-store\n'
