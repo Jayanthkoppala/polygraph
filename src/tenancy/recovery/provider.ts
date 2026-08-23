@@ -125,10 +125,13 @@ export function normaliseProgress(raw: unknown): ProviderProgress {
   };
 
   if (FAILURE_STATES.has(status)) return { state: 'FAILED', ...base };
+  // Publication wins over the step name: after an auto_save approval Bright Data
+  // reports status "done" while `step` still reads "user_approval" (observed live
+  // 2026-08-23, job ia_mt5upiht11tnb3mkrh). Checking the gate first would park a
+  // published heal in AWAITING_APPROVAL until the polling budget ran out.
+  if (completedSteps.includes(SAVE_STEP)) return { state: 'PUBLISHED', ...base };
+  if (DONE_STATES.has(status)) return { state: 'APPROVED_NOT_SAVED', ...base };
   if (isAwaitingApproval(progress)) return { state: 'AWAITING_APPROVAL', ...base };
-  if (DONE_STATES.has(status)) {
-    return { state: completedSteps.includes(SAVE_STEP) ? 'PUBLISHED' : 'APPROVED_NOT_SAVED', ...base };
-  }
   return { state: 'IN_PROGRESS', ...base };
 }
 
