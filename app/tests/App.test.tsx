@@ -82,7 +82,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId('landing-scene')).toHaveTextContent(/we built a version-shifting store for this test/i);
+    expect(screen.getByTestId('landing-scene')).toHaveTextContent(/we built a live evolving store for this test/i);
   });
 
   it('an unknown path redirects to the landing page, never a raw 404 shell', () => {
@@ -91,7 +91,7 @@ describe('AppRoutes', () => {
         <AppRoutes />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId('landing-scene')).toHaveTextContent(/we built a version-shifting store for this test/i);
+    expect(screen.getByTestId('landing-scene')).toHaveTextContent(/we built a live evolving store for this test/i);
   });
 
   it('/legal/privacy renders a real privacy notice instead of redirecting to the landing page', () => {
@@ -122,7 +122,7 @@ describe('AppRoutes', () => {
       </MemoryRouter>,
     );
     await waitFor(() =>
-      expect(screen.getByTestId('landing-scene')).toHaveTextContent(/we built a version-shifting store for this test/i),
+      expect(screen.getByTestId('landing-scene')).toHaveTextContent(/we built a live evolving store for this test/i),
     );
   });
 

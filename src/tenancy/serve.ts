@@ -22,6 +22,7 @@ import { startScheduler, type Dispatcher } from './scheduler.js';
 import { createDemoMissionService, readDemoMissionConfig } from '../demo/server.js';
 import type { DemoMissionService } from '../demo/mission.js';
 import { SqliteDemoMissionStore } from './demo-receipt-store.js';
+import { SqliteDemoMissionStateStore } from './demo-mission-store.js';
 import { createGoogleAuthVerifier, type GoogleAuthVerifier } from './google-auth.js';
 import { listenAsync } from '../http/listen.js';
 
@@ -107,7 +108,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Runnin
 
   const reader = openReader(dbPath);
   const demoConfig = readDemoMissionConfig();
-  const demoService = opts.demoService ?? (demoConfig ? createDemoMissionService(demoConfig, new SqliteDemoMissionStore(writer)) : undefined);
+  const demoService = opts.demoService ?? (demoConfig ? createDemoMissionService(demoConfig, new SqliteDemoMissionStore(writer), new SqliteDemoMissionStateStore(writer)) : undefined);
   const googleClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
   const googleAuth = opts.googleAuth ?? (googleClientId ? createGoogleAuthVerifier(googleClientId) : undefined);
 

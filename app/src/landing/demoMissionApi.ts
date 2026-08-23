@@ -5,11 +5,20 @@ export interface ProductObservation {
   availability: string | null;
 }
 
+export interface GenerationSnapshot {
+  version?: 'v1' | 'v2' | 'v3' | 'evolving';
+  generation: string;
+  parentGeneration: string;
+  seed: string;
+  sourceUrl: string | null;
+  markerUrl: string | null;
+}
+
 export interface MissionEvidenceRef {
   fixtureRepo: string | null;
   v1Url: string | null;
   v2Url: string | null;
-  /** Old receipts predate these fields and are V1 -> V2 by contract. */
+  /** Legacy receipts may predate generation evidence. */
   baselineVersion: 'v1' | 'v2' | 'v3';
   changedVersion: 'v1' | 'v2' | 'v3';
   workflowUrl: string | null;
@@ -31,6 +40,10 @@ export interface MissionEvidenceRef {
   brokenResult: ProductObservation | null;
   proofResult: ProductObservation | null;
   changedFields: string[];
+  generationManifest: {
+    baseline: GenerationSnapshot;
+    changed: GenerationSnapshot | null;
+  } | null;
 }
 
 export interface MissionEvent {
@@ -59,14 +72,20 @@ export interface MissionState {
   events: MissionEvent[];
   evidence: MissionEvidenceRef;
   lastError?: string | null;
-  /** Client-only marker: the POST reused a completed proof rather than
-   * scheduling a new live mission. */
-  replay?: boolean;
 }
 
 interface MissionCreateResponse {
   id: string;
-  reused?: boolean;
+}
+
+const PENDING_PROOF_KEY = 'polygraph.pending-proof-key';
+
+function pendingProofKey(): string {
+  const existing = window.sessionStorage.getItem(PENDING_PROOF_KEY);
+  if (existing) return existing;
+  const created = window.crypto.randomUUID();
+  window.sessionStorage.setItem(PENDING_PROOF_KEY, created);
+  return created;
 }
 
 function stringValue(raw: Record<string, unknown>, ...keys: string[]): string | null {
@@ -92,10 +111,32 @@ function productObservation(value: unknown): ProductObservation | null {
   };
 }
 
+function generationSnapshot(value: unknown): GenerationSnapshot | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const generation = stringValue(raw, 'generation');
+  if (!generation) return null;
+  const version = stringValue(raw, 'version');
+  return {
+    version: version === 'v1' || version === 'v2' || version === 'v3' || version === 'evolving' ? version : undefined,
+    generation,
+    parentGeneration: stringValue(raw, 'parent_generation', 'parentGeneration') ?? '',
+    seed: stringValue(raw, 'seed') ?? '',
+    sourceUrl: stringValue(raw, 'source_url', 'sourceUrl'),
+    markerUrl: stringValue(raw, 'marker_url', 'markerUrl'),
+  };
+}
+
 function coalesceEvidence(raw: Record<string, unknown>): MissionEvidenceRef {
   const runId = stringValue(raw, 'run_id');
   const baselineRunId = stringValue(raw, 'baseline_run_id', 'a_run_id') ?? runId;
   const changedFields = raw.changed_fields ?? raw.changedFields;
+  const generationManifestRaw = raw.generation_manifest ?? raw.generationManifest;
+  const generationManifestRecord = generationManifestRaw && typeof generationManifestRaw === 'object' && !Array.isArray(generationManifestRaw)
+    ? generationManifestRaw as Record<string, unknown>
+    : null;
+  const baselineGeneration = generationSnapshot(generationManifestRecord?.baseline);
+  const changedGeneration = generationSnapshot(generationManifestRecord?.changed);
   return {
     fixtureRepo: stringValue(raw, 'fixture_repo'),
     v1Url: stringValue(raw, 'v1_url'),
@@ -123,6 +164,7 @@ function coalesceEvidence(raw: Record<string, unknown>): MissionEvidenceRef {
     changedFields: Array.isArray(changedFields)
       ? changedFields.filter((field): field is string => typeof field === 'string')
       : [],
+    generationManifest: baselineGeneration ? { baseline: baselineGeneration, changed: changedGeneration } : null,
   };
 }
 
@@ -179,7 +221,6 @@ function normalizeState(raw: MissionState): MissionState {
         : typeof (raw as { last_error?: unknown }).last_error === 'string'
           ? String((raw as { last_error?: unknown }).last_error)
           : null,
-    replay: (raw as { replay?: unknown }).replay === true,
   };
 }
 
@@ -198,26 +239,25 @@ async function parseJson<T>(response: Response, path: string): Promise<T> {
 }
 
 export async function createMission(): Promise<MissionState> {
-  if (import.meta.env.DEV) return (await import('./localMissionPreview')).createLocalMission();
+  const idempotencyKey = pendingProofKey();
   const response = await fetch('/api/demo/missions', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ idempotency_key: idempotencyKey }),
   });
   const created = await parseJson<MissionCreateResponse>(response, '/api/demo/missions');
   const mission = await getMission(created.id);
-  return { ...mission, replay: created.reused === true };
+  window.sessionStorage.removeItem(PENDING_PROOF_KEY);
+  return mission;
 }
 
 export async function getMission(id: string): Promise<MissionState> {
-  if (import.meta.env.DEV) return (await import('./localMissionPreview')).getLocalMission();
   const response = await fetch(`/api/demo/missions/${encodeURIComponent(id)}`);
   const raw = await parseJson<Partial<MissionState>>(response, `/api/demo/missions/${id}`);
   return normalizeState(raw as MissionState);
 }
 
 export async function shiftMission(id: string): Promise<MissionState> {
-  if (import.meta.env.DEV) return (await import('./localMissionPreview')).shiftLocalMission();
   const response = await fetch(`/api/demo/missions/${encodeURIComponent(id)}/shift`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -228,7 +268,6 @@ export async function shiftMission(id: string): Promise<MissionState> {
 }
 
 export async function resetMission(id: string): Promise<MissionState> {
-  if (import.meta.env.DEV) return (await import('./localMissionPreview')).resetLocalMission();
   const response = await fetch(`/api/demo/missions/${encodeURIComponent(id)}/reset`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

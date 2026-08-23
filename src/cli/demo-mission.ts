@@ -8,7 +8,7 @@ const DEFAULT_DEMO_MISSION_PORT = 4171;
 export function register(program: Command): void {
   program
     .command('demo-mission')
-    .description('Serve the live-gated V1 → V2 demo mission (requires POLYGRAPH_DEMO_LIVE=1 and all demo env vars)')
+    .description('Serve the live evolving-store proof (requires POLYGRAPH_DEMO_LIVE=1 and all demo env vars)')
     .option('-p, --port <port>', 'HTTP port (default 4171)', String(DEFAULT_DEMO_MISSION_PORT))
     .option('--host <address>', 'bind address (default 127.0.0.1)', '127.0.0.1')
     .action(async (opts: { port?: string; host?: string }) => {

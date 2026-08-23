@@ -1628,6 +1628,12 @@ body.polygraph-landing-lock .global-chrome {
   transition-timing-function: cubic-bezier(.23, 1, .32, 1);
 }
 
+.pg-version-frame--single {
+  width: min(920px, 100%);
+  height: 100%;
+  margin-inline: auto;
+}
+
 .pg-version-frame.is-muted {
   opacity: .38;
   filter: saturate(.45);

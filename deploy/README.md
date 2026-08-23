@@ -22,11 +22,15 @@ divergent hash chains. **Never run two.**
 | TLS | Caddy, hostname via [sslip.io](https://sslip.io) so the IP resolves |
 | Health | `GET /healthz` → `{"ok":true}` |
 
-> **TODO — fill in from the box.** Two things are not in this repo yet:
-> the Caddyfile, and whatever supervises the node process (systemd unit or
-> `docker run` invocation — the `Dockerfile` here is kept and builds, but has
-> not been verified against the live VM). Copy them in so a rebuild does not
-> depend on one person's memory.
+The auditable startup/supervision contract is
+[`deploy/gcp-startup.sh`](./gcp-startup.sh). The VM metadata pins two source
+values: `polygraph-source-repo` and an exact `polygraph-source-ref` commit. The
+script builds that commit locally while the prior container keeps serving,
+starts the new container against the persistent `/data` disk, checks health,
+and restores the prior cached image if the new container cannot become healthy.
+This source-build path is the hackathon fallback when Artifact Registry billing
+is unavailable; an immutable registry digest remains preferable after billing
+is restored.
 
 ## Build and run
 
@@ -53,19 +57,20 @@ Secrets never belong in a config file — set them in the service environment.
 
 ### Demo-mission variables
 
-The live V1→V2 mission runs only with `POLYGRAPH_DEMO_LIVE=1` plus the full
-`POLYGRAPH_DEMO_*` set (`COLLECTOR_ID`, `FIXTURE_URL`, `FIXTURE_REPO`,
+The live evolving-store proof runs only with `POLYGRAPH_DEMO_LIVE=1` plus the
+full `POLYGRAPH_DEMO_*` set (`COLLECTOR_ID`, `FIXTURE_URL`, `FIXTURE_REPO`,
 `FIXTURE_WORKFLOW`, `EXPECTED_PRODUCT_CODE`, `EXPECTED_PRICE`, `EXPECTED_CURRENCY`,
-`EXPECTED_SYMBOL`, `MAX_MISSIONS`, `GITHUB_TOKEN`).
+`EXPECTED_SYMBOL`, `GITHUB_TOKEN`). There is no replay fallback and no artificial
+mission-count budget. A single database-backed lease prevents overlapping proof
+missions from racing the fixture or collector.
 
-`EXPECTED_SKU` remains a temporary fallback for an older VM environment, but the
-current fixture identity is a product code and new deployments must use
-`EXPECTED_PRODUCT_CODE`.
+`EXPECTED_SKU` is accepted only as a compatibility alias. New deployments must
+use `EXPECTED_PRODUCT_CODE`.
 
 `POLYGRAPH_HEAL_ENABLED=1` and `POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE=1`
-authorise Bright Data mutations **for the owned fixture collector only**. The
-customer scheduler strips that authority, so a connected customer collector can
-never inherit it.
+authorise Bright Data mutations for the explicitly configured owned fixture
+collector. `GOOGLE_CLOUD_PROJECT` enables the Vertex Gemini advisor; deterministic
+checks and the fresh C collection remain the only success authority.
 
 ## Rules
 

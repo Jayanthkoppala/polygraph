@@ -88,6 +88,14 @@ export interface RepairReceipt {
   proof_run_id: string | null;
   terminal_ledger_id: number | null;
   event_hash: string | null;
+  baseline_generation?: string;
+  changed_generation?: string;
+  generation_seed?: string;
+  fixture_commit_sha?: string | null;
+  fixture_workflow_run_id?: string | null;
+  fixture_workflow_run_url?: string | null;
+  baseline_run_id?: string | null;
+  broken_run_id?: string | null;
 }
 
 export class ApiError extends Error {
