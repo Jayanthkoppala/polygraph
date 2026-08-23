@@ -37,6 +37,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "setup": "npm install && npm --prefix app install",
     "clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc",
     "build:app": "npm --prefix app run build",
@@ -64,7 +65,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^20.17.9",
+    "@types/node": "^22",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

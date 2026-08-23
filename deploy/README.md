@@ -126,7 +126,7 @@ values warrant rotation out of caution.
 
 ```bash
 npm ci && npm run build:all
-POLYGRAPH_MASTER_KEY=<32-byte hex> node dist/index.js serve
+POLYGRAPH_MASTER_KEY=<base64 of 32 random bytes> node dist/index.js serve
 ```
 
 `serve` runs its own migrations on boot, so a fresh disk needs no extra step.
@@ -137,7 +137,7 @@ Secrets never belong in a config file — set them in the service environment.
 
 | Variable | Required | What it does |
 |---|---|---|
-| `POLYGRAPH_MASTER_KEY` | **yes** | 32-byte hex. Decrypts every tenant's Bright Data key. Without it `serve` refuses to start. |
+| `POLYGRAPH_MASTER_KEY` | **yes** | Base64 of exactly 32 random bytes (`openssl rand -base64 32`). Decrypts every tenant's Bright Data key. Without it `serve` refuses to start. |
 | `POLYGRAPH_MASTER_KEY_PREVIOUS` | during rotation only | Lets `admin rekey` read rows still under the old key. |
 | `POLYGRAPH_DB` | yes | Path to the SQLite file. Must be on persistent disk. |
 | `POLYGRAPH_PUBLIC_ORIGIN` | yes | Public origin. CSRF checks compare against it. |

@@ -16,3 +16,6 @@ docs/design/critique-shots/
 docs/design/copy.md
 docs/design/positioning.md
 graphify-out/
+
+# migration backups written next to the database
+*.sqlite.pre-migration-*

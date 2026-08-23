@@ -17,9 +17,11 @@ npm run typecheck
 npm run build:all
 ```
 
-The browser sandbox on the public Vercel site runs fixture data locally in the visitor's browser.
-It is not a hosted tenant service and does not send a Bright Data key anywhere. The self-hosted
-server is a separate runtime started with `POLYGRAPH_MASTER_KEY=<32-byte hex> npm run serve`.
+The hosted instance is a multi-tenant service on a single Google Cloud VM (see
+`deploy/README.md`). Tenant Bright Data keys are encrypted per tenant with a master key that
+lives only in the server environment. The offline demo (`npm run demo`) runs against a local
+fixture and sends nothing anywhere. The server is started with
+`POLYGRAPH_MASTER_KEY=<base64 of 32 random bytes> node dist/index.js serve`.
 
 AI-generated suggestions can be wrong or incomplete. This disclosure does not replace the
 repository's tests, the ledger verification command, or an operator's own review of a live

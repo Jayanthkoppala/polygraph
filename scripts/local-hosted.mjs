@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 const HOST = '127.0.0.1';
 const PORT = '8080';
@@ -36,11 +37,19 @@ if (occupied.length > 0) {
   process.exit(1);
 }
 
+if (!existsSync('app/node_modules')) {
+  process.stderr.write('app/node_modules missing — installing front-end dependencies once.\n');
+  const install = spawnSync('npm', ['--prefix', 'app', 'install'], { stdio: 'inherit' });
+  if (install.status !== 0) process.exit(install.status ?? 1);
+}
+
 const build = spawnSync('npm', ['run', 'build:all'], { stdio: 'inherit' });
 if (build.status !== 0) process.exit(build.status ?? 1);
 
 const serve = spawnSync('npm', ['run', 'serve', '--', '--host', HOST, '--port', PORT], {
   stdio: 'inherit',
-  env: process.env,
+  // CSRF compares the Origin header to this string exactly; default it to the
+  // URL we tell the operator to open so signup and key-save work out of the box.
+  env: { POLYGRAPH_PUBLIC_ORIGIN: `http://${HOST}:${PORT}`, ...process.env },
 });
 process.exit(serve.status ?? 1);
