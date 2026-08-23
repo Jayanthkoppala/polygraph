@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatasetPollResult, RefactorProgress } from '../brightdata/client.js';
-import { healOwnedFixture, mintOwnedFixtureHealPermit } from '../brightdata/heal.js';
+import { healOwnedFixture, mintOwnedFixtureHealPermit, type OwnedFixturePreviewContract } from '../brightdata/heal.js';
 import type { FailureAdvisor, RecoveryAdvice } from '../ai/gemini-advisor.js';
 import type { PersistedDemoMission, SqliteDemoMissionStateStore } from '../tenancy/demo-mission-store.js';
 
@@ -338,7 +338,11 @@ export class DemoMissionService {
     const deterministicPrompt = this.repairPrompt(mission, regression.changedFields);
     const prompt = await this.advisedPrompt(mission, baselineVersion, changedVersion, regression.changedFields, deterministicPrompt);
     this.event(mission, 'healing_prompt', `Healing prompt prepared: ${prompt}`); mission.scene = 'self_healing'; mission.activeStep = 5; await this.heal(mission, prompt); mission.activeStep = 6;
-    const recovered = await this.scrape(mission, 'C recovery verification'); const proofObservation = assertRecoveredRow(recovered.result, 'C recovery verification', this.deps.config, baselineObservation); mission.evidence.proof_run_id = recovered.jobId; mission.evidence.proof_result = proofObservation;
+    const recovered = await this.scrape(mission, 'C recovery verification');
+    // Keep C's fresh Bright Data job ID even when its rows fail validation.
+    mission.evidence.proof_run_id = recovered.jobId;
+    const proofObservation = assertRecoveredRow(recovered.result, 'C recovery verification', this.deps.config, baselineObservation);
+    mission.evidence.proof_result = proofObservation;
     this.event(mission, 'proof_authority', 'Bright Data reported completion earlier, but only independent C rows matching the deterministic baseline are promotion proof.');
     this.event(mission, 'receipt', `Bright Data C re-proved all four fields for ${proofObservation.product_code} at ${this.deps.config.expectedSymbol}${this.deps.config.expectedPrice} after the generation ${deployment.generation} repair.`); mission.scene = 'receipt'; mission.status = 'healed'; this.lastReceiptId = mission.id; this.activeId = undefined;
     const completedAt = mission.events.find((event) => event.step === 'receipt')?.at ?? this.now();
@@ -372,7 +376,17 @@ export class DemoMissionService {
     runtime.heals++;
     const policy = { max_attempts_per_incident: 1, cooldown_minutes: 0, daily_heal_budget: 1, heal_enabled: true };
     const permit = mintOwnedFixtureHealPermit(this.deps.config.collectorId, this.deps.config.fixtureUrl, policy);
-    const progress = await healOwnedFixture(prompt, { client: this.deps.brightData, policy, permit });
+    const baseline = mission.evidence.baseline_result;
+    if (!baseline?.product_code || !baseline.title || baseline.price.value === null || !baseline.price.currency || !baseline.price.symbol || !baseline.availability) {
+      throw new Error('the healthy baseline is incomplete; Polygraph will not auto-approve a repair preview');
+    }
+    const previewContract: OwnedFixturePreviewContract = {
+      productCode: baseline.product_code,
+      title: baseline.title,
+      price: { value: baseline.price.value, currency: baseline.price.currency, symbol: baseline.price.symbol },
+      availability: baseline.availability,
+    };
+    const progress = await healOwnedFixture(prompt, { client: this.deps.brightData, policy, permit, previewContract });
     this.event(mission, 'heal_approved', 'The owned-fixture repair reached Bright Data approval and used its explicit one-use auto-save permit.');
     mission.evidence.heal_run_id = typeof progress.id === 'string' ? progress.id : null;
     this.event(mission, 'heal_complete', `Bright Data reported repair progress status ${progress.status}.`);
@@ -448,7 +462,11 @@ export class DemoMissionService {
       const key = field as keyof NonNullable<DemoFixtureManifest['anchors']>;
       return `${field}: ${baseline?.anchors?.[key] ?? 'previous extraction anchor'} -> ${changed?.anchors?.[key] ?? 'new generated anchor'}`;
     }).join('; ');
-    return `The owned live fixture evolved from generation ${baseline?.generation ?? 'unknown'} to ${changed?.generation ?? 'unknown'} and regressed ${humanList(fields)} while availability stayed valid. Rebind only these fields using the deployed structure (${anchorChanges}). Preserve product identity ${this.deps.config.expectedProductCode}, keep the input URL and output schema unchanged, and leave availability extraction untouched.`;
+    const baselineResult = mission.evidence.baseline_result;
+    const meaning = baselineResult
+      ? `The required product is product_code ${JSON.stringify(baselineResult.product_code)}, title ${JSON.stringify(baselineResult.title)}, price ${baselineResult.price.symbol}${baselineResult.price.value} ${baselineResult.price.currency}, and stable availability ${JSON.stringify(baselineResult.availability)}.`
+      : `The required product is product_code ${JSON.stringify(this.deps.config.expectedProductCode)}, price ${this.deps.config.expectedSymbol}${this.deps.config.expectedPrice} ${this.deps.config.expectedCurrency}, with availability preserved.`;
+    return `The owned live fixture evolved from generation ${baseline?.generation ?? 'unknown'} to ${changed?.generation ?? 'unknown'} and regressed ${humanList(fields)} while availability stayed valid. ${meaning} Rebind only these fields using the deployed structure (${anchorChanges}). Preserve the input URL and output schema unchanged, and leave availability extraction untouched.`;
   }
   private sourceUrl(version: DemoFixtureVersion): string { const ref = this.deps.config.githubRef ?? 'main'; return `https://github.com/${this.deps.config.fixtureRepo}/blob/${encodeURIComponent(ref)}/versions/${version}.html`; }
   private event(mission: DemoMission, step: string, detail: string): void { mission.events.push({ step, detail, at: this.now() }); this.persist(mission, step); }

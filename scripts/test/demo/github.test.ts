@@ -28,10 +28,16 @@ describe('GithubFixtureClient', () => {
   });
 
   it('accepts a generated marker only when generation, parent, seed, and mission all match', async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ version: 'evolving', generation: 43, parent_generation: 42, seed: 'pg_43_seed', mission_id: 'mission-8' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ schema_version: 3, version: 'evolving', generation: 43, parent_generation: 42, seed: 'pg_43_seed', mission_id: 'mission-8' }), { status: 200, headers: { 'content-type': 'application/json' } }));
     const client = new GithubFixtureClient({ config, fetchImpl: fetchImpl as unknown as typeof fetch, sleep: async () => undefined });
     await expect(client.waitForMarker('v1', '43', 'mission-8', { parentGeneration: '42', seed: 'pg_43_seed' })).resolves.toBeUndefined();
     expect(String((fetchImpl.mock.calls[0] as unknown as [string | URL])[0])).toContain('version.json?generation=43');
+  });
+
+  it('rejects a pre-v3 marker even when its generation tuple matches', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ schema_version: 2, version: 'evolving', generation: 43, parent_generation: 42, seed: 'pg_43_seed', mission_id: 'mission-8' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const client = new GithubFixtureClient({ config, fetchImpl: fetchImpl as unknown as typeof fetch, sleep: async () => undefined });
+    await expect(client.waitForMarker('v1', '43', 'mission-8', { parentGeneration: '42', seed: 'pg_43_seed' })).rejects.toThrow(/polling deadline/);
   });
 
   it('fails closed when a stale or cross-mission marker never matches', async () => {
@@ -41,7 +47,7 @@ describe('GithubFixtureClient', () => {
   });
 
   it('adds the exact GitHub commit and workflow run to the deployed manifest evidence', async () => {
-    const marker = { schema_version: 2, version: 'evolving', generation: 45, parent_generation: 44, seed: 'pg_45_seed', mission_id: 'mission-10', html_sha256: 'html-hash', template_sha256: 'template-hash', anchors: { product_code: '[data-code]', title: '.title', price: '.price', availability: '.stock-status' } };
+    const marker = { schema_version: 3, version: 'evolving', generation: 45, parent_generation: 44, seed: 'pg_45_seed', mission_id: 'mission-10', html_sha256: 'html-hash', template_sha256: 'template-hash', variant: { profile: 'catalog-attributes', selector_digest: 'abc123' }, anchors: { product_code: '[data-code]', title: '.title', price: '.price', availability: '.stock-status' } };
     const fetchImpl = vi.fn(async (input: string | URL) => {
       const url = String(input);
       if (url.includes('/commits/')) return new Response(JSON.stringify({ sha: 'abc123def456' }), { status: 200 });

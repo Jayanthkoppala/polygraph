@@ -48,7 +48,7 @@ function fakes(options: { brokenRow?: Record<string, unknown>; healthyRow?: Reco
   const brightData: DemoBrightDataClient = {
     async trigger() { dataset++; calls.push(`trigger:${dataset}`); return options.jobIds?.[dataset - 1] ?? `job-${dataset}`; },
     async pollDataset() { calls.push(`poll:${dataset}`); const phase = (dataset - 1) % 3; const row = options.rows?.[dataset - 1] ?? (phase === 0 ? options.healthyRow ?? HEALTHY_ROW : phase === 1 ? options.brokenRow ?? BROKEN_ROW : options.recoveredRow ?? options.healthyRow ?? HEALTHY_ROW); return { rows: [row], ambiguous: false }; },
-    async refactorTemplate() { calls.push('heal:start'); return {}; }, async pollRefactorTemplateProgress() { calls.push('heal:poll'); healPolls++; return healPolls % 2 === 0 ? { status: 'completed', id: 'heal-1' } : { status: 'pending_answer', id: 'heal-1' }; }, async resumeAutomationJob(_id, opts) { calls.push(`heal:resume:${opts.message}:${opts.autoSave}`); },
+    async refactorTemplate() { calls.push('heal:start'); return {}; }, async pollRefactorTemplateProgress() { calls.push('heal:poll'); healPolls++; return healPolls % 2 === 0 ? { status: 'completed', id: 'heal-1', completed_steps: ['user_approval', 'save_new_template'] } : { status: 'pending_answer', id: 'heal-1', preview_result: [HEALTHY_ROW] }; }, async resumeAutomationJob(_id, opts) { calls.push(`heal:resume:${opts.message}:${opts.autoSave}`); },
   };
   const service = new DemoMissionService({ config, github, brightData, advisor: options.advisor, store: options.store, stateStore: options.stateStore, now: () => '2026-08-22T00:00:00.000Z', id: () => `mission-${++ids}`, workerId: `worker-${ids}` });
   return { calls, service };
@@ -125,7 +125,7 @@ describe('demo mission sequence', () => {
     ]));
     const prompt = service.current(mission.id)?.events.find((event) => event.step === 'healing_prompt')?.detail ?? '';
     expect(prompt).toContain('Repair only the three moved selectors.');
-    expect(prompt).toContain('Preserve product identity Product/Code-123');
+    expect(prompt).toContain('The required product is product_code "Product/Code-123"');
     expect(prompt).toContain('Authoritative scope: change only product_code, title, and price');
   });
   it('tries one additional generated structure when the collector survives the first evolution', async () => {
@@ -168,6 +168,9 @@ describe('demo mission sequence', () => {
     expect(prompt).toMatch(/\.old-price -> \.price-101/i);
     expect(prompt).not.toMatch(/availability from h2 to \.stock-status/i);
     expect(prompt).toMatch(/availability extraction untouched/i);
+    expect(prompt).toContain(`title ${JSON.stringify(PRODUCT_TITLE)}`);
+    expect(prompt).toContain('price £51.77 GBP');
+    expect(prompt).toContain('stable availability "In stock"');
   });
   it('rejects an otherwise equal A price in the wrong currency', async () => {
     const { service } = fakes({ healthyRow: { ...HEALTHY_ROW, price: { value: 51.77, currency: 'USD', symbol: '$' } } });
@@ -190,6 +193,7 @@ describe('demo mission sequence', () => {
     const { service } = fakes({ recoveredRow: { ...HEALTHY_ROW, title: `${PRODUCT_TITLE} (wrong)` } });
     const mission = service.create(); await service.whenSettled(mission.id); service.shift(mission.id); await service.whenSettled(mission.id);
     expect(service.current(mission.id)?.last_error).toMatch(/still differs from the healthy baseline on title/);
+    expect(service.current(mission.id)?.evidence.proof_run_id).toBe('job-3');
   });
   it('keeps the evolving fixture append-only without mutating or removing its receipt', async () => {
     const { calls, service } = fakes(); const first = service.create(); await service.whenSettled(first.id); service.shift(first.id); await service.whenSettled(first.id);

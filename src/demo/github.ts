@@ -18,7 +18,7 @@ export class GithubFixtureClient implements DemoGithubClient {
     const intervalMs = this.options.config.pollIntervalMs ?? 1_000; const deadlineMs = this.options.config.pollDeadlineMs ?? 300_000; const started = Date.now();
     for (;;) {
       const markerUrl = new URL('version.json', this.options.config.fixtureUrl.endsWith('/') ? this.options.config.fixtureUrl : `${this.options.config.fixtureUrl}/`); markerUrl.searchParams.set('generation', generation);
-      try { const response = await this.fetchImpl(markerUrl, { cache: 'no-store', headers: { accept: 'application/json' } } as unknown as RequestInit); if (response.ok) { const marker = (await response.json()) as { version?: unknown; generation?: unknown; parent_generation?: unknown; seed?: unknown; mission_id?: unknown }; if (marker.version === 'evolving' && String(marker.generation) === generation && String(marker.parent_generation) === options.parentGeneration && marker.seed === options.seed && marker.mission_id === missionId) return; } } catch { /* bounded retry handles deploy propagation and invalid JSON */ }
+      try { const response = await this.fetchImpl(markerUrl, { cache: 'no-store', headers: { accept: 'application/json' } } as unknown as RequestInit); if (response.ok) { const marker = (await response.json()) as { schema_version?: unknown; version?: unknown; generation?: unknown; parent_generation?: unknown; seed?: unknown; mission_id?: unknown }; if (marker.schema_version === 3 && marker.version === 'evolving' && String(marker.generation) === generation && String(marker.parent_generation) === options.parentGeneration && marker.seed === options.seed && marker.mission_id === missionId) return; } } catch { /* bounded retry handles deploy propagation and invalid JSON */ }
       if (Date.now() - started >= deadlineMs) throw new Error(`fixture version.json did not confirm evolving generation ${generation} before the polling deadline`);
       await this.sleep(intervalMs);
     }
@@ -50,9 +50,10 @@ export class GithubFixtureClient implements DemoGithubClient {
             const contents = await contentsResponse.json() as { content?: unknown; encoding?: unknown };
             if (contents.encoding === 'base64' && typeof contents.content === 'string') {
               const committed = JSON.parse(Buffer.from(contents.content.replace(/\s/g, ''), 'base64').toString('utf8')) as Record<string, unknown>;
-              const keys = ['version', 'generation', 'parent_generation', 'seed', 'mission_id', 'html_sha256', 'template_sha256'] as const;
+              const keys = ['schema_version', 'version', 'generation', 'parent_generation', 'seed', 'mission_id', 'html_sha256', 'template_sha256'] as const;
               const exactMarker = keys.every((key) => String(committed[key] ?? '') === String(marker[key] ?? ''))
-                && JSON.stringify(committed.anchors ?? null) === JSON.stringify(marker.anchors ?? null);
+                && JSON.stringify(committed.anchors ?? null) === JSON.stringify(marker.anchors ?? null)
+                && JSON.stringify(committed.variant ?? null) === JSON.stringify(marker.variant ?? null);
               if (exactMarker) commitSha = commit.sha;
             }
           }
