@@ -2,8 +2,10 @@ import type Database from 'better-sqlite3';
 import { DeliveryStore, type DeliveryRow } from '../delivery-store.js';
 import { scopeFor } from '../scope.js';
 import {
+  RecoveryCycleStore,
   RecoveryStateStore,
   RepairReceiptStore,
+  type CycleMode,
   type RecoveryStateRow,
   type RepairReceiptRow,
 } from './store.js';
@@ -299,6 +301,9 @@ export interface RecoveryRepairItem {
   collector_id: string;
   collector_name: string;
   status: 'VERIFIED';
+  /** `bootstrap` = the collector's first working version (no prior baseline);
+   * `baseline` = a field repair against a healthy baseline. */
+  mode: CycleMode;
   detected_at: string;
   verified_at: string;
   fields_restored: string[];
@@ -329,6 +334,7 @@ export function listRecoveryRepairs(
   const scope = scopeFor(db, tenantId, genesisHash);
   const names = new Map(scope.collectors.list().map((c) => [c.collector_id, c.name]));
   const store = new RepairReceiptStore(db);
+  const cycles = new RecoveryCycleStore(db);
   const rows = store.list(tenantId, {
     ...(options.collectorId ? { collectorId: options.collectorId } : {}),
     ...(options.before ? { before: options.before } : {}),
@@ -339,6 +345,7 @@ export function listRecoveryRepairs(
     collector_id: row.collector_id,
     collector_name: names.get(row.collector_id) ?? row.collector_id,
     status: 'VERIFIED',
+    mode: cycles.get(tenantId, row.cycle_id)?.mode ?? 'baseline',
     detected_at: row.detected_at,
     verified_at: row.verified_at,
     fields_restored: fieldsOf(row),

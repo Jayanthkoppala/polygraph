@@ -103,10 +103,14 @@ export interface RecoveryStateRow {
   updated_at: string;
 }
 
+export type CycleMode = 'baseline' | 'bootstrap';
+
 export interface RecoveryCycleRow {
   id: string;
   tenant_id: string;
   collector_id: string;
+  /** M014. `bootstrap` = no baseline; judged against the declared schema. */
+  mode: CycleMode;
   baseline_delivery_id: string | null;
   incident_delivery_id: string;
   policy_evidence_json: string;
@@ -264,6 +268,8 @@ export interface CreateCycleInput {
   collectorId: string;
   incidentDeliveryId: string;
   baselineDeliveryId?: string;
+  /** Defaults to `baseline`. A `bootstrap` cycle carries no baseline. */
+  mode?: CycleMode;
   policyEvidence: unknown;
 }
 
@@ -293,14 +299,15 @@ export class RecoveryCycleStore {
       this.db
         .prepare(
           `INSERT INTO recovery_cycles
-            (id, tenant_id, collector_id, baseline_delivery_id, incident_delivery_id,
+            (id, tenant_id, collector_id, mode, baseline_delivery_id, incident_delivery_id,
              policy_evidence_json, status, state_version, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'PENDING', 1, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', 1, ?, ?)`
         )
         .run(
           id,
           input.tenantId,
           input.collectorId,
+          input.mode ?? 'baseline',
           input.baselineDeliveryId ?? null,
           input.incidentDeliveryId,
           canonicalJson(input.policyEvidence),

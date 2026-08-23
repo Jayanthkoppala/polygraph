@@ -49,7 +49,7 @@ function rewindToM012(db: Database.Database): void {
   db.exec(`DROP TRIGGER IF EXISTS trg_repair_receipts_no_delete`);
   for (const table of [...M013_TABLES].reverse()) db.exec(`DROP TABLE IF EXISTS ${table}`);
   db.exec(`ALTER TABLE collector_ingest_tokens DROP COLUMN revoked_at`);
-  db.prepare(`DELETE FROM schema_migrations WHERE version = 13`).run();
+  db.prepare(`DELETE FROM schema_migrations WHERE version >= 13`).run();
 }
 
 describe('M013 — delivery + recovery schema', () => {
@@ -133,7 +133,7 @@ describe('M013 — delivery + recovery schema', () => {
     const versions = db.prepare(`SELECT COUNT(*) AS n FROM schema_migrations`).get() as {
       n: number;
     };
-    expect(versions.n).toBe(13);
+    expect(versions.n).toBe(14);
     db.close();
   });
 

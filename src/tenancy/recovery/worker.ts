@@ -20,7 +20,8 @@
  *   APPROVED_AUTOSAVE ──approveWithAutoSave → poll until PUBLISHED
  *                         APPROVED_NOT_SAVED / FAILED ▶ FAILED
  *   PUBLISHED ──publication_proof_json recorded──▶ VERIFYING
- *   VERIFYING ──freshRun(decrypted input) → grade + judgeRepair
+ *   VERIFYING ──freshRun(decrypted input) → grade + judgeRepair (judgeBootstrap for a
+ *                    bootstrap cycle: no baseline, required fields filled ≥ 80%)
  *                    pass ▶ VERIFIED   (commitVerifiedCycle: verification delivery as new
  *                                       baseline, receipt, state READY, ledger RECOVERY_VERIFIED —
  *                                       one transaction)
@@ -50,7 +51,7 @@ import { scopeFor, type TenantCollectorRow } from '../scope.js';
 import { ScopedSecrets, revealPlaintext } from '../secrets.js';
 import type { HeldReasonCode } from './api.js';
 import { LoggingRecoveryNotifier, type RecoveryNotifier } from './notify.js';
-import { judgeRepair, RECOVERY_POLICY, type RecoveryPolicyEvidence } from './policy.js';
+import { judgeBootstrap, judgeRepair, RECOVERY_POLICY, type RecoveryPolicyEvidence } from './policy.js';
 import { createBrightDataRecoveryProvider, type ProviderProgress, type RecoveryProvider } from './provider.js';
 import {
   StaleWriteError,
@@ -591,7 +592,9 @@ export class RecoveryWorker {
     const reason =
       gateSuccess === false
         ? 'provider reports the repair did not satisfy the prompt (success:false at the approval gate)'
-        : `provider preview does not show the regressed field(s) restored: ${missingRegressed.join(', ')}`;
+        : ctx.cycle.mode === 'bootstrap'
+          ? `provider preview does not show the required field(s): ${missingRegressed.join(', ')}`
+          : `provider preview does not show the regressed field(s) restored: ${missingRegressed.join(', ')}`;
     throw stopWith('HELD_POLICY', reason, 'PROVIDER_PREVIEW_FAILED');
   }
 
@@ -675,8 +678,14 @@ export class RecoveryWorker {
 
     const identity = graded.evidence.find((e) => e.check === 'identity');
     const identityOk = identity?.ok === true;
-    const fieldJudgement =
-      schema && baselineRows
+    // Bootstrap (docs/recovery.md): no baseline and nothing to retain — the
+    // run is judged against the declared schema's required fields only.
+    const bootstrap = ctx.cycle.mode === 'bootstrap';
+    const fieldJudgement = bootstrap
+      ? schema
+        ? judgeBootstrap(schema, run.rows)
+        : undefined
+      : schema && baselineRows
         ? judgeRepair(schema, baselineRows, run.rows, ctx.evidence.regressed_fields)
         : undefined;
 
@@ -694,7 +703,8 @@ export class RecoveryWorker {
         graded.verdict !== 'PASS' ? `verification graded ${graded.verdict} (${graded.cause})` : null,
         !identityOk ? 'identity check did not pass' : null,
         fieldJudgement && !fieldJudgement.ok ? fieldJudgement.detail : null,
-        !schema || !baselineRows ? 'baseline payload or schema unavailable for field comparison' : null,
+        !schema ? 'schema unavailable for field comparison' : null,
+        !bootstrap && !baselineRows ? 'baseline payload unavailable for field comparison' : null,
       ]
         .filter(Boolean)
         .join('; ');

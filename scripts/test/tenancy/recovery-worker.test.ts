@@ -276,6 +276,97 @@ describe('RecoveryWorker (D8)', () => {
     });
   });
 
+  describe('bootstrap repair (no baseline; judged against the declared schema)', () => {
+    const EMPTY = () => Array.from({ length: 6 }, (_, i) => ({ input: { url: `https://shop.example/p/SKU-${i + 1}` } }));
+
+    async function openBootstrapCycle(): Promise<RecoveryCycleRow> {
+      const incident = await h.ingest(EMPTY());
+      expect(incident.cycleId).toBeTruthy();
+      const cycle = h.recovery.cycles.get(h.tenantId, incident.cycleId!)!;
+      expect(cycle.mode).toBe('bootstrap');
+      expect(cycle.baseline_delivery_id).toBeNull();
+      return cycle;
+    }
+
+    it('happy path: schema-derived prompt, preview carries the required fields, verification becomes the FIRST baseline, READY, receipt', async () => {
+      const cycle = await openBootstrapCycle();
+      const provider = new FakeProvider();
+      const worker = h.worker({ providerFor: async () => provider });
+
+      expect(await worker.tick()).toBe(1);
+
+      const refactor = provider.calls.find((c) => c.method === 'startRefactor')!;
+      expect(refactor.args[1]).toMatch(/returns no fields/);
+      expect(refactor.args[1]).toMatch(/sku \(text, required\)/);
+      expect(refactor.args[1]).not.toMatch(/shop\.example/);
+      expect(refactor.args[2]).toEqual([{ url: 'https://shop.example/p/SKU-1' }]);
+      expect(provider.calls.map((c) => c.method).filter((m) => m !== 'readProgress' && m !== 'templateVersionFromLatestJob'))
+        .toEqual(['startRefactor', 'approveWithAutoSave', 'freshRun']);
+
+      const done = h.recovery.cycles.get(h.tenantId, cycle.id)!;
+      expect(done.status).toBe('VERIFIED');
+      expect(done.mode).toBe('bootstrap');
+      expect(done.baseline_delivery_id).toBeNull();
+      expect(done.verification_delivery_id).toBeTruthy();
+
+      const state = h.state()!;
+      expect(state.state).toBe('READY');
+      expect(state.held_reason).toBeNull();
+      expect(state.active_cycle_id).toBeNull();
+      expect(state.baseline_delivery_id).toBe(done.verification_delivery_id);
+      const baseline = h.deliveries.baselineDelivery(h.tenantId, h.collectorId)!;
+      expect(baseline.source).toBe('verification');
+      expect(baseline.cycle_id).toBe(cycle.id);
+
+      const receipts = h.recovery.receipts.list(h.tenantId, { collectorId: h.collectorId });
+      expect(receipts).toHaveLength(1);
+      expect(JSON.parse(receipts[0].fields_restored_json)).toEqual(['price', 'sku']);
+      expect(receipts[0].template_before).toBe('t_shop.1');
+      expect(receipts[0].template_after).toBe('t_shop.2');
+      expect(h.ledgerVerdicts()).toEqual(['FAILED_STRUCTURAL', 'RECOVERY_PENDING', 'RECOVERY_VERIFIED']);
+
+      // The collector now has a real baseline: a later broken delivery is an
+      // ordinary baseline-mode incident, not another bootstrap.
+      // (Past the governor's cooldown; the worker stamped its attempt with the real clock.)
+      const later = await h.ingest(BROKEN(), { now: '2030-01-01T00:00:00.000Z' });
+      expect(later.heldReason).toBeNull();
+      expect(later.cycleId).toBeTruthy();
+      expect(h.recovery.cycles.get(h.tenantId, later.cycleId!)!.mode).toBe('baseline');
+    });
+
+    it('preview missing a required field → never approves, HELD_POLICY / PROVIDER_PREVIEW_FAILED, no baseline', async () => {
+      const cycle = await openBootstrapCycle();
+      const provider = new FakeProvider({ progress: [AWAITING_PREVIEW_MISSING_FIELD] });
+      await h.worker({ providerFor: async () => provider }).tick();
+      expect(provider.count('approveWithAutoSave')).toBe(0);
+      const held = h.recovery.cycles.get(h.tenantId, cycle.id)!;
+      expect(held.status).toBe('HELD_POLICY');
+      expect(held.terminal_reason).toMatch(/required field\(s\): price/);
+      const state = h.state()!;
+      expect(state.state).toBe('HELD');
+      expect(state.held_reason).toBe('PROVIDER_PREVIEW_FAILED');
+      expect(state.baseline_delivery_id).toBeNull();
+      // A held, still-baseline-less collector does not bootstrap again.
+      const again = await h.ingest(EMPTY());
+      expect(again.cycleId).toBeNull();
+      expect(again.state).toBe('HELD');
+    });
+
+    it('verification with a required field under 80% fill fails the cycle: FAILED, HELD VERIFICATION_FAILED, still no baseline', async () => {
+      const cycle = await openBootstrapCycle();
+      const weak = healthyRows(10).map((row, i) => (i < 3 ? { ...row, price: undefined } : row));
+      const provider = new FakeProvider({ freshRows: weak });
+      await h.worker({ providerFor: async () => provider }).tick();
+      const failed = h.recovery.cycles.get(h.tenantId, cycle.id)!;
+      expect(failed.status).toBe('FAILED');
+      expect(failed.terminal_reason).toMatch(/price=70%/);
+      expect(h.state()!.state).toBe('HELD');
+      expect(h.state()!.held_reason).toBe('VERIFICATION_FAILED');
+      expect(h.state()!.baseline_delivery_id).toBeNull();
+      expect(h.recovery.receipts.list(h.tenantId)).toHaveLength(0);
+    });
+  });
+
   it('a provider that approves but never saves to production fails the cycle once the APPROVED_NOT_SAVED read persists (grace window)', async () => {
     const cycle = await openCycle();
     // APPROVED_NOT_SAVED repeats after AWAITING is consumed by the

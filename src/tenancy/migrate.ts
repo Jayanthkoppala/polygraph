@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 import { GENESIS_HASH } from '../store/ledger.js';
 import { LOCAL_TENANT_ID } from './genesis.js';
 import { up013DeliveryRecovery } from './migrations/013-delivery-recovery.js';
+import { up014RecoveryCycleMode } from './migrations/014-recovery-cycle-mode.js';
+import { up015IngestTokenReveal } from './migrations/015-ingest-token-reveal.js';
 
 /**
  * The migration runner, per tenant-architecture.md §8. Idempotent and
@@ -481,6 +483,16 @@ const MIGRATIONS: Migration[] = [
   // pre-migration snapshot is taken. Defined in ./migrations/ per the file
   // layout note at the top of this file.
   { version: 13, destructive: false, up: up013DeliveryRecovery },
+  // M014 — `recovery_cycles.mode` ('baseline' | 'bootstrap') for bootstrap
+  // repair of never-healthy collectors. One guarded ALTER TABLE ADD COLUMN
+  // with a default; M013 had already shipped, so it could not be edited.
+  { version: 14, destructive: false, up: up014RecoveryCycleMode },
+  // M015 — encrypted plaintext columns on M010's `collector_ingest_tokens`,
+  // so a collector's webhook URL can be revealed again from its card rather
+  // than only in the one-shot connect/rotate response. Five guarded ALTER
+  // TABLE ADD COLUMNs, all nullable: pre-M015 tokens were only ever hashed
+  // and stay unrevealable. Defined in ./migrations/.
+  { version: 15, destructive: false, up: up015IngestTokenReveal },
 ];
 
 /** One consistent snapshot before the first destructive step. VACUUM INTO

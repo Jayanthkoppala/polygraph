@@ -341,6 +341,73 @@ describe('recordDeliveredRows — recovery path', () => {
     expect(h.state()!.active_cycle_id).toBeNull();
   });
 
+  // -- bootstrap repair (docs/recovery.md) -----------------------------------
+
+  const EMPTY = (count = 6) =>
+    Array.from({ length: count }, (_, i) => ({ input: { url: `https://shop.example/p/SKU-${i + 1}` } }));
+
+  it('bootstrap: a structurally empty FIRST delivery opens a bootstrap cycle with no baseline and moves the collector to RECOVERING', async () => {
+    const r = await h.ingest(EMPTY());
+    expect(r.verdict).toBe('FAILED_STRUCTURAL');
+    expect(r.cycleId).toBeTruthy();
+    expect(r.state).toBe('RECOVERING');
+    const cycle = h.recovery.cycles.get(h.tenantId, r.cycleId!)!;
+    expect(cycle.mode).toBe('bootstrap');
+    expect(cycle.status).toBe('PENDING');
+    expect(cycle.baseline_delivery_id).toBeNull();
+    expect(cycle.incident_delivery_id).toBe(r.deliveryId);
+    const evidence = JSON.parse(cycle.policy_evidence_json) as { mode: string; regressed_fields: string[]; heal_prompt: string };
+    expect(evidence.mode).toBe('bootstrap');
+    expect(evidence.regressed_fields).toEqual(['sku', 'price']);
+    expect(evidence.heal_prompt).toMatch(/returns no fields/);
+    expect(cycle.policy_evidence_json).not.toMatch(/shop\.example/);
+    const state = h.state()!;
+    expect(state.state).toBe('RECOVERING');
+    expect(state.baseline_delivery_id).toBeNull();
+    expect(state.active_cycle_id).toBe(cycle.id);
+    // The reusable input was captured from the empty rows' `input`.
+    expect(h.deliveries.activeInput(h.tenantId, h.collectorId)).toBeDefined();
+  });
+
+  it('bootstrap: a second empty delivery while the bootstrap cycle is active does not open another cycle', async () => {
+    const first = await h.ingest(EMPTY());
+    const second = await h.ingest(EMPTY(7));
+    expect(second.deliveryId).not.toBe(first.deliveryId);
+    expect(second.state).toBe('RECOVERING');
+    expect(second.cycleId).toBe(first.cycleId);
+    const cycles = h.db.prepare(`SELECT COUNT(*) AS n FROM recovery_cycles`).get() as { n: number };
+    expect(cycles.n).toBe(1);
+  });
+
+  it('bootstrap: fewer than 5 empty rows, a partially filled delivery, or no reusable input never bootstraps (WAITING_BASELINE)', async () => {
+    const few = await h.ingest(EMPTY(4));
+    expect(few.cycleId).toBeNull();
+    expect(few.state).toBe('WAITING_BASELINE');
+    const partial = await h.ingest(EMPTY().map((row, i) => ({ ...row, sku: `SKU-${i + 1}` })));
+    expect(partial.cycleId).toBeNull();
+    expect(partial.state).toBe('WAITING_BASELINE');
+    expect((h.db.prepare(`SELECT COUNT(*) AS n FROM recovery_cycles`).get() as { n: number }).n).toBe(0);
+
+    const g = setupHarness();
+    try {
+      const noInput = await g.ingest(Array.from({ length: 6 }, () => ({})));
+      expect(noInput.cycleId).toBeNull();
+      expect(noInput.state).toBe('WAITING_BASELINE');
+      expect(g.deliveries.activeInput(g.tenantId, g.collectorId)).toBeUndefined();
+    } finally {
+      g.close();
+    }
+  });
+
+  it('bootstrap: a healthy delivery arriving while a bootstrap cycle is in flight is recorded but does not steal the baseline', async () => {
+    const first = await h.ingest(EMPTY());
+    const healthy = await h.ingest(healthyRows());
+    expect(healthy.verdict).toBe('PASS');
+    expect(healthy.state).toBe('RECOVERING');
+    expect(healthy.cycleId).toBe(first.cycleId);
+    expect(h.state()!.baseline_delivery_id).toBeNull();
+  });
+
   it('auto_heal off: deliveries are still recorded and graded but no cycle opens', async () => {
     await h.ingest(healthyRows());
     const state = h.state()!;

@@ -3,6 +3,7 @@ import type { Evidence } from '../../../src/core/types.js';
 import {
   diagnoseFields,
   evaluateRecoveryEligibility,
+  judgeBootstrap,
   judgeRepair,
   type RecoveryEligibilityInput,
 } from '../../../src/tenancy/recovery/policy.js';
@@ -193,5 +194,150 @@ describe('diagnoseFields / judgeRepair', () => {
     expect(r2.ok).toBe(false);
     expect(r2.damaged_retained).toEqual(['title']);
     expect(judgeRepair(SCHEMA, baseline, [], ['price']).ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bootstrap repair: a never-healthy collector is repaired against its
+// DECLARED schema when a delivery is structurally empty (docs/recovery.md).
+
+/** The live Bright Data shape: every row is `{ input: {...} }` and nothing
+ * else — all declared fields 0% filled. */
+function emptyRows(count = 6): Record<string, unknown>[] {
+  return Array.from({ length: count }, (_, i) => ({ input: { url: `https://shop.example/p/SKU-${i + 1}` } }));
+}
+
+function bootstrapInput(overrides: Partial<RecoveryEligibilityInput> = {}): RecoveryEligibilityInput {
+  return baseInput({
+    hasBaseline: false,
+    baselineRows: undefined,
+    collectorName: 'Shop Catalog',
+    incident: {
+      rows: emptyRows(),
+      verdict: 'FAILED_STRUCTURAL',
+      cause: 'STRUCTURAL',
+      evidence: structuralEvidence(),
+    },
+    ...overrides,
+  });
+}
+
+describe('evaluateRecoveryEligibility — bootstrap repair (no baseline)', () => {
+  it('a structurally empty delivery against a schema with required fields is eligible in bootstrap mode', () => {
+    const result = evaluateRecoveryEligibility(bootstrapInput());
+    expect(result.eligible).toBe(true);
+    expect(result.reason).toBe('ELIGIBLE');
+    expect(result.evidence.mode).toBe('bootstrap');
+    expect(result.evidence.regressed_fields).toEqual(['sku', 'price']);
+    expect(result.evidence.retained_fields).toEqual([]);
+    expect(result.evidence.schema_fields).toEqual([
+      { field: 'sku', type: 'text', required: true },
+      { field: 'title', type: 'text', required: false },
+      { field: 'price', type: 'number', required: true },
+    ]);
+    expect(result.evidence.fields.map((f) => [f.field, f.incident_fill, f.regression])).toEqual([
+      ['sku', 0, 'missing'],
+      ['title', 0, null],
+      ['price', 0, 'missing'],
+    ]);
+    // The prompt is composed from the declared schema, names the entity and
+    // the key, and never carries a row value or input.
+    const prompt = result.evidence.heal_prompt!;
+    expect(prompt).toMatch(/returns no fields/);
+    expect(prompt).toMatch(/sku \(text, required\)/);
+    expect(prompt).toMatch(/price \(number, required\)/);
+    expect(prompt).toMatch(/title \(text\)/);
+    expect(prompt).toMatch(/for each Shop Catalog on the page/);
+    expect(prompt).toMatch(/sku must equal the requested input/);
+    expect(prompt.length).toBeLessThanOrEqual(1000);
+    expect(JSON.stringify(result.evidence)).not.toMatch(/shop\.example/);
+  });
+
+  it('the bootstrap prompt stays under 1000 chars for a very wide schema', () => {
+    const fields: Record<string, { type: string; required?: boolean }> = {};
+    for (let i = 0; i < 120; i += 1) fields[`a_rather_long_field_name_${i}`] = { type: 'text', required: i % 2 === 0 };
+    const result = evaluateRecoveryEligibility(bootstrapInput({ schema: { fields } }));
+    expect(result.eligible).toBe(true);
+    expect(result.evidence.heal_prompt!.length).toBeLessThanOrEqual(1000);
+    expect(result.evidence.heal_prompt).toMatch(/…/);
+  });
+
+  it('a partially filled first delivery is NOT bootstrap-eligible (it needs a real baseline)', () => {
+    // sku fills on every row, price on none: a real run with one broken
+    // extractor, not an empty one.
+    const rows = emptyRows().map((row, i) => ({ ...row, sku: `SKU-${i + 1}` }));
+    const result = evaluateRecoveryEligibility(bootstrapInput({ incident: { ...bootstrapInput().incident, rows } }));
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('NO_BASELINE');
+    expect(result.detail).toMatch(/partially filled/);
+    expect(result.evidence.mode).toBeUndefined();
+  });
+
+  it('a required field filled in >= 5% of rows is not structurally empty', () => {
+    const rows = emptyRows(20).map((row, i) => (i === 0 ? { ...row, sku: 'SKU-1', price: 1 } : row)); // 5%
+    expect(evaluateRecoveryEligibility(bootstrapInput({ incident: { ...bootstrapInput().incident, rows } })).reason).toBe('NO_BASELINE');
+    const rows2 = emptyRows(25).map((row, i) => (i === 0 ? { ...row, sku: 'SKU-1', price: 1 } : row)); // 4%
+    expect(evaluateRecoveryEligibility(bootstrapInput({ incident: { ...bootstrapInput().incident, rows: rows2 } })).eligible).toBe(true);
+  });
+
+  it('a value-only (PASS) first delivery is never bootstrap — it is the baseline', () => {
+    const result = evaluateRecoveryEligibility(
+      bootstrapInput({ incident: { rows: healthyRows(6), verdict: 'PASS', cause: 'NONE', evidence: structuralEvidence() } })
+    );
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('HEALTHY');
+  });
+
+  it('fewer than 5 rows is not enough to call a delivery structurally empty', () => {
+    const result = evaluateRecoveryEligibility(bootstrapInput({ incident: { ...bootstrapInput().incident, rows: emptyRows(4) } }));
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('NO_BASELINE');
+    expect(result.detail).toMatch(/at least 5/);
+  });
+
+  it('BLOCKED / captcha evidence is never bootstrap-eligible', () => {
+    expect(evaluateRecoveryEligibility(bootstrapInput({ incident: { ...bootstrapInput().incident, cause: 'BLOCKED' } })).reason).toBe('BLOCKED');
+    expect(
+      evaluateRecoveryEligibility(
+        bootstrapInput({
+          incident: {
+            ...bootstrapInput().incident,
+            evidence: [...structuralEvidence(), { check: 'canary', ok: false, detail: 'captcha page served' }],
+          },
+        })
+      ).reason
+    ).toBe('BLOCKED');
+  });
+
+  it('a contradicted identity is never bootstrap-eligible, but an absent identity row is fine', () => {
+    const contradicted = structuralEvidence().map((e) => (e.check === 'identity' ? { ...e, ok: false } : e));
+    expect(
+      evaluateRecoveryEligibility(bootstrapInput({ incident: { ...bootstrapInput().incident, evidence: contradicted } })).reason
+    ).toBe('IDENTITY_UNSTABLE');
+    const absent = structuralEvidence().filter((e) => e.check !== 'identity');
+    expect(evaluateRecoveryEligibility(bootstrapInput({ incident: { ...bootstrapInput().incident, evidence: absent } })).eligible).toBe(true);
+  });
+
+  it('no reusable input, an active cycle, no required field, or the governor veto bootstrap', () => {
+    expect(evaluateRecoveryEligibility(bootstrapInput({ hasReusableInput: false })).reason).toBe('NO_REUSABLE_INPUT');
+    expect(evaluateRecoveryEligibility(bootstrapInput({ hasActiveCycle: true })).reason).toBe('ACTIVE_CYCLE');
+    expect(evaluateRecoveryEligibility(bootstrapInput({ schema: { fields: { sku: { type: 'text' } } } })).reason).toBe('NO_BASELINE');
+    expect(evaluateRecoveryEligibility(bootstrapInput({ schema: undefined })).reason).toBe('NO_BASELINE');
+    const governed = evaluateRecoveryEligibility(bootstrapInput({ governor: { allowed: false, reason: 'daily budget exhausted' } }));
+    expect(governed.reason).toBe('GOVERNOR');
+  });
+
+  it('judgeBootstrap passes only when every required field fills in >= 80% of rows', () => {
+    expect(judgeBootstrap(SCHEMA, healthyRows(10)).ok).toBe(true);
+    expect(judgeBootstrap(SCHEMA, healthyRows(10)).restored_fields).toEqual(['sku', 'price']);
+    const noTitle = healthyRows(10).map(({ title: _t, ...row }) => row);
+    expect(judgeBootstrap(SCHEMA, noTitle).ok).toBe(true); // title is optional
+    const weakPrice = healthyRows(10).map((row, i) => (i < 3 ? { ...row, price: undefined } : row)); // 70%
+    const r = judgeBootstrap(SCHEMA, weakPrice);
+    expect(r.ok).toBe(false);
+    expect(r.still_regressed).toEqual(['price']);
+    expect(r.detail).toMatch(/price=70%/);
+    expect(judgeBootstrap(SCHEMA, []).ok).toBe(false);
+    expect(judgeBootstrap({ fields: { sku: { type: 'text' } } }, healthyRows()).ok).toBe(false);
   });
 });

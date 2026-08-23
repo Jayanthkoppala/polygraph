@@ -20,6 +20,12 @@ function compactHash(value: string | null) {
 /** VERIFIED-only, defended client-side too: `/api/recovery/repairs` is documented
  *  to return verified receipts exclusively, but a `status` field on a row that
  *  says otherwise must never render here regardless of what the server sent. */
+/** Repair column copy. A bootstrap receipt is the collector's first working
+ * version — there was no baseline to restore fields against. */
+export function repairModeLabel(repair: RecoveryRepair): string {
+  return repair.mode === 'bootstrap' ? 'First working version' : 'Field repair';
+}
+
 export function isVerifiedReceipt(repair: RecoveryRepair): boolean {
   return repair.status === undefined || repair.status.toUpperCase() === 'VERIFIED';
 }
@@ -201,6 +207,7 @@ export function RepairsTable({
               <TableRow>
                 <TableHead className="pl-4">Detected</TableHead>
                 <TableHead>Verified</TableHead>
+                <TableHead>Repair</TableHead>
                 <TableHead>Fields restored</TableHead>
                 <TableHead>Template</TableHead>
                 <TableHead className="pr-4 text-right">Receipt</TableHead>
@@ -211,6 +218,7 @@ export function RepairsTable({
                 <TableRow key={repair.id}>
                   <TableCell className="pl-4 font-mono text-xs text-[#A1A1AA]">{displayTime(repair.detectedAt)}</TableCell>
                   <TableCell className="font-mono text-xs text-[#A1A1AA]">{displayTime(repair.verifiedAt)}</TableCell>
+                  <TableCell className="text-xs text-[#A1A1AA]">{repairModeLabel(repair)}</TableCell>
                   <TableCell className="whitespace-normal">
                     <div className="flex max-w-56 flex-wrap gap-1.5">
                       {repair.fieldsRestored.length > 0

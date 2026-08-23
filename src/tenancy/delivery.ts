@@ -30,6 +30,7 @@ import {
 import { isAutoRecoveryEnabled } from './recovery/worker.js';
 import type { HeldReasonCode } from './recovery/api.js';
 import { loadRunnerOverridesFor } from './onboarding.js';
+import { encryptIngestToken } from './ingest-token-crypto.js';
 
 const DELIVERY_PREFIX = 'pgi_';
 const DELIVERY_MAX_COMPRESSED_BYTES = SAFE_OUTPUT_MAX_BYTES;
@@ -44,26 +45,52 @@ interface IssuedDeliveryToken {
 }
 
 /** Rotates the public capability for exactly one tenant collector. The
- * plaintext is returned once to the authenticated onboarding response;
- * only its SHA-256 digest is stored. Reconnecting a collector therefore
+ * SHA-256 digest is what ingest authenticates against and is the only thing
+ * `resolveDeliveryTarget` ever consults. Reconnecting a collector therefore
  * invalidates its previous delivery URL instead of creating several live
- * ingress capabilities. */
+ * ingress capabilities.
+ *
+ * When `masterKey` is supplied (M015), a second, operator-facing copy of the
+ * plaintext is stored alongside the digest, encrypted under a per-tenant DEK
+ * with its own domain separation (ingest-token-crypto.ts), so the webhook URL
+ * can be revealed again from the collector card. Omitting the key writes
+ * NULLs — and, on a rotation, CLEARS any previous ciphertext, because a
+ * ciphertext left behind would reveal a token that is already dead. */
 export function issueDeliveryToken(
   db: Database.Database,
   tenantId: string,
   collectorId: string,
-  nowIso = new Date().toISOString()
+  nowIso = new Date().toISOString(),
+  masterKey?: Buffer
 ): IssuedDeliveryToken {
   const token = `${DELIVERY_PREFIX}${randomBytes(24).toString('base64url')}`;
+  const sealed = masterKey ? encryptIngestToken(masterKey, tenantId, token) : undefined;
   db.prepare(
-    `INSERT INTO collector_ingest_tokens (tenant_id, collector_id, token_sha256, created_at, last_seen_at)
-     VALUES (?, ?, ?, ?, NULL)
+    `INSERT INTO collector_ingest_tokens (
+       tenant_id, collector_id, token_sha256, created_at, last_seen_at,
+       token_ciphertext, token_iv, token_tag, token_salt, token_key_version)
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, collector_id) DO UPDATE SET
        token_sha256 = excluded.token_sha256,
        created_at = excluded.created_at,
        last_seen_at = NULL,
-       revoked_at = NULL`
-  ).run(tenantId, collectorId, tokenHash(token), nowIso);
+       revoked_at = NULL,
+       token_ciphertext = excluded.token_ciphertext,
+       token_iv = excluded.token_iv,
+       token_tag = excluded.token_tag,
+       token_salt = excluded.token_salt,
+       token_key_version = excluded.token_key_version`
+  ).run(
+    tenantId,
+    collectorId,
+    tokenHash(token),
+    nowIso,
+    sealed?.ciphertext ?? null,
+    sealed?.iv ?? null,
+    sealed?.tag ?? null,
+    sealed?.salt ?? null,
+    sealed?.version ?? null
+  );
   return { token, createdAt: nowIso };
 }
 
@@ -76,9 +103,10 @@ export function rotateDeliveryToken(
   db: Database.Database,
   tenantId: string,
   collectorId: string,
-  nowIso = new Date().toISOString()
+  nowIso = new Date().toISOString(),
+  masterKey?: Buffer
 ): IssuedDeliveryToken {
-  return issueDeliveryToken(db, tenantId, collectorId, nowIso);
+  return issueDeliveryToken(db, tenantId, collectorId, nowIso, masterKey);
 }
 
 /**
@@ -501,11 +529,17 @@ function recordForRecovery(
   };
 
   try {
-    if (!hasBaseline) {
-      return input.verdict === 'PASS' ? refreshBaseline() : outcome();
+    const hasActiveCycle =
+      state.state === 'RECOVERING' || recovery.cycles.activeCycle(tenantId, collectorId) !== undefined;
+
+    if (!hasBaseline && input.verdict === 'PASS') {
+      // A bootstrap cycle in flight owns the baseline decision (its
+      // verification run becomes the first baseline); otherwise the first
+      // healthy delivery is it.
+      return hasActiveCycle ? outcome() : refreshBaseline();
     }
 
-    const baseline = deliveries.baselineDelivery(tenantId, collectorId);
+    const baseline = hasBaseline ? deliveries.baselineDelivery(tenantId, collectorId) : undefined;
     const baselineRows = baseline?.rows_json
       ? (JSON.parse(baseline.rows_json) as Record<string, unknown>[])
       : undefined;
@@ -516,13 +550,19 @@ function recordForRecovery(
       baselineRows,
       hasBaseline,
       hasReusableInput: activeInput !== undefined,
-      hasActiveCycle: state.state === 'RECOVERING' || recovery.cycles.activeCycle(tenantId, collectorId) !== undefined,
+      hasActiveCycle,
       governor: input.governor.canHeal(collectorId, input.nowIso, RECOVERY_POLICY),
       schema: loadRunnerOverridesFor(collectorRow).schema,
       entityKey: collectorRow.entity_key ?? undefined,
+      collectorName: collectorRow.name,
       incident: { rows, errors, verdict: input.verdict, cause: input.cause, evidence: input.evidence },
       now: input.nowIso,
     });
+
+    // No baseline: the only thing that can happen here is a bootstrap cycle
+    // (docs/recovery.md, "Bootstrap repair"). Nothing else holds or moves a
+    // collector that is still waiting for its first healthy delivery.
+    if (!hasBaseline && !eligibility.eligible) return outcome();
 
     // A genuinely healthy delivery (PASS, and policy found nothing
     // structurally different from the baseline) refreshes the baseline —
@@ -565,7 +605,8 @@ function recordForRecovery(
               tenantId,
               collectorId,
               incidentDeliveryId: stored.id,
-              baselineDeliveryId: baseline!.id,
+              ...(baseline ? { baselineDeliveryId: baseline.id } : {}),
+              mode: eligibility.evidence.mode ?? 'baseline',
               policyEvidence: eligibility.evidence,
             },
             input.nowIso

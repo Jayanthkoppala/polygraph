@@ -264,6 +264,53 @@ export function composeHealPrompt(params: HealPromptParams): string {
   return prompt;
 }
 
+export interface BootstrapHealPromptField {
+  name: string;
+  type: string;
+  required: boolean;
+}
+
+export interface BootstrapHealPromptParams {
+  /** The collector's declared fields, required ones first. */
+  fields: BootstrapHealPromptField[];
+  /** What one row represents ("product", or the collector's name). */
+  entity: string;
+  entityKey: string;
+}
+
+function renderBootstrapHealPrompt(fieldsStr: string, entity: string, entityKey: string): string {
+  return (
+    `The collector currently returns no fields: every declared field is empty on 100% of pages. ` +
+    `Extract ${fieldsStr} for each ${entity} on the page, using the exact field names given. ` +
+    `Entity check: ${entityKey} must equal the requested input.`
+  );
+}
+
+/**
+ * Sibling of `composeHealPrompt` for bootstrap repair (docs/recovery.md):
+ * the collector has never been healthy, so the prompt is composed from the
+ * DECLARED schema — field names, types and required flags — rather than
+ * from a baseline comparison. Same <= 1000 char cap, trimmed the same way.
+ * Never includes a row value; only schema metadata reaches the provider.
+ */
+export function composeBootstrapHealPrompt(params: BootstrapHealPromptParams): string {
+  const ordered = [...params.fields].sort((a, b) => Number(b.required) - Number(a.required));
+  let fields = ordered.length > 0 ? ordered : [{ name: 'unknown_field', type: 'text', required: true }];
+  const describe = (f: BootstrapHealPromptField): string => `${f.name} (${f.type}${f.required ? ', required' : ''})`;
+  let fieldsStr = fields.map(describe).join(', ');
+  let prompt = renderBootstrapHealPrompt(fieldsStr, params.entity, params.entityKey);
+
+  while (prompt.length > HEAL_PROMPT_MAX_LEN && fields.length > 1) {
+    fields = fields.slice(0, -1);
+    fieldsStr = `${fields.map(describe).join(', ')}, …`;
+    prompt = renderBootstrapHealPrompt(fieldsStr, params.entity, params.entityKey);
+  }
+  if (prompt.length > HEAL_PROMPT_MAX_LEN) {
+    prompt = `${prompt.slice(0, HEAL_PROMPT_MAX_LEN - 3)}...`;
+  }
+  return prompt;
+}
+
 const STRUCTURAL_SYMPTOM = 'default/empty values';
 
 function fieldsFromStructuralEvidence(evidence: Evidence): { fields: string[]; failRate: number } {

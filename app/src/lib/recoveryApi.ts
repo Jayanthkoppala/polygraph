@@ -67,6 +67,8 @@ export interface RecoveryRepair {
   templateAfter: string | null;
   receiptSha256: string | null;
   status?: string;
+  /** `bootstrap` = first working version of a never-healthy collector. */
+  mode?: 'baseline' | 'bootstrap';
 }
 
 export interface Page<T> {
@@ -223,6 +225,7 @@ export async function fetchRecoveryRepairs(
       templateAfter: asString(rec.template_after),
       receiptSha256: asString(rec.receipt_sha256),
       status: asString(rec.status) ?? undefined,
+      mode: rec.mode === 'bootstrap' ? 'bootstrap' : 'baseline',
     });
   }
   const nextBefore = typeof body.next_before === 'string' || typeof body.next_before === 'number' ? body.next_before : null;

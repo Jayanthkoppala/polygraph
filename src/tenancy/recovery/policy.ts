@@ -21,7 +21,7 @@
 import { ANTI_BOT_BLOCK_CODES } from '../../core/classifier.js';
 import type { Policy } from '../../core/config.js';
 import type { Cause, Evidence, OutputSchema, RunError } from '../../core/types.js';
-import { composeHealPrompt, type GovernorGate } from '../../loop/policy.js';
+import { composeBootstrapHealPrompt, composeHealPrompt, type GovernorGate } from '../../loop/policy.js';
 import type { DeliverySource } from '../delivery-store.js';
 
 /** The heal policy the recovery governor applies per tenant+collector.
@@ -41,6 +41,19 @@ export const RECOVERY_POLICY: Policy = {
  * it can only ever be watched. Route code maps this to the contract's
  * "Monitoring-only — delivery lacked reusable run input" copy. */
 export const MONITORING_ONLY_REASON = 'MONITORING_ONLY';
+
+export type RecoveryMode = 'baseline' | 'bootstrap';
+
+/** Bootstrap repair thresholds (docs/recovery.md, "Bootstrap repair"). A
+ * never-healthy collector is repaired against its declared schema only when
+ * the delivery is big enough to be a real run and EVERY required field is
+ * filled in fewer than this share of rows — anything partially filled needs a
+ * genuine baseline before it can be diagnosed. */
+export const BOOTSTRAP_MIN_ROWS = 5;
+export const BOOTSTRAP_EMPTY_FILL_MAX = 0.05;
+/** A bootstrap verification run passes when every required field is filled
+ * in at least this share of rows. */
+export const BOOTSTRAP_VERIFY_MIN_FILL = 0.8;
 
 export type IneligibilityReason =
   | 'DISABLED'
@@ -104,6 +117,10 @@ export interface RecoveryPolicyEvidence {
   identity_ok: boolean;
   governor: GovernorGate;
   heal_prompt?: string;
+  /** Absent (= 'baseline') for every cycle diagnosed against a baseline. */
+  mode?: RecoveryMode;
+  /** Bootstrap only: the declared schema the repair is aimed at. */
+  schema_fields?: Array<{ field: string; type: string; required: boolean }>;
 }
 
 export interface RecoveryEligibilityInput {
@@ -122,6 +139,8 @@ export interface RecoveryEligibilityInput {
   governor: GovernorGate;
   schema: OutputSchema | undefined;
   entityKey?: string;
+  /** The collector's display name — names the entity in a bootstrap prompt. */
+  collectorName?: string;
   incident: {
     rows: Record<string, unknown>[];
     errors?: RunError[];
@@ -287,6 +306,122 @@ function structuralEvidenceFailed(evidence: Evidence[]): boolean {
 
 // ---------------------------------------------------------------------------
 
+export function requiredFields(schema: OutputSchema): string[] {
+  return Object.entries(schema.fields)
+    .filter(([, spec]) => spec.required === true)
+    .map(([field]) => field);
+}
+
+/** Fill rate per declared field — the bootstrap diagnosis, which has no
+ * baseline to compare against and only asks "is anything there at all". */
+export function fillRates(schema: OutputSchema, rows: Record<string, unknown>[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [field, spec] of Object.entries(schema.fields)) out[field] = round(fillRate(rows, field, spec.default_value));
+  return out;
+}
+
+/** True when every required field is filled in fewer than
+ * `BOOTSTRAP_EMPTY_FILL_MAX` of the rows — the "only {input} came back"
+ * shape. Partially filled deliveries are deliberately NOT empty. */
+export function isStructurallyEmpty(schema: OutputSchema, rows: Record<string, unknown>[]): boolean {
+  const required = requiredFields(schema);
+  if (required.length === 0 || rows.length === 0) return false;
+  const rates = fillRates(schema, rows);
+  return required.every((field) => rates[field] < BOOTSTRAP_EMPTY_FILL_MAX);
+}
+
+function bootstrapDiagnosis(schema: OutputSchema, rows: Record<string, unknown>[]): FieldDiagnosis[] {
+  const rates = fillRates(schema, rows);
+  return Object.entries(schema.fields).map(([field, spec]) => ({
+    field,
+    baseline_fill: 0,
+    incident_fill: rates[field],
+    baseline_type: null,
+    incident_type: dominantType(rows, field),
+    regression: spec.required === true ? 'missing' : null,
+    damaged: false,
+  }));
+}
+
+/**
+ * Bootstrap repair (docs/recovery.md): a collector that has never produced
+ * a healthy delivery is still repaired when a delivery is structurally empty
+ * against its DECLARED schema — the schema is the baseline of intent.
+ * Reached only from `evaluateRecoveryEligibility` when there is no baseline;
+ * every non-eligible answer is a non-holding reason, because a collector
+ * that is still waiting for its first healthy delivery stays
+ * `WAITING_BASELINE` rather than being held.
+ */
+function evaluateBootstrap(
+  input: RecoveryEligibilityInput,
+  evidence: RecoveryPolicyEvidence,
+  idOk: boolean
+): RecoveryEligibility {
+  const { incident } = input;
+  const no = (reason: IneligibilityReason, detail: string): RecoveryEligibility => ({
+    eligible: false,
+    reason,
+    detail,
+    evidence,
+  });
+  const required = input.schema ? requiredFields(input.schema) : [];
+  if (!input.schema || required.length === 0) {
+    return no('NO_BASELINE', 'no healthy baseline and no declared required field to bootstrap against');
+  }
+  if (!input.hasReusableInput) {
+    return no('NO_REUSABLE_INPUT', 'no reusable run input captured; monitoring only');
+  }
+  if (input.hasActiveCycle) return no('ACTIVE_CYCLE', 'a recovery cycle is already in progress');
+
+  const blockCodes = blockingErrorCodes(incident.errors);
+  if (incident.cause === 'BLOCKED' || blockCodes.length > 0 || hasBlockEvidence(incident.evidence)) {
+    const codes = blockCodes.length > 0 ? ` (${blockCodes.join(', ')})` : '';
+    return no('BLOCKED', `target is blocking or restricting access${codes}; not a template fault`);
+  }
+  // "Not contradicted": no identity row at all is fine here (the grader
+  // cannot compare a key that was never extracted), a failed one is not.
+  const identity = incident.evidence.find((e) => e.check === 'identity');
+  if (incident.cause === 'IDENTITY' || (identity !== undefined && !idOk)) {
+    return no('IDENTITY_UNSTABLE', 'rows do not match the requested entity; a repair could not be verified');
+  }
+  if (incident.rows.length < BOOTSTRAP_MIN_ROWS) {
+    return no(
+      'NO_BASELINE',
+      `no healthy baseline and only ${incident.rows.length} row(s); bootstrap needs at least ${BOOTSTRAP_MIN_ROWS}`
+    );
+  }
+  if (incident.verdict === 'PASS') return no('HEALTHY', 'delivery passed every check');
+  if (!isStructurallyEmpty(input.schema, incident.rows)) {
+    return no('NO_BASELINE', 'no healthy baseline and the delivery is partially filled; a real baseline is needed');
+  }
+  if (!input.governor.allowed) {
+    return no('GOVERNOR', `heal budget: ${input.governor.reason ?? 'not allowed'}`);
+  }
+
+  const schemaFields = Object.entries(input.schema.fields).map(([field, spec]) => ({
+    field,
+    type: spec.type,
+    required: spec.required === true,
+  }));
+  evidence.mode = 'bootstrap';
+  evidence.schema_fields = schemaFields;
+  evidence.fields = bootstrapDiagnosis(input.schema, incident.rows);
+  evidence.regressed_fields = required;
+  evidence.retained_fields = [];
+  evidence.damaged_retained_fields = [];
+  evidence.heal_prompt = composeBootstrapHealPrompt({
+    fields: schemaFields.map((f) => ({ name: f.field, type: f.type, required: f.required })),
+    entity: input.collectorName?.trim() || 'entity',
+    entityKey: input.entityKey ?? 'the entity key',
+  });
+  return {
+    eligible: true,
+    reason: 'ELIGIBLE',
+    detail: `bootstrap: no healthy baseline; every required field (${required.join(', ')}) is empty against the declared schema`,
+    evidence,
+  };
+}
+
 /**
  * D7. Every gate below is a veto; the order is "cheapest and most
  * categorical first" so the stored reason names the real obstacle rather
@@ -332,7 +467,7 @@ export function evaluateRecoveryEligibility(input: RecoveryEligibilityInput): Re
     return no('VERIFICATION_SOURCE', 'verification runs never open a recovery cycle');
   }
   if (!input.autoHeal) return no('AUTO_HEAL_OFF', 'auto-heal is switched off for this collector');
-  if (!input.hasBaseline) return no('NO_BASELINE', 'no healthy baseline delivery to compare against');
+  if (!input.hasBaseline) return evaluateBootstrap(input, evidence, idOk);
   if (!input.baselineRows) {
     return no('BASELINE_PAYLOAD_PURGED', 'baseline payload has been purged; nothing to diagnose against');
   }
@@ -448,4 +583,31 @@ export function judgeRepair(
         .filter(Boolean)
         .join('; ');
   return { ok, detail, restored_fields: restored, still_regressed: stillRegressed, damaged_retained: damagedRetained };
+}
+
+/**
+ * Bootstrap counterpart of `judgeRepair`: there is no baseline and nothing
+ * to retain, so the repaired run passes when every required field of the
+ * declared schema is filled in at least `BOOTSTRAP_VERIFY_MIN_FILL` of rows.
+ */
+export function judgeBootstrap(schema: OutputSchema, repairedRows: Record<string, unknown>[]): RepairVerification {
+  const required = requiredFields(schema);
+  const rates = fillRates(schema, repairedRows);
+  const restored = required.filter((f) => rates[f] >= BOOTSTRAP_VERIFY_MIN_FILL);
+  const stillRegressed = required.filter((f) => rates[f] < BOOTSTRAP_VERIFY_MIN_FILL);
+  const ok = repairedRows.length > 0 && required.length > 0 && stillRegressed.length === 0;
+  const detail = ok
+    ? `bootstrap: required fields ${restored.join(', ')} filled in >= ${Math.round(BOOTSTRAP_VERIFY_MIN_FILL * 100)}% of rows`
+    : [
+        stillRegressed.length
+          ? `required field(s) still below ${Math.round(BOOTSTRAP_VERIFY_MIN_FILL * 100)}% fill: ${stillRegressed
+              .map((f) => `${f}=${Math.round(rates[f] * 100)}%`)
+              .join(', ')}`
+          : null,
+        required.length === 0 ? 'schema declares no required field' : null,
+        repairedRows.length === 0 ? 'verification run returned no rows' : null,
+      ]
+        .filter(Boolean)
+        .join('; ');
+  return { ok, detail, restored_fields: restored, still_regressed: stillRegressed, damaged_retained: [] };
 }

@@ -8,16 +8,18 @@ This document is the operator's reference: what is on by default, what the
 shows, and the guarantees the implementation makes.
 
 Code: `src/tenancy/delivery.ts` (ingest), `src/tenancy/recovery/` (policy,
-worker, provider adapter, stores, read API), `src/tenancy/migrations/013-delivery-recovery.ts`.
+worker, provider adapter, stores, read API), `src/tenancy/migrations/013-delivery-recovery.ts`
+and `014-recovery-cycle-mode.ts`.
 
 ## What changes even when the flag is unset
 
-Migration 012 and the hardened ingest route ship together and run on every
+Migrations 013/014 and the hardened ingest route ship together and run on every
 deployment, so the following apply regardless of `POLYGRAPH_AUTO_RECOVERY`:
 
 | Change | Detail |
 |---|---|
-| Migration 012 | Non-destructive, idempotent. Adds `collector_deliveries`, `collector_verification_inputs`, `collector_recovery_state`, `recovery_cycles` (incl. `verification_run_id`), `repair_receipts` (insert-only via triggers) and `collector_ingest_tokens.revoked_at`. |
+| Migration 013 | Non-destructive, idempotent. Adds `collector_deliveries`, `collector_verification_inputs`, `collector_recovery_state`, `recovery_cycles` (incl. `verification_run_id`), `repair_receipts` (insert-only via triggers) and `collector_ingest_tokens.revoked_at`. |
+| Migration 014 | Non-destructive, idempotent. Adds `recovery_cycles.mode` (`'baseline'` default, `'bootstrap'`) with a guarded `ALTER TABLE ADD COLUMN`; every pre-existing cycle reads `baseline`. |
 | `401` for unknown tokens | `POST /api/ingest/:token` with an unknown, rotated or revoked token answers `401 {error:"unauthorized"}` — one answer for every failure so the URL cannot be probed. |
 | `429` rate limit | 120 deliveries per collector per hour; the refusal carries `Retry-After` (seconds to the next window). |
 | Structural caps | 1 MB body (compressed and expanded), 2000 rows, 200 keys per row, nesting depth 6. Violations answer `413`/`400` before anything is stored. |
@@ -73,12 +75,76 @@ While a cycle is active, further webhook deliveries are recorded but never
 open a second cycle (database-enforced: one non-terminal cycle per collector,
 one cycle per incident delivery).
 
+## Bootstrap repair
+
+A collector that has **never** been healthy has no baseline delivery, so the
+field-by-field diagnosis above has nothing to compare against. Since
+2026-08-23 that no longer leaves it stuck in `WAITING_BASELINE` when its
+deliveries are *structurally empty*: the collector's declared output schema
+is treated as the baseline of intent. (Live example: Bright Data AI-generated
+collectors returning 57–58 "successful" records that each contained only
+`{"input": {...}}` — every declared field 0% filled.)
+
+Eligibility (`evaluateRecoveryEligibility`, reached only when there is no
+baseline; `policy_evidence_json.mode = 'bootstrap'`):
+
+| Condition | Otherwise |
+|---|---|
+| State `WAITING_BASELINE` (no baseline delivery) and the delivery is not `PASS` | a `PASS` first delivery is simply the baseline |
+| Confirmed declared schema with ≥ 1 `required` field | `NO_BASELINE`, keeps waiting |
+| ≥ 5 rows | `NO_BASELINE`, keeps waiting |
+| **Every** required field filled in < 5% of rows | `NO_BASELINE` — a partially filled delivery (one broken extractor, a value-only change) needs a real baseline and is never bootstrapped |
+| Identity not contradicted (no identity row, or an `ok` one) | `IDENTITY_UNSTABLE` |
+| No `BLOCKED`/captcha/login/compliance evidence | `BLOCKED` |
+| Reusable run input captured from the rows' `input` | `NO_REUSABLE_INPUT` (monitoring only, as today) |
+| No active cycle; `HELD` veto; unresolved-provider-job veto; governor | as for a baseline cycle |
+
+None of the refusals hold the collector: a collector still waiting for its
+first healthy delivery stays `WAITING_BASELINE`.
+
+The cycle is created with `mode = 'bootstrap'`, `baseline_delivery_id = NULL`
+and the empty delivery as `incident_delivery_id`; the state flips to
+`RECOVERING` exactly as for a baseline cycle, and the UI copy stays
+"Recovering automatically". The evidence records the schema field list
+(`schema_fields`: name, type, required) and, as `regressed_fields`, the
+required fields.
+
+The heal prompt is composed from the declared schema only
+(`composeBootstrapHealPrompt`, same 1000-character cap as
+`composeHealPrompt`, trimmed the same way): *"The collector currently
+returns no fields … Extract sku (text, required), price (number, required),
+title (text) for each `<collector name>` on the page … Entity check: `<entity
+key>` must equal the requested input."* It never includes a row value.
+
+The worker runs the same machine. Differences:
+
+- the approval-gate preview must show every **required** field
+  (`PROVIDER_PREVIEW_FAILED` otherwise, provider job left unapproved);
+- the verification run is judged by `judgeBootstrap`: grader `PASS`,
+  identity ok, and every required field filled in ≥ 80% of rows. The
+  "retained fields intact" check is skipped — there is nothing to retain;
+- on success `commitVerifiedCycle` makes the verification delivery the
+  collector's **first** baseline (`READY`, receipt with template
+  before/after, `RECOVERY_VERIFIED`); on failure the cycle is `FAILED` and
+  the collector `HELD` (`VERIFICATION_FAILED`) with still no baseline — the
+  next healthy delivery clears it, and a held collector never bootstraps
+  again on its own.
+
+`GET /api/recovery/repairs` carries `mode` per receipt; the Repairs table's
+Repair column shows "First working version" for a bootstrap receipt and
+"Field repair" otherwise. A healthy delivery that arrives while a bootstrap
+cycle is in flight is recorded but does not become the baseline — the
+cycle's verification owns that decision.
+
 ## Collector state machine
 
 ```
 WAITING_BASELINE ──PASS──▶ READY ──eligible incident──▶ RECOVERING
-      ▲                     │  ▲                            │
-      │                     │  └──── cycle VERIFIED ────────┤
+      │  ▲                  │  ▲                            │
+      │  │                  │  └──── cycle VERIFIED ────────┤
+      │  │                  │      (bootstrap: verification │
+      │  │                  │       run = first baseline)   │
+      │  └── structurally empty delivery (bootstrap) ───────┤
       │                     │                               │
       │        holding veto / cycle ended non-VERIFIED      │
       │                     ▼                               ▼

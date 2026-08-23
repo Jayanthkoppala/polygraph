@@ -245,7 +245,7 @@ describe('tenancy migrate() — legacy database backfill', () => {
     expect(count.n).toBe(1);
 
     const versions = writer.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number };
-    expect(versions.n).toBe(13); // M001-M013 — bump this when a new migration is added
+    expect(versions.n).toBe(14); // M001-M014 — bump this when a new migration is added
 
     writer.close();
   });
