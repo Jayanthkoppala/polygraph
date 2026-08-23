@@ -75,6 +75,21 @@ export const DEFAULT_POLL_INTERVAL_MS = 5_000;
 export const DEFAULT_POLL_MAX_INTERVAL_MS = 60_000;
 export const DEFAULT_WORKER_INTERVAL_MS = 15_000;
 
+/** Bright Data has been observed to answer a poll with FAILED (or
+ * APPROVED_NOT_SAVED) momentarily right after resume_automation_job, before
+ * settling on PUBLISHED. A single bad read is therefore not proof of
+ * failure: it only becomes terminal once it has repeated at least this many
+ * times AND spanned at least this long. PUBLISHED at any read still wins
+ * immediately, and the polling budget still applies throughout the grace
+ * window. */
+export const FAILURE_GRACE_MIN_READS = 3;
+export const FAILURE_GRACE_MIN_SPAN_MS = 60_000;
+
+/** How many recent provider statuses to keep for the publication proof /
+ * terminal reason. Bounded so a flapping provider cannot grow the record
+ * unboundedly; the values are bare state names, never raw provider text. */
+const STATUS_HISTORY_LIMIT = 10;
+
 export function makeLeaseOwner(): string {
   return `${hostname()}:${process.pid}:${randomBytes(4).toString('hex')}`;
 }
@@ -142,6 +157,15 @@ function stopWith(status: StopStatus, reason: string, code: HeldReasonCode = def
   return new CycleStop(status, code, reason);
 }
 
+/** Pre-approval polling (REFACTOR_STARTED waiting on AWAITING_APPROVAL /
+ * PUBLISHED): only a FAILED read is graced, per the live Bright Data
+ * evidence — AWAITING_APPROVAL is itself a target and APPROVED_NOT_SAVED
+ * cannot occur before approval. */
+const PRE_APPROVAL_GRACE_STATES: ReadonlySet<ProviderProgress['state']> = new Set(['FAILED']);
+/** Post-approval polling (APPROVED_AUTOSAVE waiting on PUBLISHED): both a
+ * FAILED and an APPROVED_NOT_SAVED read are graced. */
+const POST_APPROVAL_GRACE_STATES: ReadonlySet<ProviderProgress['state']> = new Set(['FAILED', 'APPROVED_NOT_SAVED']);
+
 interface CycleContext {
   cycle: RecoveryCycleRow;
   tenant: { display_name: string; genesis_hash: string };
@@ -154,6 +178,10 @@ interface CycleContext {
   entryStatus: CycleStatus;
   /** Latest progress envelope, for the publication proof. */
   progress?: ProviderProgress;
+  /** Bounded (last STATUS_HISTORY_LIMIT) sequence of provider states seen
+   * this run, oldest first — recorded on the publication proof / terminal
+   * reason so a flapping provider leaves an audit trail. */
+  statusHistory: ProviderProgress['state'][];
 }
 
 export class RecoveryWorker {
@@ -294,6 +322,7 @@ export class RecoveryWorker {
         evidence,
         lastRenewAt: this.now().getTime(),
         entryStatus: leased.status,
+        statusHistory: [],
       };
       await this.advance(ctx);
     } catch (err) {
@@ -338,7 +367,9 @@ export class RecoveryWorker {
     }
 
     if (status === 'REFACTOR_STARTED') {
-      const progress = await this.pollUntil(ctx, ['AWAITING_APPROVAL', 'PUBLISHED'], ctx.progress);
+      // Pre-approval: only a FAILED read gets the transient-flap grace.
+      // AWAITING_APPROVAL is a target, not a failure, so it is never graced.
+      const progress = await this.pollUntil(ctx, ['AWAITING_APPROVAL', 'PUBLISHED'], ctx.progress, PRE_APPROVAL_GRACE_STATES);
       ctx.progress = progress;
       if (progress.state === 'PUBLISHED') {
         status = await this.markPublished(ctx);
@@ -360,12 +391,13 @@ export class RecoveryWorker {
         // publishes (continue), ends APPROVED_NOT_SAVED / FAILED (cycle
         // fails), or is still awaiting approval when the budget runs out —
         // HELD_PROVIDER_STATE_UNKNOWN, for an operator to resolve.
-        const progress = await this.pollUntil(ctx, ['PUBLISHED'], ctx.progress);
+        const progress = await this.pollUntil(ctx, ['PUBLISHED'], ctx.progress, POST_APPROVAL_GRACE_STATES);
         ctx.progress = progress;
         status = await this.markPublished(ctx);
       } else {
+        this.checkGatePreview(ctx);
         await this.approve(ctx);
-        const progress = await this.pollUntil(ctx, ['PUBLISHED'], undefined);
+        const progress = await this.pollUntil(ctx, ['PUBLISHED'], undefined, POST_APPROVAL_GRACE_STATES);
         ctx.progress = progress;
         status = await this.markPublished(ctx);
       }
@@ -454,34 +486,64 @@ export class RecoveryWorker {
     return progress;
   }
 
+  /** `graceStates` names the FAILED/APPROVED_NOT_SAVED reads that must
+   * persist across `FAILURE_GRACE_MIN_READS` consecutive reads spanning at
+   * least `FAILURE_GRACE_MIN_SPAN_MS` before they end the cycle — a single
+   * bad read, or a run of them too short to trust, is treated as transient
+   * and polling continues (lease renewal and the overall polling budget
+   * both keep applying). A read of any target state still wins immediately
+   * regardless of grace. */
   private async pollUntil(
     ctx: CycleContext,
     targets: ProviderProgress['state'][],
-    initial: ProviderProgress | undefined
+    initial: ProviderProgress | undefined,
+    graceStates: ReadonlySet<ProviderProgress['state']> = new Set()
   ): Promise<ProviderProgress> {
     const budgetMs = this.deps.pollBudgetMs ?? DEFAULT_POLL_BUDGET_MS;
     const maxInterval = this.deps.pollMaxIntervalMs ?? DEFAULT_POLL_MAX_INTERVAL_MS;
     let interval = this.deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     const start = this.now().getTime();
     let progress = initial;
+    let grace: { state: ProviderProgress['state']; firstAt: number; count: number } | undefined;
 
     for (;;) {
       if (progress) {
+        this.recordStatus(ctx, progress.state);
         if (targets.includes(progress.state)) return progress;
-        if (progress.state === 'FAILED') throw stopWith('FAILED', 'provider heal job failed');
-        if (progress.state === 'APPROVED_NOT_SAVED') {
-          throw stopWith('FAILED', 'provider approved the draft but did not save it to production', 'VERIFICATION_FAILED');
+
+        const graceable = graceStates.has(progress.state);
+        let unconfirmed = false;
+        if (graceable) {
+          const now = this.now().getTime();
+          grace = grace && grace.state === progress.state ? { ...grace, count: grace.count + 1 } : { state: progress.state, firstAt: now, count: 1 };
+          unconfirmed = !(grace.count >= FAILURE_GRACE_MIN_READS && now - grace.firstAt >= FAILURE_GRACE_MIN_SPAN_MS);
+        } else {
+          grace = undefined;
         }
-        if (progress.state === 'NO_JOB') {
-          throw stopWith('HELD_PROVIDER_STATE_UNKNOWN', 'provider lost track of the heal job');
-        }
-        if (ctx.cycle.provider_job_id && progress.jobId && progress.jobId !== ctx.cycle.provider_job_id) {
-          throw stopWith('HELD_PROVIDER_STATE_UNKNOWN', 'provider is running a different heal job');
+
+        if (!unconfirmed) {
+          if (progress.state === 'FAILED') {
+            throw stopWith('FAILED', `provider heal job failed (statuses observed: ${this.statusHistorySummary(ctx)})`);
+          }
+          if (progress.state === 'APPROVED_NOT_SAVED') {
+            throw stopWith(
+              'FAILED',
+              `provider approved the draft but did not save it to production (statuses observed: ${this.statusHistorySummary(ctx)})`,
+              'VERIFICATION_FAILED'
+            );
+          }
+          if (progress.state === 'NO_JOB') {
+            throw stopWith('HELD_PROVIDER_STATE_UNKNOWN', 'provider lost track of the heal job');
+          }
+          if (ctx.cycle.provider_job_id && progress.jobId && progress.jobId !== ctx.cycle.provider_job_id) {
+            throw stopWith('HELD_PROVIDER_STATE_UNKNOWN', 'provider is running a different heal job');
+          }
         }
         if (this.now().getTime() - start > budgetMs) {
           throw stopWith(
             'HELD_PROVIDER_STATE_UNKNOWN',
-            `provider heal job exceeded the polling budget while ${progress.state}`
+            `provider heal job exceeded the polling budget while ${progress.state}` +
+              (unconfirmed ? ` (unconfirmed, statuses observed: ${this.statusHistorySummary(ctx)})` : '')
           );
         }
         await this.sleep(interval);
@@ -494,6 +556,43 @@ export class RecoveryWorker {
         throw stopWith('HELD_PROVIDER_STATE_UNKNOWN', `provider progress unreadable: ${safeMessage(err)}`);
       }
     }
+  }
+
+  /** Appends a state to the cycle's bounded status history (last
+   * STATUS_HISTORY_LIMIT, oldest dropped first). */
+  private recordStatus(ctx: CycleContext, state: ProviderProgress['state']): void {
+    ctx.statusHistory.push(state);
+    if (ctx.statusHistory.length > STATUS_HISTORY_LIMIT) {
+      ctx.statusHistory.splice(0, ctx.statusHistory.length - STATUS_HISTORY_LIMIT);
+    }
+  }
+
+  private statusHistorySummary(ctx: CycleContext): string {
+    return ctx.statusHistory.join(',') || 'none';
+  }
+
+  /** Bright Data's `auto_save` "applies to successful jobs only": approving
+   * a gate whose envelope carries `success: false`, or whose preview does
+   * not show the fields this cycle exists to restore, cannot promote
+   * anything and is observed to burn the job (it flips straight to
+   * `failed` within ~1s). Checked BEFORE `approve()` ever sends
+   * `resume_automation_job`; the provider job is left untouched either way
+   * — rejecting it is a mutation this worker is not authorised to infer.
+   * The preview's field names (never values) are recorded on the
+   * publication proof so an operator can see what the provider actually
+   * produced. */
+  private checkGatePreview(ctx: CycleContext): void {
+    const previewFieldsPresent = ctx.progress?.previewFieldsPresent ?? [];
+    const gateSuccess = ctx.progress?.gateSuccess;
+    const missingRegressed = ctx.evidence.regressed_fields.filter((f) => !previewFieldsPresent.includes(f));
+    if (gateSuccess !== false && missingRegressed.length === 0) return;
+
+    ctx.cycle = this.cas(ctx, { publicationProof: this.proofOf(ctx, { preview_fields_present: previewFieldsPresent }) });
+    const reason =
+      gateSuccess === false
+        ? 'provider reports the repair did not satisfy the prompt (success:false at the approval gate)'
+        : `provider preview does not show the regressed field(s) restored: ${missingRegressed.join(', ')}`;
+    throw stopWith('HELD_POLICY', reason, 'PROVIDER_PREVIEW_FAILED');
   }
 
   private async approve(ctx: CycleContext): Promise<void> {
@@ -533,6 +632,10 @@ export class RecoveryWorker {
       provider_status: ctx.progress?.status ?? existing.provider_status ?? null,
       template_before: ctx.cycle.provider_template_before,
       template_after: existing.template_after ?? null,
+      // Bounded, redacted (bare state names only) sequence of provider
+      // statuses observed this run — the audit trail for a transient
+      // FAILED/APPROVED_NOT_SAVED flap that the grace window rode out.
+      status_sequence: ctx.statusHistory.length > 0 ? [...ctx.statusHistory] : (existing.status_sequence ?? []),
       ...patch,
     };
   }

@@ -37,6 +37,19 @@ export interface ProviderProgress {
   status?: string;
   step?: string;
   completedSteps: string[];
+  /** The envelope's own `success` flag, when present. At the approval gate
+   * this distinguishes a heal that satisfied the prompt from one that
+   * looped and gave up: `auto_save` "applies to successful jobs only", so
+   * approving a `success: false` gate cannot promote anything and is
+   * observed to flip the job straight to `failed` within ~1s — burning the
+   * one heal slot a collector gets. `undefined` when the envelope carries
+   * no `success` field at all (older/other shapes). */
+  gateSuccess?: boolean;
+  /** Names of fields whose value is non-null in at least one row of the
+   * gate's `preview_result` — the provider's own preview of what the
+   * repaired template would have produced. Empty when the envelope carries
+   * no usable preview. */
+  previewFieldsPresent: string[];
 }
 
 export interface FreshRunResult {
@@ -74,14 +87,29 @@ const FAILURE_STATES = new Set(['failed', 'error', 'errored', 'cancelled', 'canc
 const DONE_STATES = new Set(['ready', 'done', 'completed', 'success', 'finished']);
 const SAVE_STEP = 'save_new_template';
 
+/** Names of fields whose value is non-null in at least one row of a
+ * `preview_result` array. Defensive against rows that are not plain objects
+ * (the envelope's shape is not exhaustively documented — see RefactorProgress). */
+function previewFieldsFrom(previewResult: unknown): string[] {
+  if (!Array.isArray(previewResult)) return [];
+  const present = new Set<string>();
+  for (const row of previewResult) {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) continue;
+    for (const [key, value] of Object.entries(row as Record<string, unknown>)) {
+      if (value !== null && value !== undefined) present.add(key);
+    }
+  }
+  return [...present];
+}
+
 export function normaliseProgress(raw: unknown): ProviderProgress {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { state: 'NO_JOB', completedSteps: [] };
+    return { state: 'NO_JOB', completedSteps: [], previewFieldsPresent: [] };
   }
   const progress = raw as RefactorProgress;
   const keys = Object.keys(progress);
   if (keys.length === 0 || (progress.status === undefined && progress.id === undefined && progress.step === undefined)) {
-    return { state: 'NO_JOB', completedSteps: [] };
+    return { state: 'NO_JOB', completedSteps: [], previewFieldsPresent: [] };
   }
   const completedSteps = Array.isArray(progress.completed_steps)
     ? progress.completed_steps.filter((s): s is string => typeof s === 'string')
@@ -92,6 +120,8 @@ export function normaliseProgress(raw: unknown): ProviderProgress {
     ...(progress.status !== undefined ? { status: String(progress.status) } : {}),
     ...(progress.step !== undefined ? { step: String(progress.step) } : {}),
     completedSteps,
+    ...(typeof progress.success === 'boolean' ? { gateSuccess: progress.success } : {}),
+    previewFieldsPresent: previewFieldsFrom(progress.preview_result),
   };
 
   if (FAILURE_STATES.has(status)) return { state: 'FAILED', ...base };

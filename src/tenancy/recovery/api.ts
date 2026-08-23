@@ -69,6 +69,7 @@ export type HeldReasonCode =
   | 'PROVIDER_STATE_UNKNOWN'
   | 'VERIFICATION_FAILED'
   | 'PROVIDER_ERROR'
+  | 'PROVIDER_PREVIEW_FAILED'
   | 'POLICY'
   | 'BUDGET'
   // Ingest: policy vetoes that hold the collector (HOLDING_REASONS).
@@ -89,6 +90,7 @@ export const HELD_REASON_COPY: Record<HeldReasonCode, string> = {
   PROVIDER_STATE_UNKNOWN: 'the provider state could not be confirmed',
   VERIFICATION_FAILED: 'the repaired collector did not pass verification',
   PROVIDER_ERROR: 'Bright Data could not complete the repair',
+  PROVIDER_PREVIEW_FAILED: "the provider's repair preview did not restore the missing fields",
   POLICY: 'policy no longer allows an automatic repair',
   BUDGET: 'the automatic repair budget is used up',
   BLOCKED: 'the source blocked the collector',

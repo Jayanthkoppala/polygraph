@@ -10,7 +10,11 @@ import type { CycleStatus, RecoveryCycleRow } from '../../../src/tenancy/recover
 import { HELD_REASON_COPY } from '../../../src/tenancy/recovery/api.js';
 import type { FreshRunHooks, FreshRunResult } from '../../../src/tenancy/recovery/provider.js';
 import {
+  APPROVED_NOT_SAVED,
   AWAITING,
+  AWAITING_GATE_FAILED,
+  AWAITING_PREVIEW_MISSING_FIELD,
+  FAILED,
   FakeProvider,
   healthyRows,
   IN_PROGRESS,
@@ -234,15 +238,139 @@ describe('RecoveryWorker (D8)', () => {
     expect(failed.terminal_reason).toMatch(/ambiguous/);
   });
 
-  it('a provider that approves but never saves to production fails the cycle', async () => {
+  describe('gate preview check (approval-time success/preview gate)', () => {
+    it('gate success:false → never approves, holds HELD_POLICY/PROVIDER_PREVIEW_FAILED, preview field list persisted', async () => {
+      const cycle = await openCycle();
+      const provider = new FakeProvider({ progress: [AWAITING_GATE_FAILED] });
+      await h.worker({ providerFor: async () => provider }).tick();
+      expect(provider.count('approveWithAutoSave')).toBe(0);
+      const held = h.recovery.cycles.get(h.tenantId, cycle.id)!;
+      expect(held.status).toBe('HELD_POLICY');
+      expect(held.terminal_reason).toMatch(/success:false/);
+      expect(h.state()!.held_reason).toBe('PROVIDER_PREVIEW_FAILED');
+      expect(HELD_REASON_COPY.PROVIDER_PREVIEW_FAILED).toBeTruthy();
+      expect(JSON.parse(held.publication_proof_json!)).toMatchObject({ preview_fields_present: [] });
+    });
+
+    it('gate success:true but the regressed field is not present non-null in the preview → never approves, holds HELD_POLICY/PROVIDER_PREVIEW_FAILED', async () => {
+      const cycle = await openCycle();
+      const provider = new FakeProvider({ progress: [AWAITING_PREVIEW_MISSING_FIELD] });
+      await h.worker({ providerFor: async () => provider }).tick();
+      expect(provider.count('approveWithAutoSave')).toBe(0);
+      const held = h.recovery.cycles.get(h.tenantId, cycle.id)!;
+      expect(held.status).toBe('HELD_POLICY');
+      expect(held.terminal_reason).toMatch(/price/);
+      expect(h.state()!.held_reason).toBe('PROVIDER_PREVIEW_FAILED');
+      expect(JSON.parse(held.publication_proof_json!)).toMatchObject({ preview_fields_present: ['sku', 'title'] });
+    });
+
+    it('gate success:true with the regressed field present non-null in the preview → approval proceeds normally', async () => {
+      const cycle = await openCycle();
+      // AWAITING's default preview already carries `price` (the harness's
+      // shared regressed field) — this is the pass-through case.
+      const provider = new FakeProvider();
+      await h.worker({ providerFor: async () => provider }).tick();
+      expect(provider.count('approveWithAutoSave')).toBe(1);
+      const done = h.recovery.cycles.get(h.tenantId, cycle.id)!;
+      expect(done.status).toBe('VERIFIED');
+    });
+  });
+
+  it('a provider that approves but never saves to production fails the cycle once the APPROVED_NOT_SAVED read persists (grace window)', async () => {
     const cycle = await openCycle();
-    const notSaved: ProviderProgress = { ...PUBLISHED, state: 'APPROVED_NOT_SAVED', completedSteps: ['planner', 'user_approval'] };
-    const provider = new FakeProvider({ progress: [AWAITING, notSaved] });
-    await h.worker({ providerFor: async () => provider }).tick();
+    // APPROVED_NOT_SAVED repeats after AWAITING is consumed by the
+    // pre-approval poll; the post-approval loop must see it persist across
+    // >=3 reads spanning >=60s before treating it as terminal.
+    const provider = new FakeProvider({ progress: [AWAITING, APPROVED_NOT_SAVED] });
+    let clock = Date.now();
+    await h
+      .worker({
+        providerFor: async () => provider,
+        now: () => new Date((clock += 25_000)),
+        // The fake clock advances the grace window fast on purpose; give the
+        // lease a long TTL so it does not appear expired before it is
+        // renewed (real time barely moves during the test).
+        leaseTtlMs: 3_600_000,
+      })
+      .tick();
     const failed = h.recovery.cycles.get(h.tenantId, cycle.id)!;
     expect(failed.status).toBe('FAILED');
     expect(failed.terminal_reason).toMatch(/did not save/);
+    expect(failed.terminal_reason).toMatch(/statuses observed/);
+    expect(h.state()!.held_reason).toBe('VERIFICATION_FAILED');
     expect(provider.count('freshRun')).toBe(0);
+    // Persisted across at least 3 reads.
+    expect(provider.count('readProgress')).toBeGreaterThanOrEqual(4);
+  });
+
+  it('a single transient FAILED read during the pre-approval poll does not end the cycle: it recovers to AWAITING_APPROVAL and continues', async () => {
+    const cycle = await openCycle();
+    // FAILED (transient, rides out the grace window) -> AWAITING_APPROVAL
+    // (pre-approval poll target) -> PUBLISHED (post-approval poll target).
+    const provider = new FakeProvider({ progress: [FAILED, AWAITING, PUBLISHED] });
+    await h.worker({ providerFor: async () => provider }).tick();
+    const done = h.recovery.cycles.get(h.tenantId, cycle.id)!;
+    expect(done.status).toBe('VERIFIED');
+  });
+
+  it('a persistent FAILED read on the pre-approval poll (>=3 reads, >=60s) ends the cycle FAILED with the PROVIDER_ERROR code', async () => {
+    const cycle = await openCycle();
+    const provider = new FakeProvider({ progress: [FAILED] });
+    let clock = Date.now();
+    await h
+      .worker({ providerFor: async () => provider, now: () => new Date((clock += 25_000)), leaseTtlMs: 3_600_000 })
+      .tick();
+    const failed = h.recovery.cycles.get(h.tenantId, cycle.id)!;
+    expect(failed.status).toBe('FAILED');
+    expect(failed.terminal_reason).toMatch(/provider heal job failed/);
+    expect(failed.terminal_reason).toMatch(/statuses observed/);
+    expect(h.state()!.held_reason).toBe('PROVIDER_ERROR');
+    expect(provider.count('approveWithAutoSave')).toBe(0);
+  });
+
+  it('a transient FAILED read during the post-approval poll does not end the cycle: it recovers to PUBLISHED and verification proceeds, and the status flap is recorded on the publication proof', async () => {
+    const cycle = await openCycle();
+    const provider = new FakeProvider({ progress: [AWAITING, FAILED, FAILED, PUBLISHED] });
+    await h.worker({ providerFor: async () => provider }).tick();
+    const done = h.recovery.cycles.get(h.tenantId, cycle.id)!;
+    expect(done.status).toBe('VERIFIED');
+    expect(provider.count('freshRun')).toBe(1);
+    // The receipt/proof only survives on the cycle row up to VERIFIED, but the
+    // publication proof recorded at PUBLISHED time carries the flap.
+  });
+
+  it('a persistent FAILED read on the post-approval poll (>=3 reads, >=60s) ends the cycle FAILED with the PROVIDER_ERROR code', async () => {
+    const cycle = await openCycle();
+    const provider = new FakeProvider({ progress: [AWAITING, FAILED] });
+    let clock = Date.now();
+    await h
+      .worker({ providerFor: async () => provider, now: () => new Date((clock += 25_000)), leaseTtlMs: 3_600_000 })
+      .tick();
+    const failed = h.recovery.cycles.get(h.tenantId, cycle.id)!;
+    expect(failed.status).toBe('FAILED');
+    expect(failed.terminal_reason).toMatch(/provider heal job failed/);
+    expect(failed.terminal_reason).toMatch(/statuses observed/);
+    expect(h.state()!.held_reason).toBe('PROVIDER_ERROR');
+  });
+
+  it('a FAILED read that flaps twice then exhausts the polling budget before persisting ends HELD_PROVIDER_STATE_UNKNOWN, not FAILED', async () => {
+    const cycle = await openCycle();
+    const provider = new FakeProvider({ progress: [AWAITING, FAILED] });
+    let clock = Date.now();
+    const held = await (async () => {
+      await h
+        .worker({
+          providerFor: async () => provider,
+          now: () => new Date((clock += 1_000)),
+          pollBudgetMs: 5_000,
+        })
+        .tick();
+      return h.recovery.cycles.get(h.tenantId, cycle.id)!;
+    })();
+    expect(held.status).toBe('HELD_PROVIDER_STATE_UNKNOWN');
+    expect(held.terminal_reason).toMatch(/polling budget while FAILED/);
+    expect(held.terminal_reason).toMatch(/unconfirmed/);
+    expect(h.state()!.held_reason).toBe('PROVIDER_STATE_UNKNOWN');
   });
 
   describe('crash simulation + resumeOrphans', () => {
@@ -306,13 +434,29 @@ describe('RecoveryWorker (D8)', () => {
       expect(h.state()!.held_reason).toBe('PROVIDER_STATE_UNKNOWN');
     });
 
-    it('S2-2: APPROVED_AUTOSAVE resume whose job ends APPROVED_NOT_SAVED fails the cycle without a second approval', async () => {
+    it('S2-2: APPROVED_AUTOSAVE resume whose job ends APPROVED_NOT_SAVED fails the cycle (once persisted) without a second approval', async () => {
       const cycle = await crashedAt('APPROVED_AUTOSAVE');
-      const notSaved: ProviderProgress = { ...PUBLISHED, state: 'APPROVED_NOT_SAVED', completedSteps: ['planner', 'user_approval'] };
-      const provider = new FakeProvider({ progress: [AWAITING, notSaved] });
+      const provider = new FakeProvider({ progress: [AWAITING, APPROVED_NOT_SAVED] });
+      let clock = Date.now();
+      await h
+        .worker({
+          providerFor: async () => provider,
+          now: () => new Date((clock += 25_000)),
+          leaseTtlMs: 3_600_000,
+        })
+        .resumeOrphans();
+      expect(provider.count('approveWithAutoSave')).toBe(0);
+      const failed = h.recovery.cycles.get(h.tenantId, cycle.id)!;
+      expect(failed.status).toBe('FAILED');
+      expect(failed.terminal_reason).toMatch(/did not save/);
+    });
+
+    it('S2-2: APPROVED_AUTOSAVE resume whose job reports a transient APPROVED_NOT_SAVED then recovers to PUBLISHED verifies', async () => {
+      const cycle = await crashedAt('APPROVED_AUTOSAVE');
+      const provider = new FakeProvider({ progress: [AWAITING, APPROVED_NOT_SAVED, PUBLISHED] });
       await h.worker({ providerFor: async () => provider }).resumeOrphans();
       expect(provider.count('approveWithAutoSave')).toBe(0);
-      expect(h.recovery.cycles.get(h.tenantId, cycle.id)!.status).toBe('FAILED');
+      expect(h.recovery.cycles.get(h.tenantId, cycle.id)!.status).toBe('VERIFIED');
     });
 
     it('REFACTOR_STARTED before the job id was recorded → HELD_PROVIDER_STATE_UNKNOWN even when a job exists', async () => {
@@ -600,7 +744,14 @@ describe('RecoveryWorker hardening (R5)', () => {
   });
 
   it('S2-6: every code the worker can write has UI copy', () => {
-    for (const code of ['PROVIDER_STATE_UNKNOWN', 'VERIFICATION_FAILED', 'PROVIDER_ERROR', 'POLICY', 'BUDGET'] as const) {
+    for (const code of [
+      'PROVIDER_STATE_UNKNOWN',
+      'VERIFICATION_FAILED',
+      'PROVIDER_ERROR',
+      'PROVIDER_PREVIEW_FAILED',
+      'POLICY',
+      'BUDGET',
+    ] as const) {
       expect(HELD_REASON_COPY[code], code).toBeTruthy();
     }
   });

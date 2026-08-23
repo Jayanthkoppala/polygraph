@@ -144,21 +144,63 @@ export interface FakeProviderOptions {
   progressError?: Error;
 }
 
+// The harness's shared incident (BROKEN() in every test file that uses it)
+// always regresses `price`. AWAITING's preview carries it non-null by
+// default so every pre-existing test's approval proceeds as before; tests
+// that exercise the gate-preview check override `previewFieldsPresent` (or
+// `gateSuccess`) explicitly. See RecoveryWorker.checkGatePreview.
 export const AWAITING: ProviderProgress = {
   state: 'AWAITING_APPROVAL',
   jobId: 'ia_1',
   status: 'pending_answer',
   step: 'user_approval',
   completedSteps: ['planner', 'code_fixer'],
+  gateSuccess: true,
+  previewFieldsPresent: ['sku', 'title', 'price'],
 };
-export const IN_PROGRESS: ProviderProgress = { state: 'IN_PROGRESS', jobId: 'ia_1', status: 'running', completedSteps: ['planner'] };
+export const IN_PROGRESS: ProviderProgress = {
+  state: 'IN_PROGRESS',
+  jobId: 'ia_1',
+  status: 'running',
+  completedSteps: ['planner'],
+  previewFieldsPresent: [],
+};
 export const PUBLISHED: ProviderProgress = {
   state: 'PUBLISHED',
   jobId: 'ia_1',
   status: 'done',
   completedSteps: ['planner', 'code_fixer', 'user_approval', 'save_new_template'],
+  previewFieldsPresent: [],
 };
-export const NO_JOB: ProviderProgress = { state: 'NO_JOB', completedSteps: [] };
+export const NO_JOB: ProviderProgress = { state: 'NO_JOB', completedSteps: [], previewFieldsPresent: [] };
+export const FAILED: ProviderProgress = {
+  state: 'FAILED',
+  jobId: 'ia_1',
+  status: 'failed',
+  completedSteps: ['planner'],
+  previewFieldsPresent: [],
+};
+export const APPROVED_NOT_SAVED: ProviderProgress = {
+  state: 'APPROVED_NOT_SAVED',
+  jobId: 'ia_1',
+  status: 'done',
+  completedSteps: ['planner', 'user_approval'],
+  previewFieldsPresent: [],
+};
+/** The approval gate reached, but the heal did not satisfy the prompt —
+ * `success: false` on the live envelope. Approving this burns the job. */
+export const AWAITING_GATE_FAILED: ProviderProgress = {
+  ...AWAITING,
+  gateSuccess: false,
+  previewFieldsPresent: [],
+};
+/** The approval gate reached with `success: true`, but the preview does not
+ * actually show the regressed field restored (null in every preview row). */
+export const AWAITING_PREVIEW_MISSING_FIELD: ProviderProgress = {
+  ...AWAITING,
+  gateSuccess: true,
+  previewFieldsPresent: ['sku', 'title'],
+};
 
 export class FakeProvider implements RecoveryProvider {
   readonly calls: Array<{ method: string; args: unknown[] }> = [];
