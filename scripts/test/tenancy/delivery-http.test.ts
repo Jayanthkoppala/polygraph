@@ -144,6 +144,11 @@ describe('Bright Data webhook deliveries', () => {
     });
   });
 
+  // Was a 404 before automatic recovery landed. The token IS the credential on
+  // this route, so a bad one is an authentication failure; the contract (D6)
+  // pins 401. What matters either way is that it is the SAME answer for an
+  // unknown token, a rotated one, and a revoked one — asserted here and in
+  // recovery-http.test.ts's rotate case.
   it('rejects an unknown delivery token without exposing tenant or collector existence', async () => {
     const { base } = await bootAndConnect();
     const delivery = await fetch(`${base}/api/ingest/pgi_not-a-real-token`, {
@@ -151,7 +156,7 @@ describe('Bright Data webhook deliveries', () => {
       headers: { 'content-type': 'application/json' },
       body: '[]',
     });
-    expect(delivery.status).toBe(404);
-    expect(await delivery.json()).toEqual({ error: 'not found' });
+    expect(delivery.status).toBe(401);
+    expect(await delivery.json()).toEqual({ error: 'unauthorized' });
   });
 });

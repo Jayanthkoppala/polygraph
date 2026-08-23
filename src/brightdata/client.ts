@@ -141,6 +141,72 @@ export type DatasetPollResult =
   | { rows: Record<string, unknown>[]; ambiguous: false }
   | { rows: []; ambiguous: true };
 
+/**
+ * Parses a `GET /dca/dataset` body. Bright Data serves this in TWO shapes
+ * depending on how the collector's delivery was configured — which is
+ * per-collector and tenant-controlled, so the client must accept both rather
+ * than assume the one its own fixtures happen to use. Both were observed
+ * live on 2026-08-23:
+ *
+ *   - a pretty-printed JSON array (`[\n  {...},\n  {...}\n]`) — returned by
+ *     the long-lived HN collector (`c_mt1dsu9fdtdtx3uhf`), and the shape
+ *     every existing Polygraph fixture was built from;
+ *   - newline-delimited JSON, one compact object per line, with no
+ *     enclosing brackets — returned by a collector created with a bare
+ *     `deliver:{type:"api_pull"}`.
+ *
+ * Calling `res.json()` on the second shape throws
+ * `Unexpected non-whitespace character after JSON at position N` — observed
+ * live on 2026-08-23, which is what made this function necessary.
+ *
+ * Returns `undefined` for "this is not a row payload" (an empty body, or a
+ * status object served with HTTP 200 instead of 202), which the poll loop
+ * treats as still-building rather than as a crash.
+ */
+export function parseDatasetBody(text: string): Record<string, unknown>[] | undefined {
+  const trimmed = text.trim();
+  if (trimmed === '') return undefined;
+
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      return Array.isArray(parsed) ? (parsed as Record<string, unknown>[]) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (!trimmed.startsWith('{')) return undefined;
+
+  // A single JSON object: either a one-row NDJSON payload or a status
+  // envelope. Only a `status` field with no row-ish content marks the
+  // latter — Bright Data documents 202 for "building", so a 200 status
+  // object is the defensive case, not the normal one.
+  try {
+    const single = JSON.parse(trimmed) as Record<string, unknown>;
+    if (typeof single.status === 'string' && !('input' in single)) return undefined;
+    return [single];
+  } catch {
+    // Not one document — fall through to newline-delimited parsing.
+  }
+
+  const rows: Record<string, unknown>[] = [];
+  for (const line of trimmed.split('\n')) {
+    const candidate = line.trim();
+    if (candidate === '') continue;
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+      rows.push(parsed as Record<string, unknown>);
+    } catch {
+      // A body that is neither a JSON array, one JSON document, nor clean
+      // NDJSON is not something to guess at — report "not rows yet".
+      return undefined;
+    }
+  }
+  return rows.length > 0 ? rows : undefined;
+}
+
 /** GET /dca/log/{job_id} response — the subset of fields Polygraph reads,
  * plus whatever else Bright Data includes (passed through untyped). */
 export interface JobLog {
@@ -211,15 +277,28 @@ export function parseTemplateVersion(template: unknown): TemplateVersion | undef
   return { templateId, version: Number(raw) };
 }
 
-/** Delivery configuration for a collector, as accepted by POST /dca/collector.
+/**
+ * Delivery configuration for a collector, as accepted by POST /dca/collector.
  * `api_pull` means "results stay on Bright Data, fetch them with
- * /dca/dataset"; `webhook` POSTs each finished batch to `endpoint`. */
+ * /dca/dataset"; `webhook` POSTs each finished batch to `endpoint`.
+ *
+ * NOTE: `deliver.format` is NOT accepted on creation, despite appearing in
+ * `collectors_list` responses — POST /dca/collector rejects it with
+ * `HTTP 400 {"validation_errors":["\"deliver.format\" is not allowed"]}`
+ * (verified live 2026-08-23). Output naming/extension is set through
+ * `filename` instead. The type therefore omits `format` deliberately; the
+ * index signature still allows it for forward compatibility, but passing it
+ * today is a 400.
+ */
 export type CollectorDeliver =
-  | { type: 'api_pull'; format?: string; [key: string]: unknown }
+  | {
+      type: 'api_pull';
+      filename?: { template: string; extension: string };
+      [key: string]: unknown;
+    }
   | {
       type: 'webhook';
       endpoint: string;
-      format?: string;
       filename?: { template: string; extension: string };
       [key: string]: unknown;
     };
@@ -434,11 +513,16 @@ export class BrightDataClient {
       }
 
       await ensureOk(res, `pollDataset(${jobId})`);
-      const body = (await res.json()) as unknown;
+      const text = await res.text();
 
-      if (Array.isArray(body)) {
-        if (body.length === 0) return { rows: [], ambiguous: true };
-        return { rows: body as Record<string, unknown>[], ambiguous: false };
+      // An explicitly empty array is the AMBIGUOUS case (see
+      // DatasetPollResult) and must be reported, not retried.
+      if (text.trim() === '[]') return { rows: [], ambiguous: true };
+
+      const rows = parseDatasetBody(text);
+      if (rows !== undefined) {
+        if (rows.length === 0) return { rows: [], ambiguous: true };
+        return { rows, ambiguous: false };
       }
 
       // Defensive: an unrecognized 2xx shape (e.g. a status object served

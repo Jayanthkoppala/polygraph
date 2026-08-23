@@ -7,9 +7,42 @@ import { checkAndIncrementRateLimit, hourlyWindowKey } from '../rate-limit.js';
 import { tryHandleDemoMissionRequest } from '../../demo/server.js';
 import { loginWithGoogleIdentity } from '../google-auth.js';
 import { DeliveryPayloadError, readDeliveryPayload, recordDeliveredRows, resolveDeliveryTarget } from '../delivery.js';
+import { assertDeliveryStructure, DeliveryStructureError } from '../recovery/ingest-caps.js';
 import type { RouteContext } from './context.js';
-import { SIGNUP_LIMIT_PER_HOUR } from './context.js';
+import { INGEST_LIMIT_PER_HOUR, SIGNUP_LIMIT_PER_HOUR } from './context.js';
 import { loadPublicTenantRow, readJsonBody, requireCsrf, clientIp, buildDashboardState } from './context.js';
+/** Seconds until the fixed hourly rate-limit window rolls over — the honest
+ * value for `Retry-After`, because that is exactly when the counter resets. */
+function secondsUntilNextHour(nowIso: string): number {
+  const now = new Date(nowIso);
+  if (Number.isNaN(now.getTime())) return 3600;
+  const nextHour = new Date(now);
+  nextHour.setUTCMinutes(0, 0, 0);
+  nextHour.setUTCHours(nextHour.getUTCHours() + 1);
+  return Math.max(1, Math.ceil((nextHour.getTime() - now.getTime()) / 1000));
+}
+
+/** The recovery half of the ingest response (D6). Present only when automatic
+ * recovery is switched on and the delivery was actually persisted — an
+ * `undefined` field is omitted rather than sent as null, so the route never
+ * claims a durable write that did not happen. */
+function recoveryFields(decision: {
+  deliveryId?: string;
+  state?: string;
+  cycleId?: string | null;
+  duplicate?: boolean;
+}): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (decision.deliveryId !== undefined) out.delivery_id = decision.deliveryId;
+  if (decision.state !== undefined) out.state = decision.state;
+  if (decision.cycleId !== undefined && decision.cycleId !== null) out.cycle_id = decision.cycleId;
+  // A redelivered webhook is a success, not a conflict: Bright Data retries,
+  // and a 409 would only make it retry harder. The caller is told plainly that
+  // the delivery id it is given already existed.
+  if (decision.duplicate === true) out.duplicate = true;
+  return out;
+}
+
 /**
  * Routes reachable WITHOUT a session: health, the demo mission, Bright
  * Data's push-delivery capability URL, Google auth, signup, and the public
@@ -40,10 +73,34 @@ export async function handlePublicRoutes(ctx: RouteContext): Promise<boolean> {
   if (method === 'POST' && deliveryMatch) {
     const token = decodeURIComponent(deliveryMatch[1]);
     const target = resolveDeliveryTarget(deps.writer, token);
+    // Unknown, rotated, revoked, and deleted capabilities are one answer with
+    // one message. The token IS the credential here, so this is an
+    // authentication failure (401), and nothing in the response — or in any
+    // log line on this path — may hint at which of those four it was. The
+    // token itself is never logged or echoed.
     if (!target) {
-      sendJson(res, 404, { error: 'not found' });
+      sendJson(res, 401, { error: 'unauthorized' });
       return true;
     }
+
+    // Per-capability abuse floor. Keyed on the resolved tenant+collector
+    // rather than on the token, so the plaintext capability never lands in
+    // the `rate_limits` table — one live token per collector makes the two
+    // equivalent as a counter. Counted before the body is read: the point of
+    // the limit is to bound work, and reading a megabyte first would concede
+    // most of it.
+    const nowIso = nowFn();
+    const { bucket, windowStart } = hourlyWindowKey(
+      `ingest:${target.tenantId}:${target.collectorId}`,
+      nowIso
+    );
+    const rate = checkAndIncrementRateLimit(deps.writer, bucket, windowStart, INGEST_LIMIT_PER_HOUR);
+    if (!rate.allowed) {
+      res.setHeader('Retry-After', String(secondsUntilNextHour(nowIso)));
+      sendJson(res, 429, { error: 'too many deliveries for this collector — try again later' });
+      return true;
+    }
+
     try {
       const payload = await readDeliveryPayload(req);
       if (payload.kind === 'probe') {
@@ -57,11 +114,15 @@ export async function handlePublicRoutes(ctx: RouteContext): Promise<boolean> {
         return true;
       }
       const rows = payload.rows;
+      assertDeliveryStructure(rows);
       const candidateRunId = req.headers['x-brightdata-job-id'];
       const externalRunId = typeof candidateRunId === 'string' && /^[A-Za-z0-9._:-]{1,200}$/.test(candidateRunId)
         ? candidateRunId
         : undefined;
-      const decision = await recordDeliveredRows(deps.writer, target, rows, nowFn(), externalRunId);
+      const decision = await recordDeliveredRows(deps.writer, target, rows, nowIso, externalRunId, {
+        masterKey: deps.masterKey,
+      });
+      const recovery = recoveryFields(decision);
       sendJson(res, 200, {
         accepted: true,
         collector_id: decision.collectorId,
@@ -72,9 +133,10 @@ export async function handlePublicRoutes(ctx: RouteContext): Promise<boolean> {
         action: decision.action,
         ledger_id: decision.ledgerId,
         auto_heal: false,
+        ...recovery,
       });
     } catch (error) {
-      if (error instanceof DeliveryPayloadError) {
+      if (error instanceof DeliveryPayloadError || error instanceof DeliveryStructureError) {
         sendJson(res, error.status, { error: error.message });
         return true;
       }

@@ -4,6 +4,11 @@
 // an import from the server — same caveat as `lib/api.ts`: nothing checks this
 // still matches src/server.ts, so every field the server may omit stays optional
 // here and every response is read defensively.
+//
+// Ids (and therefore `before`/`next_before` cursors) are opaque: the server
+// sends delivery and receipt UUIDs as strings. The `string | number` unions
+// below are deliberate slack, not a second supported shape — nothing here may
+// parse, compare, or order an id; a cursor is only ever echoed back.
 import { ApiError } from '@/lib/api';
 
 export type RecoveryState =

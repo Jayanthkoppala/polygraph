@@ -24,6 +24,10 @@ import type { DemoMissionService } from '../demo/mission.js';
 import { SqliteDemoMissionStore } from './demo-receipt-store.js';
 import { createGoogleAuthVerifier, type GoogleAuthVerifier } from './google-auth.js';
 import { listenAsync } from '../http/listen.js';
+import { DeliveryStore } from './delivery-store.js';
+import { RecoveryStore } from './recovery/store.js';
+import { RecoveryWorker, isAutoRecoveryEnabled } from './recovery/worker.js';
+import { createRecoveryNotifier } from './recovery/notify.js';
 
 interface StartServerOptions {
   dbPath?: string;
@@ -44,6 +48,8 @@ interface StartServerOptions {
 export interface RunningServer {
   server: Server;
   dispatcher: Dispatcher;
+  /** Present only when POLYGRAPH_AUTO_RECOVERY=1 at boot. */
+  recoveryWorker?: RecoveryWorker;
   writer: Database.Database;
   reader: Database.Database;
   port: number;
@@ -105,6 +111,26 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Runnin
   // Bright Data credential would otherwise be silently unreadable.
   assertMasterKeyCanary(writer, masterKey);
 
+  // Automatic recovery (build plan D5/D8): boot scan for orphaned cycles,
+  // then the worker interval. Both exist only behind the server-wide switch;
+  // with it off, ingest behaves exactly as before and no worker runs.
+  let recoveryWorker: RecoveryWorker | undefined;
+  if (isAutoRecoveryEnabled()) {
+    const deliveries = new DeliveryStore(writer, masterKey);
+    recoveryWorker = new RecoveryWorker({
+      db: writer,
+      masterKey,
+      previousMasterKey,
+      deliveries,
+      recovery: new RecoveryStore(writer, deliveries),
+      notifier: createRecoveryNotifier(),
+      fetchImpl: opts.fetchImpl,
+      baseUrl: opts.baseUrl,
+    });
+    await recoveryWorker.resumeOrphans();
+    recoveryWorker.start();
+  }
+
   const reader = openReader(dbPath);
   const demoConfig = readDemoMissionConfig();
   const demoService = opts.demoService ?? (demoConfig ? createDemoMissionService(demoConfig, new SqliteDemoMissionStore(writer)) : undefined);
@@ -147,13 +173,23 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Runnin
   const actualPort = boundAddress && typeof boundAddress === 'object' ? boundAddress.port : port;
 
   const stop = async (): Promise<void> => {
+    recoveryWorker?.stop();
     stopScheduler();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     writer.close();
     reader.close();
   };
 
-  return { server, dispatcher, writer, reader, port: actualPort, host, stop };
+  return {
+    server,
+    dispatcher,
+    ...(recoveryWorker ? { recoveryWorker } : {}),
+    writer,
+    reader,
+    port: actualPort,
+    host,
+    stop,
+  };
 }
 
 export { MasterKeyMismatchError };

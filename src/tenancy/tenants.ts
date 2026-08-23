@@ -75,8 +75,48 @@ export function createTenant(db: Database.Database, input: CreateTenantInput): I
  * `VACUUM` cannot run inside a transaction in SQLite, so it runs after the
  * wipe+delete+log transaction commits, exactly mirroring the spec's
  * `BEGIN IMMEDIATE; ...; COMMIT; VACUUM;` sequence.
+ *
+ * ## Tenants that hold repair receipts
+ *
+ * M012's `repair_receipts` is insert-only, enforced by a `BEFORE DELETE`
+ * trigger that fires for cascaded deletes too. A tenant with even one verified
+ * repair therefore cannot be hard-deleted: the `DELETE FROM tenants` above
+ * would abort, and `POST /api/tenant/delete` would 500 with the customer's
+ * data still in place — the worst of both outcomes.
+ *
+ * Weakening the trigger was rejected: a receipt's `receipt_sha256` only means
+ * anything if the row it covers is genuinely immutable, and a delete path that
+ * can switch that off is a delete path an attacker can aim at the evidence.
+ *
+ * So a receipt-holding tenant is DETACHED instead of dropped:
+ *
+ *  - `tenants.status = 'deleted'` — `resolveSession` and `exchangeTokenForSession`
+ *    both require `status = 'active'`, so every existing session and capability
+ *    token stops working on the next request, and `resolveDeliveryTarget`'s
+ *    same filter kills the webhook ingress.
+ *  - every secret-bearing row is destroyed for real: the API key ciphertext is
+ *    overwritten then deleted, the encrypted verification inputs are deleted,
+ *    the ingest tokens are deleted, the released safe-output snapshots are
+ *    deleted, and every delivery's `rows_json` is nulled immediately rather
+ *    than waiting for the 30-day sweep.
+ *  - what survives is content-free: receipts, cycle rows, ledger events, and
+ *    delivery hashes plus their already-redacted previews.
+ *  - collector rows survive too, disabled. Deleting them would cascade into
+ *    the receipts and hit the same trigger; keeping them is also what lets a
+ *    receipt still name the collector it repaired.
+ *
+ * A tenant with no receipts — every tenant today, and the overwhelming
+ * majority afterwards — still gets the original hard delete, unchanged.
  */
 export function deleteTenantAndKey(db: Database.Database, tenantId: string): void {
+  const receipts = db
+    .prepare(`SELECT COUNT(*) AS n FROM repair_receipts WHERE tenant_id = ?`)
+    .get(tenantId) as { n: number };
+  if (receipts.n > 0) {
+    detachTenantWithReceipts(db, tenantId);
+    return;
+  }
+
   const wipeSecret = db.prepare(
     `UPDATE tenant_secrets
         SET key_ciphertext = randomblob(length(key_ciphertext)),
@@ -92,6 +132,51 @@ export function deleteTenantAndKey(db: Database.Database, tenantId: string): voi
     wipeSecret.run(tenantId);
     deleteTenant.run(tenantId);
     logDeletion.run(new Date().toISOString(), tenantId);
+  }).immediate();
+
+  db.exec('VACUUM');
+}
+
+/**
+ * The receipt-holding variant of `deleteTenantAndKey` (see its doc comment for
+ * why this exists and what the trade is). Everything that could identify a
+ * customer or unlock their data is destroyed; the immutable proof that a
+ * repair happened is not.
+ */
+function detachTenantWithReceipts(db: Database.Database, tenantId: string): void {
+  const now = new Date().toISOString();
+  const statements = [
+    // Overwrite before delete — the same belt-and-suspenders as the hard path.
+    `UPDATE tenant_secrets
+        SET key_ciphertext = randomblob(length(key_ciphertext)),
+            key_iv = randomblob(12), key_tag = randomblob(16), key_salt = randomblob(16)
+      WHERE tenant_id = @tenant_id`,
+    `DELETE FROM tenant_secrets WHERE tenant_id = @tenant_id`,
+    `UPDATE collector_verification_inputs
+        SET ciphertext = randomblob(length(ciphertext)),
+            iv = randomblob(length(iv)), tag = randomblob(length(tag)), salt = randomblob(length(salt))
+      WHERE tenant_id = @tenant_id`,
+    `DELETE FROM collector_verification_inputs WHERE tenant_id = @tenant_id`,
+    `DELETE FROM collector_ingest_tokens WHERE tenant_id = @tenant_id`,
+    `DELETE FROM safe_output_snapshots WHERE tenant_id = @tenant_id`,
+    `DELETE FROM sessions WHERE tenant_id = @tenant_id`,
+    `DELETE FROM tenant_identities WHERE tenant_id = @tenant_id`,
+    // The payload goes now, not in 30 days. Hash, row count and redacted
+    // preview stay: they are what a surviving receipt points at.
+    `UPDATE collector_deliveries SET rows_json = NULL, purged_at = @now
+      WHERE tenant_id = @tenant_id AND rows_json IS NOT NULL`,
+    `UPDATE tenant_collectors SET enabled = 0, next_run_at = NULL WHERE tenant_id = @tenant_id`,
+    // The token digest is cleared to a value no token can hash to, so the
+    // capability URL cannot be reactivated even if `status` were ever flipped
+    // back by hand.
+    `UPDATE tenants SET status = 'deleted', display_name = 'deleted account',
+            recovery_email = NULL, token_sha256 = 'deleted:' || id, is_public = 0
+      WHERE id = @tenant_id`,
+    `INSERT INTO ops_log (ts, event, tenant_id, detail) VALUES (@now, 'TENANT_DELETED', @tenant_id, NULL)`,
+  ].map((sql) => db.prepare(sql));
+
+  db.transaction(() => {
+    for (const statement of statements) statement.run({ tenant_id: tenantId, now });
   }).immediate();
 
   db.exec('VACUUM');

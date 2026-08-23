@@ -13,6 +13,7 @@ import {
   BrightDataClient,
   BrightDataError,
   BrightDataPollTimeoutError,
+  parseDatasetBody,
   parseTemplateVersion,
 } from '../../../src/brightdata/client.js';
 
@@ -40,8 +41,12 @@ function urlOf(fetchImpl: ReturnType<typeof vi.fn>, n = 0): string {
   return String(fetchImpl.mock.calls[n][0]);
 }
 
+function initOf(fetchImpl: ReturnType<typeof vi.fn>, n = 0): RequestInit {
+  return (fetchImpl.mock.calls[n] as unknown[])[1] as RequestInit;
+}
+
 function bodyOf(fetchImpl: ReturnType<typeof vi.fn>, n = 0): unknown {
-  return JSON.parse(String((fetchImpl.mock.calls[n][1] as RequestInit).body));
+  return JSON.parse(String(initOf(fetchImpl, n).body));
 }
 
 describe('parseTemplateVersion', () => {
@@ -85,7 +90,7 @@ describe('BrightDataClient.createCollector', () => {
 
     expect(created.id).toBe('c_new');
     expect(urlOf(fetchImpl)).toBe('https://api.brightdata.com/dca/collector');
-    expect((fetchImpl.mock.calls[0][1] as RequestInit).method).toBe('POST');
+    expect(initOf(fetchImpl).method).toBe('POST');
     expect(bodyOf(fetchImpl)).toEqual({ name: 'proof-1', deliver: { type: 'api_pull' } });
   });
 
@@ -338,5 +343,83 @@ describe('BrightDataClient.listJobs', () => {
     const client = makeClient(fetchImpl);
     await expect(client.listJobs('c_1', '', '')).rejects.toBeInstanceOf(BrightDataError);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('parseDatasetBody / pollDataset wire formats', () => {
+  // Bright Data serves /dca/dataset in two shapes depending on the
+  // collector's deliver.format. Both were observed live on 2026-08-23:
+  // a pretty-printed array from a format:"json" collector, and NDJSON from
+  // a bare deliver:{type:"api_pull"} collector.
+  const NDJSON = '{"title":"a","rank":1}\n{"title":"b","rank":2}\n';
+  const ARRAY = '[\n  {\n    "title": "a"\n  },\n  {\n    "title": "b"\n  }\n]';
+
+  it('parses a pretty-printed JSON array', () => {
+    expect(parseDatasetBody(ARRAY)).toEqual([{ title: 'a' }, { title: 'b' }]);
+  });
+
+  it('parses newline-delimited JSON, which JSON.parse cannot handle', () => {
+    expect(() => JSON.parse(NDJSON)).toThrow();
+    expect(parseDatasetBody(NDJSON)).toEqual([
+      { title: 'a', rank: 1 },
+      { title: 'b', rank: 2 },
+    ]);
+  });
+
+  it('tolerates NDJSON without a trailing newline and with blank lines', () => {
+    expect(parseDatasetBody('{"a":1}\n\n{"a":2}')).toEqual([{ a: 1 }, { a: 2 }]);
+  });
+
+  it('treats a lone status object as "not rows yet", not a row', () => {
+    expect(parseDatasetBody('{"status":"building"}')).toBeUndefined();
+  });
+
+  it('reads a single row that carries an input echo as a row, not a status', () => {
+    expect(parseDatasetBody('{"status":"ok","input":{"url":"https://a.test"}}')).toEqual([
+      { status: 'ok', input: { url: 'https://a.test' } },
+    ]);
+  });
+
+  it('returns undefined for an empty or unparseable body rather than guessing', () => {
+    expect(parseDatasetBody('')).toBeUndefined();
+    expect(parseDatasetBody('   ')).toBeUndefined();
+    expect(parseDatasetBody('not json at all')).toBeUndefined();
+    expect(parseDatasetBody('{"a":1}\nbroken')).toBeUndefined();
+  });
+
+  it('pollDataset returns rows for an NDJSON dataset', async () => {
+    const fetchImpl = vi.fn(async () => new Response(NDJSON, { status: 200 }));
+    const client = makeClient(fetchImpl);
+    const result = await client.pollDataset('j_1', { intervalMs: 1 });
+    expect(result.ambiguous).toBe(false);
+    expect(result.rows).toEqual([
+      { title: 'a', rank: 1 },
+      { title: 'b', rank: 2 },
+    ]);
+  });
+
+  it('pollDataset returns rows for a pretty-printed array dataset', async () => {
+    const fetchImpl = vi.fn(async () => new Response(ARRAY, { status: 200 }));
+    const client = makeClient(fetchImpl);
+    const result = await client.pollDataset('j_1', { intervalMs: 1 });
+    expect(result.rows).toHaveLength(2);
+  });
+
+  it('pollDataset still reports an empty array as AMBIGUOUS', async () => {
+    const fetchImpl = vi.fn(async () => new Response('[]', { status: 200 }));
+    const client = makeClient(fetchImpl);
+    const result = await client.pollDataset('j_1', { intervalMs: 1 });
+    expect(result).toEqual({ rows: [], ambiguous: true });
+  });
+
+  it('pollDataset keeps polling past a 200 status object', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{"status":"building"}', { status: 200 }))
+      .mockResolvedValueOnce(new Response(NDJSON, { status: 200 }));
+    const client = makeClient(fetchImpl);
+    const result = await client.pollDataset('j_1', { intervalMs: 1 });
+    expect(result.rows).toHaveLength(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });

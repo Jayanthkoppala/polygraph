@@ -22,6 +22,7 @@ import { BrightDataClient, type PollOptions } from '../brightdata/client.js';
 import type { AlertNotifier } from '../loop/alerts.js';
 import { scopeFor, type TenantCollectorRow } from './scope.js';
 import { ScopedSecrets, revealPlaintext } from './secrets.js';
+import { DeliveryStore } from './delivery-store.js';
 
 export interface DueRow {
   tenant_id: string;
@@ -37,6 +38,7 @@ const DEFAULT_MAX_BACKOFF_MS = 6 * 60 * 60_000; // 6 hours
 const DEFAULT_BASE_BACKOFF_MS = 5 * 60_000; // 5 minutes
 const AUTO_DISABLE_AFTER_FAILURES = 10;
 const DEFAULT_VERIFY_INTERVAL_MS = 60 * 60_000; // hourly
+const DEFAULT_PURGE_INTERVAL_MS = 60 * 60_000; // hourly (build plan D9)
 
 function dayKey(nowIso: string): string {
   return nowIso.slice(0, 10);
@@ -439,6 +441,30 @@ interface StartSchedulerOptions {
   runTimeoutMs?: number;
   onTick?: (result: TickResult) => void;
   onTickError?: (err: unknown) => void;
+  /** How often the D9 payload purge runs; tests shrink it. */
+  purgeIntervalMs?: number;
+}
+
+/**
+ * D9 retention: nulls `collector_deliveries.rows_json` older than 30 days,
+ * at most once per `intervalMs`. Returns the purged row count, or
+ * `undefined` when the sweep was not due. Constructed lazily so a scheduler
+ * test that passes a placeholder master key never trips DeliveryStore's
+ * 32-byte check until a purge is actually due.
+ */
+export function createPayloadPurge(
+  db: Database.Database,
+  masterKey: Buffer,
+  intervalMs = DEFAULT_PURGE_INTERVAL_MS
+): (now?: Date) => number | undefined {
+  let lastRunAt = 0;
+  let store: DeliveryStore | undefined;
+  return (now = new Date()) => {
+    if (now.getTime() - lastRunAt < intervalMs) return undefined;
+    lastRunAt = now.getTime();
+    store ??= new DeliveryStore(db, masterKey);
+    return store.purgeExpiredPayloads(now);
+  };
 }
 
 /**
@@ -462,12 +488,14 @@ export function startScheduler(opts: StartSchedulerOptions): { dispatcher: Dispa
     runTimeoutMs: opts.runTimeoutMs,
   });
   const dispatcher = new Dispatcher({ db: opts.db, poolSize: opts.poolSize, runOne });
+  const purge = createPayloadPurge(opts.db, opts.masterKey, opts.purgeIntervalMs);
 
   const interval = setInterval(() => {
     dispatcher
       .tick()
       .then((result) => {
         runDueVerificationsForAllTenants(opts.db, new Date().toISOString());
+        purge();
         opts.onTick?.(result);
       })
       .catch((err) => opts.onTickError?.(err));

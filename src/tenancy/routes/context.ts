@@ -24,6 +24,11 @@ export interface RouteContext {
 // still provides an abuse floor while allowing the expected ten visitors
 // to create or retry a browser-local workspace during judging.
 export const SIGNUP_LIMIT_PER_HOUR = 20;
+/** Deliveries accepted per collector per hour (D6). A Bright Data schedule
+ * that fires more often than every 30 seconds is a misconfiguration, and every
+ * accepted delivery costs grading work plus a durable write, so the floor is
+ * generous for real traffic and hard on a loop. */
+export const INGEST_LIMIT_PER_HOUR = 120;
 export const PROBE_LIMIT_PER_DAY = 10;
 export const MAX_COLLECTORS_DEFAULT = 5;
 export const MAX_CANARY_INPUTS = 5;
@@ -127,6 +132,13 @@ export function loadPublicTenantRow(db: Database.Database): TenantRow | undefine
          FROM tenants WHERE is_public = 1 LIMIT 1`
     )
     .get() as TenantRow | undefined;
+}
+
+/** The one way a plaintext ingest capability is ever turned into a URL. Two
+ * routes return it — connect and rotate — and both go through here so the
+ * origin normalisation and the encoding cannot drift between them. */
+export function webhookUrl(publicOrigin: string, token: string): string {
+  return `${publicOrigin.replace(/\/$/, '')}/api/ingest/${encodeURIComponent(token)}`;
 }
 
 export function clientIp(req: IncomingMessage): string {

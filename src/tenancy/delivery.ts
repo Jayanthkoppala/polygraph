@@ -8,8 +8,25 @@ import type { LedgerEventInput } from '../store/ledger.js';
 import { decideWithGovernor } from '../loop/policy.js';
 import { evaluateRunResult } from '../loop/runner.js';
 import { SAFE_OUTPUT_MAX_BYTES } from '../store/safe-output.js';
-import type { RunError, RunResult } from '../core/types.js';
+import type { Cause, Evidence, RunError, RunResult } from '../core/types.js';
+import type { Governor } from '../loop/policy.js';
+import type { TenantCollectorRow } from './scope.js';
 import { scopeFor } from './scope.js';
+import { DeliveryStore } from './delivery-store.js';
+import {
+  ActiveCycleExistsError,
+  RecoveryStore,
+  StaleWriteError,
+  type RecoveryState,
+} from './recovery/store.js';
+import {
+  evaluateRecoveryEligibility,
+  HOLDING_REASONS,
+  MONITORING_ONLY_REASON,
+  RECOVERY_POLICY,
+} from './recovery/policy.js';
+import { isAutoRecoveryEnabled } from './recovery/worker.js';
+import { loadRunnerOverridesFor } from './onboarding.js';
 
 const DELIVERY_PREFIX = 'pgi_';
 const DELIVERY_MAX_COMPRESSED_BYTES = SAFE_OUTPUT_MAX_BYTES;
@@ -185,6 +202,25 @@ interface DeliveryDecision {
   cause: string;
   action: string;
   ledgerId: number;
+  /** Set only when automatic recovery is enabled (POLYGRAPH_AUTO_RECOVERY=1
+   * and a master key was supplied): the durable delivery id, the collector's
+   * recovery state after this delivery, and the cycle it opened, if any. */
+  deliveryId?: string;
+  state?: RecoveryState;
+  heldReason?: string | null;
+  cycleId?: string | null;
+  duplicate?: boolean;
+}
+
+/** What the ingest route hands in so the delivery can be persisted and,
+ * when policy allows, a recovery cycle enqueued. Absent → the pre-recovery
+ * behaviour (grade + ledger only) is preserved exactly. */
+export interface RecoveryIngestOptions {
+  masterKey: Buffer;
+  /** Overrides the POLYGRAPH_AUTO_RECOVERY env read (tests). */
+  enabled?: boolean;
+  /** Clock for governor checks; defaults to the delivery's `nowIso`. */
+  now?: string;
 }
 
 /** Grades rows already produced by Bright Data. This never calls the
@@ -197,7 +233,8 @@ export async function recordDeliveredRows(
   target: DeliveryTarget,
   rows: Record<string, unknown>[],
   nowIso = new Date().toISOString(),
-  externalRunId?: string
+  externalRunId?: string,
+  recoveryOptions?: RecoveryIngestOptions
 ): Promise<DeliveryDecision> {
   const scope = scopeFor(db, target.tenantId, target.genesisHash);
   const collectorRow = scope.collectors.get(target.collectorId);
@@ -262,7 +299,7 @@ export async function recordDeliveredRows(
       WHERE tenant_id = ? AND collector_id = ?`
   ).run(nowIso, target.tenantId, target.collectorId);
 
-  return {
+  const base: DeliveryDecision = {
     collectorId: collector.id,
     runId,
     rowCount: rows.length,
@@ -271,4 +308,183 @@ export async function recordDeliveredRows(
     action: decision.action.type,
     ledgerId: event.id,
   };
+
+  const recoveryEnabled = recoveryOptions
+    ? (recoveryOptions.enabled ?? isAutoRecoveryEnabled())
+    : false;
+  if (!recoveryOptions || !recoveryEnabled) return base;
+
+  const recovery = recordForRecovery(db, target, collectorRow, rows, runResult.errors, {
+    verdict: decision.verdict.code,
+    cause: evaluated.cause,
+    evidence: decision.verdict.evidence,
+    runId,
+    nowIso,
+    masterKey: recoveryOptions.masterKey,
+    governor: ctx.governor,
+  });
+  return { ...base, ...recovery };
+}
+
+interface RecordForRecoveryInput {
+  verdict: string;
+  cause: Cause;
+  evidence: Evidence[];
+  runId: string;
+  nowIso: string;
+  masterKey: Buffer;
+  governor: Governor;
+}
+
+type RecoveryOutcome = Required<Pick<DeliveryDecision, 'deliveryId' | 'state' | 'heldReason' | 'cycleId' | 'duplicate'>>;
+
+/**
+ * The recovery half of ingest (build plan D6/D7): persist the graded
+ * delivery, then either establish/refresh the baseline or ask the policy
+ * whether to enqueue a cycle. Never calls the provider — the worker does
+ * that on its own interval — so this returns in the time it takes to write
+ * a few rows.
+ *
+ * Every state write is a compare-and-swap. A `StaleWriteError` here means
+ * the worker or the operator's auto-heal toggle moved the row between our
+ * read and our write; the delivery itself is already durable, so the
+ * response reports the row as it now stands rather than failing ingest.
+ */
+function recordForRecovery(
+  db: Database.Database,
+  target: DeliveryTarget,
+  collectorRow: TenantCollectorRow,
+  rows: Record<string, unknown>[],
+  errors: RunError[] | undefined,
+  input: RecordForRecoveryInput
+): RecoveryOutcome {
+  const deliveries = new DeliveryStore(db, input.masterKey);
+  const recovery = new RecoveryStore(db, deliveries);
+  const { tenantId, collectorId } = target;
+
+  const stored = deliveries.record({
+    tenantId,
+    collectorId,
+    rows,
+    receivedAt: input.nowIso,
+    source: 'webhook',
+    providerRunId: input.runId,
+    verdict: input.verdict,
+    cause: input.cause,
+  });
+  let state = recovery.state.ensure(tenantId, collectorId, input.nowIso);
+
+  const outcome = (cycleId: string | null = state.active_cycle_id): RecoveryOutcome => ({
+    deliveryId: stored.id,
+    state: state.state,
+    heldReason: state.held_reason,
+    cycleId,
+    duplicate: !stored.inserted,
+  });
+
+  // A redelivered webhook (same provider run or identical payload) is
+  // idempotent: nothing below may run twice for it.
+  if (!stored.inserted) return outcome();
+
+  const activeInput = deliveries.activeInput(tenantId, collectorId);
+  const hasBaseline = state.baseline_delivery_id !== null;
+
+  const refreshBaseline = (): RecoveryOutcome => {
+    // First healthy delivery becomes the baseline; later healthy deliveries
+    // refresh it so the comparison point tracks the collector's current
+    // shape and a hold clears once the target recovers by itself.
+    deliveries.markBaseline(tenantId, collectorId, stored.id);
+    state = recovery.state.transition(
+      tenantId,
+      collectorId,
+      state.state_version,
+      {
+        state: 'READY',
+        baselineDeliveryId: stored.id,
+        heldReason: activeInput ? null : MONITORING_ONLY_REASON,
+        activeCycleId: null,
+      },
+      input.nowIso
+    );
+    return outcome(null);
+  };
+
+  try {
+    if (!hasBaseline) {
+      return input.verdict === 'PASS' ? refreshBaseline() : outcome();
+    }
+
+    const baseline = deliveries.baselineDelivery(tenantId, collectorId);
+    const baselineRows = baseline?.rows_json
+      ? (JSON.parse(baseline.rows_json) as Record<string, unknown>[])
+      : undefined;
+    const eligibility = evaluateRecoveryEligibility({
+      serverEnabled: true,
+      autoHeal: state.auto_heal === 1,
+      source: 'webhook',
+      baselineRows,
+      hasBaseline,
+      hasReusableInput: activeInput !== undefined,
+      hasActiveCycle: state.state === 'RECOVERING' || recovery.cycles.activeCycle(tenantId, collectorId) !== undefined,
+      governor: input.governor.canHeal(collectorId, input.nowIso, RECOVERY_POLICY),
+      schema: loadRunnerOverridesFor(collectorRow).schema,
+      entityKey: collectorRow.entity_key ?? undefined,
+      incident: { rows, errors, verdict: input.verdict, cause: input.cause, evidence: input.evidence },
+      now: input.nowIso,
+    });
+
+    // A genuinely healthy delivery (PASS, and policy found nothing
+    // structurally different from the baseline) refreshes the baseline —
+    // unless a cycle is mid-flight, whose verification owns that decision.
+    if (input.verdict === 'PASS' && eligibility.reason === 'HEALTHY' && state.state !== 'RECOVERING') {
+      return refreshBaseline();
+    }
+
+    if (eligibility.eligible) {
+      try {
+        const cycle = recovery.cycles.create(
+          {
+            tenantId,
+            collectorId,
+            incidentDeliveryId: stored.id,
+            baselineDeliveryId: baseline!.id,
+            policyEvidence: eligibility.evidence,
+          },
+          input.nowIso
+        );
+        state = recovery.state.transition(
+          tenantId,
+          collectorId,
+          state.state_version,
+          { state: 'RECOVERING', heldReason: null, activeCycleId: cycle.id },
+          input.nowIso
+        );
+        return outcome(cycle.id);
+      } catch (err) {
+        if (!(err instanceof ActiveCycleExistsError)) throw err;
+        // Already recovering — the existing cycle covers this incident.
+        state = recovery.state.get(tenantId, collectorId) ?? state;
+        return outcome();
+      }
+    }
+
+    if (
+      eligibility.reason !== 'ELIGIBLE' &&
+      HOLDING_REASONS.has(eligibility.reason) &&
+      state.state === 'READY'
+    ) {
+      state = recovery.state.transition(
+        tenantId,
+        collectorId,
+        state.state_version,
+        { state: 'HELD', heldReason: `${eligibility.reason}: ${eligibility.detail}` },
+        input.nowIso
+      );
+    }
+    return outcome();
+  } catch (err) {
+    if (!(err instanceof StaleWriteError)) throw err;
+    state = recovery.state.get(tenantId, collectorId) ?? state;
+    return outcome();
+  }
 }

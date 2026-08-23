@@ -1,17 +1,15 @@
 {
   "proof": "brightdata-auto_save-promotion",
   "outcome": "FAIL",
-  "startedAt": "2026-08-23T03:47:27.495Z",
-  "finishedAt": "2026-08-23T03:53:26.126Z",
-  "totalElapsedMs": 358631,
+  "startedAt": "2026-08-23T04:02:36.773Z",
+  "finishedAt": "2026-08-23T04:02:40.220Z",
+  "totalElapsedMs": 3447,
   "targetUrl": "https://news.ycombinator.com",
   "healPrompt": "add a numeric field named rank",
-  "collectorsCreated": [
-    "c_mt59nnk03ddo625xm"
-  ],
-  "treatmentCollector": "c_mt59nnk03ddo625xm",
+  "collectorsCreated": [],
+  "treatmentCollector": null,
   "controlCollector": null,
-  "fatal": "Unexpected non-whitespace character after JSON at position 49 (line 2 column 1)",
+  "fatal": "createCollector(polygraph-proof-autosave-1787457756) failed: HTTP 400",
   "assertions": [
     {
       "name": "every disposable collector is gone from collectors_list",
@@ -22,113 +20,18 @@
     }
   ],
   "deletion": {
-    "c_mt59nnk03ddo625xm": "deleted",
     "confirmedGone": true,
     "survivors": []
   },
   "steps": [
     {
-      "step": "create collector \"polygraph-proof-autosave-1787456847\"",
+      "step": "create collector \"polygraph-proof-autosave-1787457756\"",
       "arm": "treatment",
-      "startedAt": "2026-08-23T03:47:27.496Z",
-      "elapsedMs": 3497,
-      "detail": {
-        "ok": true,
-        "result": {
-          "name": "polygraph-proof-autosave-1787456847",
-          "deliver": {
-            "type": "api_pull",
-            "flatten_csv": false,
-            "delivery_type": "deliver_results"
-          },
-          "active": false,
-          "created": "2026-08-23T03:47:28.896Z",
-          "user": "fakenamebusiness@gmail.com",
-          "customer": "hl_b71e73bf",
-          "customer_id": "hl_b71e73bf",
-          "output_format_ver": 1,
-          "require_all_success": false,
-          "default_queue_behavior": "parallel",
-          "strict_input_normalize": true,
-          "request_cmd_behavior": "send_ajax_request",
-          "strict_url_validate": true,
-          "no_strange_input_normalize": true,
-          "allow_wait_ms": false,
-          "id": "c_mt59nnk03ddo625xm",
-          "zone": "v__dca_polygraph_proof_autosav",
-          "notifications": {
-            "success_rate": {
-              "addresses": "fakenamebusiness@gmail.com",
-              "frequency": 1
-            }
-          },
-          "history": [
-            {
-              "date": "2026-08-23T03:47:28.904Z",
-              "user": "Fakename",
-              "comment": "Collector was created"
-            }
-          ],
-          "output_fields": [],
-          "fields": {},
-          "template": {
-            "stub": true
-          },
-          "has_output_fields_mapping": false,
-          "account_id": "hl_b71e73bf",
-          "is_under_dataset_migration": false,
-          "under_sla": false,
-          "output_schema_incompatible": false,
-          "beta_output_schema_incompatible": false,
-          "is_scheduled": false
-        }
-      }
-    },
-    {
-      "step": "POST automate_template",
-      "arm": "treatment",
-      "startedAt": "2026-08-23T03:47:30.994Z",
-      "elapsedMs": 1545,
-      "detail": {
-        "ok": true,
-        "result": {
-          "id": "ia_mt59nqag1ryat8ptfd",
-          "queued": false
-        }
-      }
-    },
-    {
-      "step": "poll automate_template to done",
-      "arm": "treatment",
-      "startedAt": "2026-08-23T03:47:32.539Z",
-      "elapsedMs": 235892,
-      "detail": {
-        "ok": true,
-        "result": {
-          "step": "collector_mainatiner",
-          "completed_steps": [
-            "prepare_intent_analyzer",
-            "planner",
-            "discovery",
-            "collector_mainatiner",
-            "output_schema_generator",
-            "code_generator",
-            "input_schema_generator",
-            "preview_runner",
-            "preview_picker"
-          ],
-          "status": "done"
-        }
-      }
-    },
-    {
-      "step": "trigger + read dataset (baseline)",
-      "arm": "treatment",
-      "startedAt": "2026-08-23T03:51:28.432Z",
-      "elapsedMs": 115129,
+      "startedAt": "2026-08-23T04:02:36.773Z",
+      "elapsedMs": 2331,
       "detail": {
         "ok": false,
-        "error": "Unexpected non-whitespace character after JSON at position 49 (line 2 column 1)"
+        "error": "createCollector(polygraph-proof-autosave-1787457756) failed: HTTP 400"
       }
     }
   ]

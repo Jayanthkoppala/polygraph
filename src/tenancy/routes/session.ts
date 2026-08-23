@@ -12,7 +12,16 @@ import { buildConfirmedSchema, persistConfirmedSetup, type ConfirmedFieldInput }
 import type { EntityKeyRule } from '../entity-key.js';
 import { checkAndIncrementRateLimit, dailyWindowKey } from '../rate-limit.js';
 import { recordVerifyResult } from '../scheduler.js';
-import { issueDeliveryToken } from '../delivery.js';
+import { issueDeliveryToken, rotateDeliveryToken } from '../delivery.js';
+import { DeliveryStore } from '../delivery-store.js';
+import { RecoveryStateStore, RepairReceiptStore } from '../recovery/store.js';
+import {
+  clampLimit,
+  deriveCollectorView,
+  listRecoveryCollectors,
+  listRecoveryDeliveries,
+  listRecoveryRepairs,
+} from '../recovery/api.js';
 import {
   scopeWithSecrets,
   readJsonBody,
@@ -20,6 +29,7 @@ import {
   buildDashboardState,
   tenantBrightDataClient,
   withinCollectorCap,
+  webhookUrl,
   MAX_CANARY_INPUTS,
   PROBE_LIMIT_PER_DAY,
   type RouteContext,
@@ -248,16 +258,22 @@ export async function handleSessionRoutes(ctx: RouteContext, session: Session, t
         { scheduledByPolygraph: false }
       );
       const issued = issueDeliveryToken(deps.writer, session.tenantId, collectorId, nowFn());
-      const origin = deps.publicOrigin.replace(/\/$/, '');
+      // Every connected collector starts monitored: WAITING_BASELINE with the
+      // switch on. Created here rather than lazily on first delivery so the
+      // workspace can show the collector — and its auto-heal opt-out — the
+      // moment it is added, before Bright Data has pushed anything.
+      new RecoveryStateStore(deps.writer).ensure(session.tenantId, collectorId, nowFn());
+      const deliveryUrl = webhookUrl(deps.publicOrigin, issued.token);
       sendJson(res, 200, {
         collector,
         schedule_owner: 'brightdata',
         auto_heal: false,
-        delivery: {
-          mode: 'webhook',
-          format: 'json',
-          url: `${origin}/api/ingest/${encodeURIComponent(issued.token)}`,
-        },
+        // The plaintext capability, shown exactly once. `delivery.url` is the
+        // shape the onboarding client already reads; `webhook_url` is the
+        // contract's own name for the same string, and the only other place it
+        // ever appears is the rotate response.
+        webhook_url: deliveryUrl,
+        delivery: { mode: 'webhook', format: 'json', url: deliveryUrl },
       });
     } catch (err) {
       if (err instanceof BrightDataError) {
@@ -475,6 +491,125 @@ export async function handleSessionRoutes(ctx: RouteContext, session: Session, t
       sendJson(res, 200, { collector: row });
       return;
     }
+  }
+
+  // ---- Automatic collector recovery (D6/D9 contract) ---------------------
+  //
+  // Every route below is tenant-scoped by construction: the collector id from
+  // the URL is resolved through this session's own `TenantScope` first, so a
+  // collector belonging to another tenant is indistinguishable from one that
+  // does not exist. Nothing here returns an ingest token, a ciphertext, a
+  // decrypted verification input, or raw delivery rows — see recovery/api.ts.
+
+  if (method === 'GET' && path === '/api/recovery/collectors') {
+    sendJson(res, 200, {
+      collectors: listRecoveryCollectors(
+        deps.reader,
+        session.tenantId,
+        tenantRowWriter.genesis_hash,
+        deps.masterKey
+      ),
+    });
+    return;
+  }
+
+  if (method === 'GET' && path === '/api/recovery/deliveries') {
+    const collectorId = url.searchParams.get('collector_id');
+    if (!collectorId) {
+      sendJson(res, 400, { error: 'collector_id is required' });
+      return;
+    }
+    const scope = scopeFor(deps.reader, session.tenantId, tenantRowWriter.genesis_hash);
+    if (!scope.collectors.get(collectorId)) {
+      sendJson(res, 404, { error: 'no such collector' });
+      return;
+    }
+    const before = url.searchParams.get('before');
+    sendJson(
+      res,
+      200,
+      listRecoveryDeliveries(
+        deps.reader,
+        session.tenantId,
+        collectorId,
+        { ...(before ? { before } : {}), limit: clampLimit(url.searchParams.get('limit')) },
+        deps.masterKey
+      )
+    );
+    return;
+  }
+
+  if (method === 'GET' && path === '/api/recovery/repairs') {
+    const collectorId = url.searchParams.get('collector_id');
+    if (collectorId) {
+      const scope = scopeFor(deps.reader, session.tenantId, tenantRowWriter.genesis_hash);
+      if (!scope.collectors.get(collectorId)) {
+        sendJson(res, 404, { error: 'no such collector' });
+        return;
+      }
+    }
+    const before = url.searchParams.get('before');
+    sendJson(
+      res,
+      200,
+      listRecoveryRepairs(deps.reader, session.tenantId, tenantRowWriter.genesis_hash, {
+        ...(collectorId ? { collectorId } : {}),
+        ...(before ? { before } : {}),
+        limit: clampLimit(url.searchParams.get('limit')),
+      })
+    );
+    return;
+  }
+
+  const autoHealMatch = /^\/api\/recovery\/collectors\/([^/]+)\/auto-heal$/.exec(path);
+  if (method === 'POST' && autoHealMatch) {
+    if (!requireCsrf(req, res, deps.publicOrigin)) return;
+    const collectorId = decodeURIComponent(autoHealMatch[1]);
+    const body = await readJsonBody<{ enabled?: unknown }>(req, res);
+    if (body === undefined) return;
+    if (typeof body.enabled !== 'boolean') {
+      sendJson(res, 400, { error: 'enabled must be true or false' });
+      return;
+    }
+    const scope = scopeFor(deps.writer, session.tenantId, tenantRowWriter.genesis_hash);
+    if (!scope.collectors.get(collectorId)) {
+      sendJson(res, 404, { error: 'no such collector' });
+      return;
+    }
+    const states = new RecoveryStateStore(deps.writer);
+    // `ensure` first: the operator may switch recovery off before the
+    // collector has ever delivered, and an opt-out that silently did nothing
+    // because no row existed yet would be the worst possible failure for a
+    // control whose whole purpose is "stop".
+    const current = states.ensure(session.tenantId, collectorId, nowFn());
+    const updated =
+      current.auto_heal === (body.enabled ? 1 : 0)
+        ? current
+        : states.setAutoHeal(session.tenantId, collectorId, body.enabled, current.state_version, nowFn());
+    const deliveries = new DeliveryStore(deps.writer, deps.masterKey);
+    const view = deriveCollectorView({
+      state: updated,
+      hasActiveInput: deliveries.activeInput(session.tenantId, collectorId) !== undefined,
+      hasReceipt: new RepairReceiptStore(deps.reader).latestForCollector(session.tenantId, collectorId) !== undefined,
+    });
+    sendJson(res, 200, { ok: true, auto_heal: updated.auto_heal === 1, state: view.state });
+    return;
+  }
+
+  const rotateMatch = /^\/api\/recovery\/collectors\/([^/]+)\/ingest-token\/rotate$/.exec(path);
+  if (method === 'POST' && rotateMatch) {
+    if (!requireCsrf(req, res, deps.publicOrigin)) return;
+    const collectorId = decodeURIComponent(rotateMatch[1]);
+    const scope = scopeFor(deps.writer, session.tenantId, tenantRowWriter.genesis_hash);
+    if (!scope.collectors.get(collectorId)) {
+      sendJson(res, 404, { error: 'no such collector' });
+      return;
+    }
+    const issued = rotateDeliveryToken(deps.writer, session.tenantId, collectorId, nowFn());
+    // The second and last response in the system that carries a plaintext
+    // capability (connect is the first). It is never readable again.
+    sendJson(res, 200, { webhook_url: webhookUrl(deps.publicOrigin, issued.token) });
+    return;
   }
 
   if (method === 'POST' && path === '/api/tenant/delete') {
