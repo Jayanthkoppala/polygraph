@@ -148,7 +148,7 @@ describe('RecoveryWorkspace — selection swaps both tables', () => {
     expect(await screen.findByText('run-waiting')).toBeInTheDocument();
     expect(screen.queryByText('run-monitoring')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Monitoring collector/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Monitoring collector/ }));
 
     expect(await screen.findByText('run-monitoring')).toBeInTheDocument();
     expect(screen.queryByText('run-waiting')).not.toBeInTheDocument();
@@ -343,11 +343,11 @@ describe('RecoveryWorkspace — pagination', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Next' })[0]);
     expect(await screen.findByText('run-waiting-page-2')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Monitoring collector/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Monitoring collector/ }));
     expect(await screen.findByText('run-monitoring')).toBeInTheDocument();
     expect(screen.getByText('Showing 1–1 of 1')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Waiting collector/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Waiting collector/ }));
     expect(await screen.findByText('run-waiting-page-1')).toBeInTheDocument();
     expect(screen.queryByText('run-waiting-page-2')).not.toBeInTheDocument();
   });

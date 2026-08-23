@@ -238,9 +238,9 @@ export async function setCollectorAutoHeal(collectorId: string, enabled: boolean
   await postJson(`/api/recovery/collectors/${encodeURIComponent(collectorId)}/auto-heal`, { enabled });
 }
 
-/** POST /api/recovery/collectors/:id/ingest-token/rotate — the returned
- *  `webhook_url` embeds a fresh token and is shown exactly once; the caller must
- *  never persist or re-fetch it. */
+/** POST /api/recovery/collectors/:id/ingest-token/rotate — issues a fresh
+ *  token, which invalidates the previous webhook URL wherever it is configured.
+ *  The returned URL is re-readable afterwards via `revealIngestToken`. */
 export async function rotateIngestToken(collectorId: string): Promise<{ webhookUrl: string }> {
   const result = await postJson<{ webhook_url?: unknown }>(
     `/api/recovery/collectors/${encodeURIComponent(collectorId)}/ingest-token/rotate`,
@@ -249,6 +249,19 @@ export async function rotateIngestToken(collectorId: string): Promise<{ webhookU
   const webhookUrl = asString(result.webhook_url);
   if (!webhookUrl) throw new ApiError('Rotate did not return a webhook URL', 502);
   return { webhookUrl };
+}
+
+/** POST /api/recovery/collectors/:id/ingest-token/reveal — re-reads the
+ *  collector's current webhook URL. POST rather than GET because it returns a
+ *  live capability: it must carry the CSRF origin check and must never be
+ *  reachable by a prefetch. `null` means the collector's token predates
+ *  encrypted storage (or was revoked) and only a rotation can produce a URL. */
+export async function revealIngestToken(collectorId: string): Promise<{ webhookUrl: string | null }> {
+  const result = await postJson<{ webhook_url?: unknown }>(
+    `/api/recovery/collectors/${encodeURIComponent(collectorId)}/ingest-token/reveal`,
+    {},
+  );
+  return { webhookUrl: asString(result.webhook_url) };
 }
 
 export { ApiError };

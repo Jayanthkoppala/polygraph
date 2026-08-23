@@ -16,6 +16,7 @@ import {
   fetchRecoveryCollectors,
   fetchRecoveryDeliveries,
   fetchRecoveryRepairs,
+  revealIngestToken,
   rotateIngestToken,
   setCollectorAutoHeal,
   type RecoveryCollector,
@@ -26,8 +27,13 @@ import { signOut } from '@/lib/session';
 const POLL_INTERVAL_MS = 5000;
 
 interface PendingWebhook {
+  collectorId: string;
   collectorName: string;
-  webhookUrl: string;
+  /** `null` while loading, and after a reveal that found no revealable token. */
+  webhookUrl: string | null;
+  loading: boolean;
+  rotating: boolean;
+  error: string | null;
 }
 
 export function RecoveryWorkspace() {
@@ -108,13 +114,74 @@ export function RecoveryWorkspace() {
 
   const handleAddCollector = useCallback(async (collectorId: string) => {
     const connected = await connectCollector(collectorId);
-    setPendingWebhook({ collectorName: connected.name, webhookUrl: connected.deliveryUrl });
+    setPendingWebhook({
+      collectorId,
+      collectorName: connected.name,
+      webhookUrl: connected.deliveryUrl,
+      loading: false,
+      rotating: false,
+      error: null,
+    });
     await pollCollectors();
   }, [pollCollectors]);
 
-  const handleRotateToken = useCallback(async (collector: RecoveryCollector) => {
-    const { webhookUrl } = await rotateIngestToken(collector.collectorId);
-    setPendingWebhook({ collectorName: collector.name, webhookUrl });
+  const handleRevealWebhook = useCallback((collector: RecoveryCollector) => {
+    // Opened optimistically in a loading state: the dialog is the answer to
+    // "where is my URL", so it must appear on the click, not after a round trip.
+    setPendingWebhook({
+      collectorId: collector.collectorId,
+      collectorName: collector.name,
+      webhookUrl: null,
+      loading: true,
+      rotating: false,
+      error: null,
+    });
+    void revealIngestToken(collector.collectorId)
+      .then(({ webhookUrl }) => {
+        setPendingWebhook((current) =>
+          current && current.collectorId === collector.collectorId
+            ? { ...current, webhookUrl, loading: false }
+            : current,
+        );
+      })
+      .catch((err: unknown) => {
+        setPendingWebhook((current) =>
+          current && current.collectorId === collector.collectorId
+            ? {
+                ...current,
+                loading: false,
+                error: err instanceof ApiError ? err.message : 'Could not read the webhook URL.',
+              }
+            : current,
+        );
+      });
+  }, []);
+
+  const handleRotateToken = useCallback((collector: { collectorId: string; name: string }) => {
+    setPendingWebhook((current) =>
+      current && current.collectorId === collector.collectorId
+        ? { ...current, rotating: true, error: null }
+        : current,
+    );
+    void rotateIngestToken(collector.collectorId)
+      .then(({ webhookUrl }) => {
+        setPendingWebhook((current) =>
+          current && current.collectorId === collector.collectorId
+            ? { ...current, webhookUrl, loading: false, rotating: false }
+            : current,
+        );
+      })
+      .catch((err: unknown) => {
+        setPendingWebhook((current) =>
+          current && current.collectorId === collector.collectorId
+            ? {
+                ...current,
+                rotating: false,
+                error: err instanceof ApiError ? err.message : 'Could not rotate the token.',
+              }
+            : current,
+        );
+      });
   }, []);
 
   const handleSignOut = useCallback(async () => {
@@ -129,8 +196,6 @@ export function RecoveryWorkspace() {
       setSigningOut(false);
     }
   }, [navigate, signingOut]);
-
-  const selected = collectors?.find((c) => c.collectorId === selectedId) ?? null;
 
   if (error && !collectors) {
     return (
@@ -187,23 +252,19 @@ export function RecoveryWorkspace() {
 
       <div className="grid min-h-0 flex-1 gap-4 overflow-hidden p-4" style={{ gridTemplateColumns: '280px 1fr' }}>
         <div className="flex min-h-0 min-w-0 flex-col gap-3">
-          <div className="flex items-center justify-between px-1">
+          {/* No rail-level "Rotate token" any more: rotation applied to
+              whichever row happened to be selected, which is the wrong scope
+              for an action that kills a live delivery URL. It now lives inside
+              each collector's own Webhook URL dialog. */}
+          <div className="flex items-center px-1">
             <h2 className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-[#9B9B9B]">Collectors</h2>
-            {selected && (
-              <button
-                type="button"
-                onClick={() => void handleRotateToken(selected)}
-                className="font-mono text-[10px] uppercase tracking-wide text-[#818CF8] hover:text-[#A5B4FC]"
-              >
-                Rotate token
-              </button>
-            )}
           </div>
           <CollectorRail
             collectors={collectors}
             selectedId={selectedId}
             onSelect={handleSelect}
             onToggleAutoHeal={handleToggleAutoHeal}
+            onRevealWebhook={handleRevealWebhook}
             pendingAutoHeal={pendingAutoHeal}
           />
         </div>
@@ -254,6 +315,12 @@ export function RecoveryWorkspace() {
         <WebhookReveal
           collectorName={pendingWebhook.collectorName}
           webhookUrl={pendingWebhook.webhookUrl}
+          loading={pendingWebhook.loading}
+          rotating={pendingWebhook.rotating}
+          error={pendingWebhook.error}
+          onRotate={() =>
+            handleRotateToken({ collectorId: pendingWebhook.collectorId, name: pendingWebhook.collectorName })
+          }
           onClose={() => setPendingWebhook(null)}
         />
       )}

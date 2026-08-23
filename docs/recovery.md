@@ -13,13 +13,14 @@ and `014-recovery-cycle-mode.ts`.
 
 ## What changes even when the flag is unset
 
-Migrations 013/014 and the hardened ingest route ship together and run on every
-deployment, so the following apply regardless of `POLYGRAPH_AUTO_RECOVERY`:
+Migrations 013/014/015 and the hardened ingest route ship together and run on
+every deployment, so the following apply regardless of `POLYGRAPH_AUTO_RECOVERY`:
 
 | Change | Detail |
 |---|---|
 | Migration 013 | Non-destructive, idempotent. Adds `collector_deliveries`, `collector_verification_inputs`, `collector_recovery_state`, `recovery_cycles` (incl. `verification_run_id`), `repair_receipts` (insert-only via triggers) and `collector_ingest_tokens.revoked_at`. |
 | Migration 014 | Non-destructive, idempotent. Adds `recovery_cycles.mode` (`'baseline'` default, `'bootstrap'`) with a guarded `ALTER TABLE ADD COLUMN`; every pre-existing cycle reads `baseline`. |
+| Migration 015 | Non-destructive, idempotent. Adds five nullable columns to `collector_ingest_tokens` (`token_ciphertext`, `token_iv`, `token_tag`, `token_salt`, `token_key_version`) holding an encrypted copy of the ingest token, so its webhook URL can be revealed again. No backfill: tokens issued before it stay hash-only and unrevealable. `token_sha256` is untouched. |
 | `401` for unknown tokens | `POST /api/ingest/:token` with an unknown, rotated or revoked token answers `401 {error:"unauthorized"}` — one answer for every failure so the URL cannot be probed. |
 | `429` rate limit | 120 deliveries per collector per hour; the refusal carries `Retry-After` (seconds to the next window). |
 | Structural caps | 1 MB body (compressed and expanded), 2000 rows, 200 keys per row, nesting depth 6. Violations answer `413`/`400` before anything is stored. |
@@ -224,13 +225,62 @@ contact support" so provider text can never reach a browser.
 | `UNRESOLVED_PROVIDER_JOB` | ingest | An earlier cycle's heal job never reached publication and nothing since shows the provider moved on. |
 | `MONITORING_ONLY` | ingest | Baseline exists but no reusable run input was captured; the collector can only be watched. |
 
+## Revealing a webhook URL
+
+**This replaces the old "shown once" rule for ingest tokens.** Until M015 a
+collector's webhook URL was returned exactly once, by connect or rotate, and
+was unreadable afterwards. Bright Data holds that URL in a dashboard field
+that also cannot be read back, so a mislaid URL had exactly one remedy —
+rotate, then re-enter it at the provider — and every "where is my URL"
+question turned into an avoidable invalidation of a working delivery.
+
+The rule now: an operator can read a collector's current webhook URL from that
+collector's card at any time.
+
+| | |
+|---|---|
+| Route | `POST /api/recovery/collectors/:id/ingest-token/reveal` |
+| Answers | `200 {webhook_url}`, or `200 {webhook_url: null, reason: 'NOT_REVEALABLE'}` |
+| `404` | The collector is not this session's — identical to a collector that does not exist. |
+| `429` | More than 30 reveals per tenant per hour (`rate_limits`, hourly window). |
+
+Why this is an acceptable trade rather than a weakening:
+
+- **At rest it is still not plaintext.** The token is stored encrypted under
+  the master key with AES-256-GCM and a per-tenant HKDF-derived DEK, with its
+  own domain separation (`polygraph:ingest-token:v1:` info prefix,
+  `:ingest-token:v1` AAD) — distinct from both the Bright Data API key and the
+  verification input, so no ciphertext can be moved between those tables and
+  decrypted through the wrong route. A database dump still contains no usable
+  capability.
+- **Ingest authentication did not change.** `resolveDeliveryTarget` still
+  consults only `token_sha256`. Losing or corrupting the ciphertext costs a
+  reveal, never a delivery.
+- **The reveal is not a free read.** It requires a live session, it is a
+  `POST` behind the same origin/CSRF check as rotate (so no prefetch, form
+  post, or `<img>` can trigger it), it is rate limited to 30/hour/tenant, and
+  every attempt writes an `INGEST_TOKEN_REVEALED` row to `ops_log` carrying
+  the collector id and outcome — never the URL.
+- **Nothing is retro-fitted.** A token issued before M015 has no stored
+  plaintext and no migration can invent one; it answers `NOT_REVEALABLE` and
+  the UI says "Rotate to generate a URL". A rotation performed without a
+  master key clears any previous ciphertext rather than leaving a revealable
+  copy of a token that is already dead.
+
+Rotate remains available, from inside the same dialog and behind a confirm.
+Rotating issues a new URL and kills the old one immediately; Bright Data keeps
+POSTing to whatever URL its webhook is configured with, so the collector's
+delivery setting has to be updated straight after or its results stop arriving
+(and arrive as `401`s in the meantime).
+
 ## Retention and secrets
 
 - `rows_json` is purged after 30 days except for the current baseline and the
   incident of a non-terminal cycle; hashes and the redacted preview are kept.
 - The reusable run input is stored encrypted (HKDF-derived key per tenant,
   AES-GCM) and decrypted only in the worker's memory for the provider call.
-  No API response ever carries it, a ciphertext, an ingest token plaintext
-  (after the one-time connect/rotate response), or raw provider error text.
+  No API response ever carries it, a ciphertext, or raw provider error text.
+  The one plaintext any response carries is the ingest token inside a webhook
+  URL, from connect, rotate, and reveal (below) — nowhere else.
 - Receipts (`repair_receipts`) are insert-only at the database; their
   `receipt_sha256` is recomputable from the fields the UI shows.

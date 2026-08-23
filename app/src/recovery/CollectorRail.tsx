@@ -2,7 +2,7 @@
 // opt-out toggle. Selecting a row swaps both tables in RecoveryWorkspace — this
 // component owns no delivery/repair data itself.
 import { useState } from 'react';
-import { CircleNotch } from '@phosphor-icons/react';
+import { CircleNotch, LinkSimple } from '@phosphor-icons/react';
 import { StateChip } from './StateChip';
 import type { RecoveryCollector } from '@/lib/recoveryApi';
 
@@ -11,12 +11,14 @@ export function CollectorRail({
   selectedId,
   onSelect,
   onToggleAutoHeal,
+  onRevealWebhook,
   pendingAutoHeal,
 }: {
   collectors: RecoveryCollector[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onToggleAutoHeal: (collector: RecoveryCollector, enabled: boolean) => void;
+  onRevealWebhook: (collector: RecoveryCollector) => void;
   pendingAutoHeal: string | null;
 }) {
   if (collectors.length === 0) {
@@ -40,6 +42,7 @@ export function CollectorRail({
           selected={collector.collectorId === selectedId}
           onSelect={onSelect}
           onToggleAutoHeal={onToggleAutoHeal}
+          onRevealWebhook={onRevealWebhook}
           pending={pendingAutoHeal === collector.collectorId}
         />
       ))}
@@ -52,12 +55,14 @@ function CollectorRow({
   selected,
   onSelect,
   onToggleAutoHeal,
+  onRevealWebhook,
   pending,
 }: {
   collector: RecoveryCollector;
   selected: boolean;
   onSelect: (id: string) => void;
   onToggleAutoHeal: (collector: RecoveryCollector, enabled: boolean) => void;
+  onRevealWebhook: (collector: RecoveryCollector) => void;
   pending: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -91,7 +96,19 @@ function CollectorRow({
         </button>
 
         <div className="flex items-center justify-between gap-2 border-t border-[var(--color-line)] pt-2">
-          <span className="text-[11px] font-medium text-[#9B9B9B]">Auto-heal</span>
+          {/* The delivery URL is a property of THIS collector, so it is read
+              from this card — not from a rail-level action that silently
+              applies to whichever row happens to be selected. */}
+          <button
+            type="button"
+            onClick={() => onRevealWebhook(collector)}
+            aria-label={`Webhook URL for ${collector.name}`}
+            className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-[#818CF8] transition-colors hover:bg-[var(--color-raised)] hover:text-[#A5B4FC] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EDEDED]"
+          >
+            <LinkSimple size={12} aria-hidden />
+            Webhook URL
+          </button>
+          <span className="ml-auto text-[11px] font-medium text-[#9B9B9B]">Auto-heal</span>
           {confirming ? (
             <div className="flex items-center gap-1.5">
               <button

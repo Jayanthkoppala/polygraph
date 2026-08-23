@@ -32,6 +32,10 @@ export const INGEST_LIMIT_PER_HOUR = 120;
 export const PROBE_LIMIT_PER_DAY = 10;
 export const MAX_COLLECTORS_DEFAULT = 5;
 export const MAX_CANARY_INPUTS = 5;
+/** Webhook URL reveals per tenant per hour. A person reading a URL off a
+ * collector card needs a handful; this bounds a leaked session cookie being
+ * used to harvest every collector's live ingress capability. */
+export const REVEAL_LIMIT_PER_HOUR = 30;
 
 export interface TenantServerDeps {
   writer: Database.Database;

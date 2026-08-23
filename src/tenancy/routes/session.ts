@@ -10,9 +10,10 @@ import { findCollectorListEntry, inferFieldsForCollector, summarizeCollectorsLis
 import { probeCollector, buildProbeDraft, ConsentRequiredError } from '../probe.js';
 import { buildConfirmedSchema, persistConfirmedSetup, type ConfirmedFieldInput } from '../onboarding.js';
 import type { EntityKeyRule } from '../entity-key.js';
-import { checkAndIncrementRateLimit, dailyWindowKey } from '../rate-limit.js';
+import { checkAndIncrementRateLimit, dailyWindowKey, hourlyWindowKey } from '../rate-limit.js';
 import { recordVerifyResult } from '../scheduler.js';
 import { issueDeliveryToken, rotateDeliveryToken } from '../delivery.js';
+import { recordIngestTokenReveal, revealDeliveryToken } from '../ingest-token-reveal.js';
 import { DeliveryStore } from '../delivery-store.js';
 import { RecoveryStateStore, RepairReceiptStore } from '../recovery/store.js';
 import {
@@ -32,6 +33,7 @@ import {
   webhookUrl,
   MAX_CANARY_INPUTS,
   PROBE_LIMIT_PER_DAY,
+  REVEAL_LIMIT_PER_HOUR,
   type RouteContext,
   type TenantRow,
 } from './context.js';
@@ -257,7 +259,7 @@ export async function handleSessionRoutes(ctx: RouteContext, session: Session, t
         { outputSchema, entityKey: null, entityKeyRule: null },
         { scheduledByPolygraph: false }
       );
-      const issued = issueDeliveryToken(deps.writer, session.tenantId, collectorId, nowFn());
+      const issued = issueDeliveryToken(deps.writer, session.tenantId, collectorId, nowFn(), deps.masterKey);
       // Every connected collector starts monitored: WAITING_BASELINE with the
       // switch on. Created here rather than lazily on first delivery so the
       // workspace can show the collector — and its auto-heal opt-out — the
@@ -596,6 +598,42 @@ export async function handleSessionRoutes(ctx: RouteContext, session: Session, t
     return;
   }
 
+  const revealMatch = /^\/api\/recovery\/collectors\/([^/]+)\/ingest-token\/reveal$/.exec(path);
+  if (method === 'POST' && revealMatch) {
+    // POST, not GET, and CSRF-checked: this hands back a live ingress
+    // capability, so it must not be reachable by a cross-site form, a
+    // prefetch, an <img> tag, or anything else that can issue a GET. It is
+    // also never cached and never logged — only the fact of the reveal is
+    // (`ops_log`), never the URL.
+    if (!requireCsrf(req, res, deps.publicOrigin)) return;
+    const collectorId = decodeURIComponent(revealMatch[1]);
+    const scope = scopeFor(deps.writer, session.tenantId, tenantRowWriter.genesis_hash);
+    if (!scope.collectors.get(collectorId)) {
+      sendJson(res, 404, { error: 'no such collector' });
+      return;
+    }
+    const now = nowFn();
+    // 30 reveals per hour per tenant. A human reading a URL off a card needs
+    // a handful; a script harvesting every collector's capability needs many,
+    // and a leaked session cookie is exactly the case this bounds.
+    const { bucket, windowStart } = hourlyWindowKey(`ingest-token-reveal:${session.tenantId}`, now);
+    const limited = checkAndIncrementRateLimit(deps.writer, bucket, windowStart, REVEAL_LIMIT_PER_HOUR);
+    if (!limited.allowed) {
+      sendJson(res, 429, { error: 'too many webhook URL reveals — try again later' });
+      return;
+    }
+    const revealed = revealDeliveryToken(deps.writer, session.tenantId, collectorId, deps.masterKey);
+    recordIngestTokenReveal(deps.writer, session.tenantId, collectorId, revealed.ok ? 'REVEALED' : revealed.reason, now);
+    if (!revealed.ok) {
+      // A collector with no revealable token and one with no token at all are
+      // the same answer to the operator: rotate to get a URL.
+      sendJson(res, 200, { webhook_url: null, reason: 'NOT_REVEALABLE' });
+      return;
+    }
+    sendJson(res, 200, { webhook_url: webhookUrl(deps.publicOrigin, revealed.token.reveal()) });
+    return;
+  }
+
   const rotateMatch = /^\/api\/recovery\/collectors\/([^/]+)\/ingest-token\/rotate$/.exec(path);
   if (method === 'POST' && rotateMatch) {
     if (!requireCsrf(req, res, deps.publicOrigin)) return;
@@ -605,7 +643,7 @@ export async function handleSessionRoutes(ctx: RouteContext, session: Session, t
       sendJson(res, 404, { error: 'no such collector' });
       return;
     }
-    const issued = rotateDeliveryToken(deps.writer, session.tenantId, collectorId, nowFn());
+    const issued = rotateDeliveryToken(deps.writer, session.tenantId, collectorId, nowFn(), deps.masterKey);
     // The second and last response in the system that carries a plaintext
     // capability (connect is the first). It is never readable again.
     sendJson(res, 200, { webhook_url: webhookUrl(deps.publicOrigin, issued.token) });
