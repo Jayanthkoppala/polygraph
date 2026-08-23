@@ -84,6 +84,7 @@ import {
   type PollOptions,
   type RefactorProgress,
   isAwaitingApproval,
+  isHealUnfulfilled,
 } from './client.js';
 import type { Collector, Policy } from '../core/config.js';
 import { evaluateCollector, type RunnerContext } from '../loop/runner.js';
@@ -197,6 +198,11 @@ export async function healOwnedFixture(
   let progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts);
   if (!isAwaitingApproval(progress)) {
     throw new BrightDataError(`owned fixture heal did not stop at the required approval gate (status "${progress.status}")`);
+  }
+  if (progress.success !== true) {
+    await options.client.resumeAutomationJob(collectorId, { message: false, autoSave: false });
+    const reason = isHealUnfulfilled(progress) ? 'Bright Data reported success:false' : 'Bright Data omitted success';
+    throw new BrightDataError(`owned fixture heal rejected before approval: ${reason}; explicit success:true is required`);
   }
   const invalidPreview = previewContractError(progress, options.previewContract);
   if (invalidPreview) {

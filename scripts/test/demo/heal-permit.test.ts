@@ -33,7 +33,7 @@ describe('owned fixture heal permit', () => {
     const client: Pick<BrightDataClient, 'refactorTemplate' | 'pollRefactorTemplateProgress' | 'resumeAutomationJob'> = {
       refactorTemplate: vi.fn(async (...args: unknown[]) => { calls.push(args); return {}; }) as BrightDataClient['refactorTemplate'],
       pollRefactorTemplateProgress: vi.fn(async () => (++polls === 1
-        ? { status: 'pending_answer', id: 'heal-1', preview_result: [{ product_code: 'SKU-1', title: 'Aster', price: { value: 51.77, currency: 'GBP' }, availability: 'In stock' }] }
+        ? { status: 'pending_answer', id: 'heal-1', success: true, preview_result: [{ product_code: 'SKU-1', title: 'Aster', price: { value: 51.77, currency: 'GBP' }, availability: 'In stock' }] }
         : { status: 'done', id: 'heal-1', completed_steps: ['user_approval', 'save_new_template'] })) as BrightDataClient['pollRefactorTemplateProgress'],
       resumeAutomationJob: vi.fn(async () => undefined),
     };
@@ -47,10 +47,32 @@ describe('owned fixture heal permit', () => {
     expect(client.resumeAutomationJob).toHaveBeenCalledWith(collectorId, { message: true, autoSave: true });
   });
 
+  it.each([
+    ['reports success false', false],
+    ['omits success', undefined],
+  ])('rejects an exact preview when Bright Data %s', async (_label, success) => {
+    const client: Pick<BrightDataClient, 'refactorTemplate' | 'pollRefactorTemplateProgress' | 'resumeAutomationJob'> = {
+      refactorTemplate: vi.fn(async () => ({})) as BrightDataClient['refactorTemplate'],
+      pollRefactorTemplateProgress: vi.fn(async () => ({
+        status: 'pending_answer',
+        id: 'heal-1',
+        ...(success === undefined ? {} : { success }),
+        preview_result: [{ product_code: 'SKU-1', title: 'Aster', price: { value: 51.77, currency: 'GBP', symbol: '£' }, availability: 'In stock' }],
+      })) as BrightDataClient['pollRefactorTemplateProgress'],
+      resumeAutomationJob: vi.fn(async () => undefined),
+    };
+    const permit = mintOwnedFixtureHealPermit(collectorId, fixtureUrl, policy);
+    const previewContract = { productCode: 'SKU-1', title: 'Aster', price: { value: 51.77, currency: 'GBP', symbol: '£' }, availability: 'In stock' };
+
+    await expect(healOwnedFixture('price moved', { client, policy, permit, previewContract, poll: { intervalMs: 1, deadlineMs: 10 } })).rejects.toThrow(/explicit success:true/i);
+    expect(client.resumeAutomationJob).toHaveBeenCalledWith(collectorId, { message: false, autoSave: false });
+    expect(client.resumeAutomationJob).not.toHaveBeenCalledWith(collectorId, { message: true, autoSave: true });
+  });
+
   it('rejects an invalid preview rather than auto-approving the fixture repair', async () => {
     const client: Pick<BrightDataClient, 'refactorTemplate' | 'pollRefactorTemplateProgress' | 'resumeAutomationJob'> = {
       refactorTemplate: vi.fn(async () => ({})) as BrightDataClient['refactorTemplate'],
-      pollRefactorTemplateProgress: vi.fn(async () => ({ status: 'pending_answer', id: 'heal-1', preview_result: [{ product_code: 'WRONG', title: 'Aster', price: { value: 51.77, currency: 'GBP', symbol: '£' }, availability: 'In stock' }] })) as BrightDataClient['pollRefactorTemplateProgress'],
+      pollRefactorTemplateProgress: vi.fn(async () => ({ status: 'pending_answer', id: 'heal-1', success: true, preview_result: [{ product_code: 'WRONG', title: 'Aster', price: { value: 51.77, currency: 'GBP', symbol: '£' }, availability: 'In stock' }] })) as BrightDataClient['pollRefactorTemplateProgress'],
       resumeAutomationJob: vi.fn(async () => undefined),
     };
     const permit = mintOwnedFixtureHealPermit(collectorId, fixtureUrl, policy);
@@ -66,7 +88,7 @@ describe('owned fixture heal permit', () => {
     const client: Pick<BrightDataClient, 'refactorTemplate' | 'pollRefactorTemplateProgress' | 'resumeAutomationJob'> = {
       refactorTemplate: vi.fn(async () => ({})) as BrightDataClient['refactorTemplate'],
       pollRefactorTemplateProgress: vi.fn(async () => (++polls === 1
-        ? { status: 'pending_answer', preview_result: [{ product_code: 'SKU-1', title: 'Aster', price: { value: 51.77, currency: 'GBP', symbol: '£' }, availability: 'In stock' }] }
+        ? { status: 'pending_answer', success: true, preview_result: [{ product_code: 'SKU-1', title: 'Aster', price: { value: 51.77, currency: 'GBP', symbol: '£' }, availability: 'In stock' }] }
         : { status: 'done', completed_steps: ['user_approval'] })) as BrightDataClient['pollRefactorTemplateProgress'],
       resumeAutomationJob: vi.fn(async () => undefined),
     };
@@ -81,7 +103,7 @@ describe('owned fixture heal permit', () => {
     const client: Pick<BrightDataClient, 'refactorTemplate' | 'pollRefactorTemplateProgress' | 'resumeAutomationJob'> = {
       refactorTemplate: vi.fn(async () => ({})) as BrightDataClient['refactorTemplate'],
       pollRefactorTemplateProgress: vi.fn(async () => (++polls === 1
-        ? { status: 'pending_answer', preview_result: [{ product_code: 'SKU-1', title: 'Aster', price: { value: 51.77, currency: 'GBP', symbol: '£' }, availability: 'In stock' }] }
+        ? { status: 'pending_answer', success: true, preview_result: [{ product_code: 'SKU-1', title: 'Aster', price: { value: 51.77, currency: 'GBP', symbol: '£' }, availability: 'In stock' }] }
         : { status: 'done' })) as BrightDataClient['pollRefactorTemplateProgress'],
       resumeAutomationJob: vi.fn(async () => undefined),
     };
