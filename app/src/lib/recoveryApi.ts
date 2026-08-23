@@ -40,6 +40,15 @@ export interface DeliveryPreviewRow {
 
 /** One row of `GET /api/recovery/deliveries`. Never carries the raw verification
  *  input or a decrypted secret — `preview` is the server's own redacted rows. */
+function asErrorCodes(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, number> = {};
+  for (const [code, n] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof n === 'number') out[code] = n;
+  }
+  return out;
+}
+
 export interface RecoveryDelivery {
   id: string | number;
   receivedAt: string;
@@ -49,6 +58,10 @@ export interface RecoveryDelivery {
   verdict: string | null;
   cause: string | null;
   isBaseline: boolean;
+  /** Bright Data error records partitioned out of the payload at ingest. */
+  errorCount: number;
+  /** `error_code` → count (at most 20 codes). */
+  errorCodes: Record<string, number>;
   preview: DeliveryPreviewRow[];
 }
 
@@ -182,6 +195,8 @@ export async function fetchRecoveryDeliveries(
       verdict: asString(rec.verdict),
       cause: asString(rec.cause),
       isBaseline: asBool(rec.is_baseline, false),
+      errorCount: typeof rec.error_count === 'number' ? rec.error_count : 0,
+      errorCodes: asErrorCodes(rec.error_codes),
       preview: asPreviewRows(rec.preview),
     });
   }

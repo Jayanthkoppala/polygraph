@@ -49,6 +49,15 @@ export interface AcceptedDelivery {
   isBaseline?: boolean;
   /** Set on a `verification` delivery to tie it to the cycle that produced it. */
   cycleId?: string;
+  /** M016: Bright Data error records partitioned out of the payload
+   * (delivery-partition.ts). `rows` above is the DATA rows only. */
+  errorCount?: number;
+  /** `error_code` → count, at most `ERROR_CODES_MAX` codes. */
+  errorCodes?: Record<string, number>;
+  /** Fallback reusable run input when no data row carries one — the
+   * `input` of an error record, so a delivery made only of structural
+   * failures can still be verified after a repair. */
+  fallbackInput?: Record<string, unknown>;
 }
 
 export interface StoredDelivery {
@@ -77,6 +86,9 @@ export interface DeliveryRow {
   cycle_id: string | null;
   input_status: VerificationInputStatus;
   input_sha256: string | null;
+  /** M016; NULL on deliveries recorded before error records were partitioned. */
+  error_count: number | null;
+  error_codes_json: string | null;
 }
 
 interface ExistingDelivery {
@@ -253,7 +265,7 @@ export class DeliveryStore {
     const history = rowsForHistory(delivery.rows);
     const rowsJson = canonicalJson(history);
     const previewJson = canonicalJson(redactedPreview(history));
-    const input = extractReusableVerificationInput(delivery.rows);
+    const input = extractReusableVerificationInput(delivery.rows) ?? delivery.fallbackInput;
     const inputJson = input ? canonicalJson(input) : undefined;
     const inputHash = inputJson ? sha256(inputJson) : undefined;
     const inputStatus: VerificationInputStatus = inputJson ? 'captured' : 'unavailable';
@@ -266,8 +278,8 @@ export class DeliveryStore {
           `INSERT INTO collector_deliveries
             (id, tenant_id, collector_id, source, provider_run_id, dedupe_key, received_at,
              payload_sha256, row_count, rows_json, rows_preview_json, verdict, cause,
-             is_baseline, cycle_id, input_status, input_sha256)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             is_baseline, cycle_id, input_status, input_sha256, error_count, error_codes_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(tenant_id, collector_id, dedupe_key) DO NOTHING`
         )
         .run(
@@ -287,7 +299,9 @@ export class DeliveryStore {
           delivery.isBaseline ? 1 : 0,
           delivery.cycleId ?? null,
           inputStatus,
-          inputHash ?? null
+          inputHash ?? null,
+          delivery.errorCount ?? 0,
+          canonicalJson(delivery.errorCodes ?? {})
         );
 
       if (inserted.changes === 0) {

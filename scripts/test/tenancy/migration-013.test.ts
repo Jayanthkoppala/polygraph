@@ -133,7 +133,7 @@ describe('M013 — delivery + recovery schema', () => {
     const versions = db.prepare(`SELECT COUNT(*) AS n FROM schema_migrations`).get() as {
       n: number;
     };
-    expect(versions.n).toBe(15);
+    expect(versions.n).toBe(16);
     db.close();
   });
 

@@ -6,6 +6,7 @@ import { LOCAL_TENANT_ID } from './genesis.js';
 import { up013DeliveryRecovery } from './migrations/013-delivery-recovery.js';
 import { up014RecoveryCycleMode } from './migrations/014-recovery-cycle-mode.js';
 import { up015IngestTokenReveal } from './migrations/015-ingest-token-reveal.js';
+import { up016DeliveryErrorRecords } from './migrations/016-delivery-error-records.js';
 
 /**
  * The migration runner, per tenant-architecture.md §8. Idempotent and
@@ -493,6 +494,11 @@ const MIGRATIONS: Migration[] = [
   // TABLE ADD COLUMNs, all nullable: pre-M015 tokens were only ever hashed
   // and stay unrevealable. Defined in ./migrations/.
   { version: 15, destructive: false, up: up015IngestTokenReveal },
+  // M016 — `collector_deliveries.error_count` / `error_codes_json`: counts of
+  // Bright Data error records partitioned out of a mixed delivery. Two
+  // guarded ALTER TABLE ADD COLUMNs, nullable, no backfill. Defined in
+  // ./migrations/.
+  { version: 16, destructive: false, up: up016DeliveryErrorRecords },
 ];
 
 /** One consistent snapshot before the first destructive step. VACUUM INTO

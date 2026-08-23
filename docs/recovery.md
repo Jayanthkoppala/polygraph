@@ -76,6 +76,56 @@ While a cycle is active, further webhook deliveries are recorded but never
 open a second cycle (database-enforced: one non-terminal cycle per collector,
 one cycle per incident delivery).
 
+## Error records
+
+**Recommended Bright Data delivery setting: "Results and errors together in
+one file".** With that setting a delivery is one JSON array in which each
+input that failed is an *error record*: the same shape as a data row (the
+dataset's output schema lists `error`, `error_code`, `status_code`,
+`warning`, `warning_code` as fields), with a non-empty `error_code` (or
+`error`) and the data fields null or absent. Delivered separately, those
+records never reach Polygraph and a blocked or dead target looks like a
+merely short delivery.
+
+Ingest partitions the array before anything else
+(`src/tenancy/delivery-partition.ts`):
+
+- **Error records** — any row with a non-empty `error_code` or `error`.
+  Only `input`, `error`, `error_code`, `status_code`, `warning`,
+  `warning_code` are read from them; they are never stored as rows, never
+  appear in the preview, and never count toward `row_count`.
+- **Data rows** — everything else, with Bright Data's wrapper metadata
+  stripped as before (a field name the collector's own schema declares is
+  kept). A data row that merely carries `error: null` is a data row.
+
+The delivery keeps `error_count` and `error_codes_json` (`code → count`, at
+most 20 codes; M016). `GET /api/recovery/deliveries` returns them as
+`error_count` and `error_codes`; the Accepted results table shows them in an
+"Errors" column ("2 · crawl_error", every code in the tooltip). The preview
+stays data rows only.
+
+Grading sees the codes the way a CLI run sees hp_errors — `RunResult.errors`,
+classified by `src/core/classifier.ts` and folded into the cause by
+`deriveCause` — with one tolerance a CLI run gets from its retry loop and a
+webhook cannot: transient codes (`retryable_transient`, e.g. `crawl_error`,
+`timeout`) are left out of grading while they are fewer than the data rows,
+so 58 good rows plus 2 transient failures still PASS. Once error records are
+at least as numerous as data rows they all count, so a majority-error
+delivery never passes and never becomes a baseline. Block codes (`blocked`,
+`detect_block`, `brul`) always count and yield cause `BLOCKED`, which policy
+turns into `HELD/BLOCKED` with no cycle. Terminal/structural codes
+(`dead_page`, `parse_error`, …) always count and yield cause `STRUCTURAL`;
+a delivery made only of them has no data row to measure, so policy treats
+every baseline field as missing (baseline mode) or the delivery as
+structurally empty (bootstrap mode) and the cycle is eligible like any other
+structural incident.
+
+Policy evidence (`policy_evidence_json`) records `error_summary`
+(`{ count, codes }`, counts only — never a message or an input). When the
+incident carries structural codes, the heal prompt gets one hint line of at
+most 120 characters listing them with counts (`Provider error codes:
+dead_page×58, parse_error×2`); transient codes never reach the prompt.
+
 ## Bootstrap repair
 
 A collector that has **never** been healthy has no baseline delivery, so the

@@ -26,6 +26,23 @@ export function repairModeLabel(repair: RecoveryRepair): string {
   return repair.mode === 'bootstrap' ? 'First working version' : 'Field repair';
 }
 
+/** "2 · crawl_error" — the count and the most frequent code; every code with
+ * its count goes in the cell's tooltip. `errorCodes` is already counts only,
+ * so nothing here can leak a message or an input. */
+export function errorSummaryLabel(delivery: Pick<RecoveryDelivery, 'errorCount' | 'errorCodes'>): {
+  label: string;
+  title: string;
+} | null {
+  if (!delivery.errorCount) return null;
+  const codes = Object.entries(delivery.errorCodes).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const top = codes[0]?.[0];
+  const label = top ? `${delivery.errorCount} · ${top}` : String(delivery.errorCount);
+  const title = codes.length > 0
+    ? codes.map(([code, n]) => `${code} × ${n}`).join('\n')
+    : `${delivery.errorCount} error record(s)`;
+  return { label, title };
+}
+
 export function isVerifiedReceipt(repair: RecoveryRepair): boolean {
   return repair.status === undefined || repair.status.toUpperCase() === 'VERIFIED';
 }
@@ -144,6 +161,7 @@ export function AcceptedResultsTable({
                 <TableHead className="pl-4">Received</TableHead>
                 <TableHead>Run</TableHead>
                 <TableHead>Rows</TableHead>
+                <TableHead>Errors</TableHead>
                 <TableHead>Verdict</TableHead>
                 <TableHead className="pr-4">Baseline</TableHead>
               </TableRow>
@@ -159,6 +177,18 @@ export function AcceptedResultsTable({
                     {delivery.providerRunId ?? compactHash(String(delivery.id))}
                   </TableCell>
                   <TableCell className="font-mono text-xs tabular-nums">{delivery.rowCount ?? '—'}</TableCell>
+                  <TableCell className="font-mono text-xs tabular-nums">
+                    {(() => {
+                      const summary = errorSummaryLabel(delivery);
+                      return summary ? (
+                        <span className="text-amber-200" title={summary.title}>
+                          {summary.label}
+                        </span>
+                      ) : (
+                        <span className="text-[#71717A]">—</span>
+                      );
+                    })()}
+                  </TableCell>
                   <TableCell className="text-xs">
                     <span className="font-mono">{delivery.verdict ?? '—'}</span>
                     {delivery.cause && <span className="ml-1 text-[#71717A]">({delivery.cause})</span>}

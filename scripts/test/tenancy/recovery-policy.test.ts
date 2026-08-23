@@ -5,6 +5,8 @@ import {
   evaluateRecoveryEligibility,
   judgeBootstrap,
   judgeRepair,
+  structuralErrorHint,
+  ERROR_HINT_MAX_LEN,
   type RecoveryEligibilityInput,
 } from '../../../src/tenancy/recovery/policy.js';
 import { healthyRows, SCHEMA } from './recovery-harness.js';
@@ -339,5 +341,67 @@ describe('evaluateRecoveryEligibility — bootstrap repair (no baseline)', () =>
     expect(r.detail).toMatch(/price=70%/);
     expect(judgeBootstrap(SCHEMA, []).ok).toBe(false);
     expect(judgeBootstrap({ fields: { sku: { type: 'text' } } }, healthyRows()).ok).toBe(false);
+  });
+});
+
+
+describe('error records as policy evidence', () => {
+  const errs = (code: string, n: number) =>
+    Array.from({ length: n }, (_, i) => ({ input: { url: `https://shop.example/p/${i}` }, error_code: code, message: `failed ${code}` }));
+
+  it('error_summary carries codes and counts only, for every code including transient ones', () => {
+    const result = evaluateRecoveryEligibility(
+      baseInput({ incident: { ...baseInput().incident, errors: [...errs('crawl_error', 2), ...errs('dead_page', 1)] } })
+    );
+    expect(result.evidence.error_summary).toEqual({ count: 3, codes: { crawl_error: 2, dead_page: 1 } });
+    expect(result.evidence.error_codes).toEqual(['crawl_error', 'dead_page']);
+    expect(JSON.stringify(result.evidence)).not.toMatch(/failed |shop\.example/);
+  });
+
+  it('the heal prompt hint names structural codes only, under 120 characters', () => {
+    expect(structuralErrorHint(undefined)).toBe('');
+    expect(structuralErrorHint(errs('crawl_error', 5))).toBe('');
+    expect(structuralErrorHint([...errs('dead_page', 3), ...errs('parse_error', 1), ...errs('timeout', 9)])).toBe(
+      'Provider error codes: dead_page×3, parse_error×1'
+    );
+    const many = ['dead_page', 'bad_input', 'parse_error', 'too_many_pages', 'job_run_timeout', 'deadline_timeout', 'uncrawled_page', 'page_too_big', 'parse_req_error', 'parse_mem_limit_exceeded'].flatMap((c) => errs(c, 1));
+    const hint = structuralErrorHint(many);
+    expect(hint.length).toBeLessThanOrEqual(ERROR_HINT_MAX_LEN);
+    expect(hint).toMatch(/^Provider error codes: /);
+  });
+
+  it('a baseline incident made only of structural error records is eligible with every baseline field regressed', () => {
+    const result = evaluateRecoveryEligibility(
+      baseInput({ incident: { rows: [], errors: errs('dead_page', 4), verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL', evidence: structuralEvidence() } })
+    );
+    expect(result.eligible).toBe(true);
+    expect(result.evidence.regressed_fields).toEqual(['sku', 'title', 'price']);
+    expect(result.evidence.heal_prompt).toMatch(/\nProvider error codes: dead_page×4$/);
+  });
+
+  it('an empty delivery with only transient error records stays EMPTY_DELIVERY', () => {
+    const result = evaluateRecoveryEligibility(
+      baseInput({ incident: { rows: [], errors: errs('timeout', 4), verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL', evidence: structuralEvidence() } })
+    );
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('EMPTY_DELIVERY');
+  });
+
+  it('bootstrap: structural error records count toward the minimum and make the delivery structurally empty', () => {
+    const bootstrap = (errors: ReturnType<typeof errs>) =>
+      evaluateRecoveryEligibility(
+        baseInput({
+          hasBaseline: false,
+          baselineRows: undefined,
+          collectorName: 'Shop',
+          incident: { rows: [], errors, verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL', evidence: structuralEvidence() },
+        })
+      );
+    expect(bootstrap(errs('dead_page', 4))).toMatchObject({ eligible: false, reason: 'NO_BASELINE' });
+    const ok = bootstrap(errs('dead_page', 5));
+    expect(ok.eligible).toBe(true);
+    expect(ok.evidence.mode).toBe('bootstrap');
+    expect(ok.evidence.heal_prompt).toMatch(/Provider error codes: dead_page×5/);
+    expect(bootstrap(errs('timeout', 9))).toMatchObject({ eligible: false, reason: 'NO_BASELINE' });
   });
 });

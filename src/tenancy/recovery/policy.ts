@@ -18,7 +18,7 @@
  * field that fell from 95% to 60% fill (a damaged retained field, which must
  * NOT be auto-repaired) from one that fell to 0% (missing, which may).
  */
-import { ANTI_BOT_BLOCK_CODES } from '../../core/classifier.js';
+import { ANTI_BOT_BLOCK_CODES, classifyErrorCode } from '../../core/classifier.js';
 import type { Policy } from '../../core/config.js';
 import type { Cause, Evidence, OutputSchema, RunError } from '../../core/types.js';
 import { composeBootstrapHealPrompt, composeHealPrompt, type GovernorGate } from '../../loop/policy.js';
@@ -114,6 +114,9 @@ export interface RecoveryPolicyEvidence {
   damaged_retained_fields: string[];
   fields: FieldDiagnosis[];
   error_codes: string[];
+  /** Bright Data error records partitioned out of the delivery: how many,
+   * and `error_code` → count. Codes and counts only, never a value. */
+  error_summary: ErrorSummary;
   identity_ok: boolean;
   governor: GovernorGate;
   heal_prompt?: string;
@@ -121,6 +124,11 @@ export interface RecoveryPolicyEvidence {
   mode?: RecoveryMode;
   /** Bootstrap only: the declared schema the repair is aimed at. */
   schema_fields?: Array<{ field: string; type: string; required: boolean }>;
+}
+
+export interface ErrorSummary {
+  count: number;
+  codes: Record<string, number>;
 }
 
 export interface RecoveryEligibilityInput {
@@ -280,6 +288,50 @@ function blockingErrorCodes(errors: RunError[] | undefined): string[] {
     .filter((code) => ANTI_BOT_BLOCK_CODES.has(code) || BLOCK_CODE_PATTERN.test(code));
 }
 
+/** Codes the classifier calls terminal/structural — the target, input or
+ * template is broken, so a delivery made only of these is a structural
+ * incident even though it carries no data row to diagnose. */
+function structuralErrorCodes(errors: RunError[] | undefined): string[] {
+  return Array.from(
+    new Set((errors ?? []).map((e) => e.error_code).filter((code) => classifyErrorCode(code).class === 'terminal_structural'))
+  ).sort();
+}
+
+function summarizeErrors(errors: RunError[] | undefined): ErrorSummary {
+  const codes: Record<string, number> = {};
+  for (const e of errors ?? []) codes[e.error_code] = (codes[e.error_code] ?? 0) + 1;
+  return { count: (errors ?? []).length, codes };
+}
+
+/** One hint line for the heal prompt, listing ONLY structural codes with
+ * their counts (never transient noise, never a message or input), capped at
+ * `ERROR_HINT_MAX_LEN` characters. Empty when there is nothing structural. */
+export const ERROR_HINT_MAX_LEN = 120;
+export function structuralErrorHint(errors: RunError[] | undefined): string {
+  const structural = structuralErrorCodes(errors);
+  if (structural.length === 0) return '';
+  const summary = summarizeErrors(errors);
+  const parts = structural
+    .sort((a, b) => summary.codes[b] - summary.codes[a] || a.localeCompare(b))
+    .map((code) => `${code}×${summary.codes[code]}`);
+  let hint = `Provider error codes: ${parts.join(', ')}`;
+  while (hint.length > ERROR_HINT_MAX_LEN && parts.length > 1) {
+    parts.pop();
+    hint = `Provider error codes: ${parts.join(', ')}, …`;
+  }
+  return hint.length > ERROR_HINT_MAX_LEN ? `${hint.slice(0, ERROR_HINT_MAX_LEN - 1)}…` : hint;
+}
+
+/** Appends the structural-code hint to a composed heal prompt when it fits
+ * under the prompt's own 1000-character ceiling (loop/policy.ts). */
+const HEAL_PROMPT_CEILING = 1000;
+function withErrorHint(prompt: string, errors: RunError[] | undefined): string {
+  const hint = structuralErrorHint(errors);
+  if (!hint) return prompt;
+  const joined = `${prompt}\n${hint}`;
+  return joined.length <= HEAL_PROMPT_CEILING ? joined : prompt;
+}
+
 function hasBlockEvidence(evidence: Evidence[]): boolean {
   return evidence.some((e) => !e.ok && /captcha|login|blocked|access denied|compliance/i.test(e.detail));
 }
@@ -384,14 +436,20 @@ function evaluateBootstrap(
   if (incident.cause === 'IDENTITY' || (identity !== undefined && !idOk)) {
     return no('IDENTITY_UNSTABLE', 'rows do not match the requested entity; a repair could not be verified');
   }
-  if (incident.rows.length < BOOTSTRAP_MIN_ROWS) {
+  // A delivery made only of terminal/structural error records has no data
+  // row to measure fill on, but the provider has already said why: every
+  // input failed structurally. That is the "returns nothing" shape too.
+  const structuralCodes = structuralErrorCodes(incident.errors);
+  const structuralOnly = incident.rows.length === 0 && structuralCodes.length > 0;
+  const recordCount = incident.rows.length + (structuralOnly ? (incident.errors?.length ?? 0) : 0);
+  if (recordCount < BOOTSTRAP_MIN_ROWS) {
     return no(
       'NO_BASELINE',
-      `no healthy baseline and only ${incident.rows.length} row(s); bootstrap needs at least ${BOOTSTRAP_MIN_ROWS}`
+      `no healthy baseline and only ${recordCount} row(s); bootstrap needs at least ${BOOTSTRAP_MIN_ROWS}`
     );
   }
   if (incident.verdict === 'PASS') return no('HEALTHY', 'delivery passed every check');
-  if (!isStructurallyEmpty(input.schema, incident.rows)) {
+  if (!structuralOnly && !isStructurallyEmpty(input.schema, incident.rows)) {
     return no('NO_BASELINE', 'no healthy baseline and the delivery is partially filled; a real baseline is needed');
   }
   if (!input.governor.allowed) {
@@ -409,15 +467,20 @@ function evaluateBootstrap(
   evidence.regressed_fields = required;
   evidence.retained_fields = [];
   evidence.damaged_retained_fields = [];
-  evidence.heal_prompt = composeBootstrapHealPrompt({
-    fields: schemaFields.map((f) => ({ name: f.field, type: f.type, required: f.required })),
-    entity: input.collectorName?.trim() || 'entity',
-    entityKey: input.entityKey ?? 'the entity key',
-  });
+  evidence.heal_prompt = withErrorHint(
+    composeBootstrapHealPrompt({
+      fields: schemaFields.map((f) => ({ name: f.field, type: f.type, required: f.required })),
+      entity: input.collectorName?.trim() || 'entity',
+      entityKey: input.entityKey ?? 'the entity key',
+    }),
+    incident.errors
+  );
   return {
     eligible: true,
     reason: 'ELIGIBLE',
-    detail: `bootstrap: no healthy baseline; every required field (${required.join(', ')}) is empty against the declared schema`,
+    detail: structuralOnly
+      ? `bootstrap: no healthy baseline; every record is a structural provider error (${structuralCodes.join(', ')})`
+      : `bootstrap: no healthy baseline; every required field (${required.join(', ')}) is empty against the declared schema`,
     evidence,
   };
 }
@@ -451,6 +514,7 @@ export function evaluateRecoveryEligibility(input: RecoveryEligibilityInput): Re
     damaged_retained_fields: damaged,
     fields: diagnosis,
     error_codes: errorCodes,
+    error_summary: summarizeErrors(incident.errors),
     identity_ok: idOk,
     governor: input.governor,
   };
@@ -484,7 +548,11 @@ export function evaluateRecoveryEligibility(input: RecoveryEligibilityInput): Re
   if (incident.cause === 'IDENTITY' || !idOk) {
     return no('IDENTITY_UNSTABLE', 'rows do not match the requested entity; a repair could not be verified');
   }
-  if (incident.rows.length === 0) {
+  // No data rows is ambiguous (no rows vs. expired snapshot) — unless the
+  // provider's own error records say every input failed structurally, in
+  // which case the whole baseline is "missing" and the diagnosis below
+  // reports exactly that.
+  if (incident.rows.length === 0 && structuralErrorCodes(incident.errors).length === 0) {
     return no('EMPTY_DELIVERY', 'empty delivery is ambiguous (no rows vs. expired snapshot)');
   }
   if (!input.schema) return no('NO_SCHEMA', 'collector has no declared output schema');
@@ -520,13 +588,16 @@ export function evaluateRecoveryEligibility(input: RecoveryEligibilityInput): Re
     : worst.some((d) => d.regression === 'missing')
       ? 'nothing'
       : 'empty or default values';
-  evidence.heal_prompt = composeHealPrompt({
-    fields: regressed,
-    symptom,
-    failRate,
-    date: input.now.slice(0, 10),
-    entityKey: input.entityKey ?? 'the entity key',
-  });
+  evidence.heal_prompt = withErrorHint(
+    composeHealPrompt({
+      fields: regressed,
+      symptom,
+      failRate,
+      date: input.now.slice(0, 10),
+      entityKey: input.entityKey ?? 'the entity key',
+    }),
+    incident.errors
+  );
 
   return {
     eligible: true,

@@ -341,6 +341,128 @@ describe('recordDeliveredRows — recovery path', () => {
     expect(h.state()!.active_cycle_id).toBeNull();
   });
 
+
+  // -- error records (docs/recovery.md, "Error records") ---------------------
+
+  const ERROR_RECORD = (code: string, i: number) => ({
+    input: { url: `https://shop.example/p/SKU-${i}` },
+    sku: null,
+    title: null,
+    price: null,
+    error: `failed: ${code}`,
+    error_code: code,
+    status_code: code === 'blocked' ? 403 : 500,
+    warning: null,
+    warning_code: null,
+  });
+  const ERRORS = (code: string, count: number, offset = 100) =>
+    Array.from({ length: count }, (_, i) => ERROR_RECORD(code, offset + i));
+
+  it('error records: a healthy majority with a few transient error records still PASSes and becomes the baseline, with the codes stored', async () => {
+    const r = await h.ingest([...healthyRows(58), ...ERRORS('crawl_error', 2)]);
+    expect(r.verdict).toBe('PASS');
+    expect(r.rowCount).toBe(58);
+    expect(r.errorCount).toBe(2);
+    expect(r.state).toBe('READY');
+    const stored = h.deliveries.findById(h.tenantId, r.deliveryId!)!;
+    expect(stored.row_count).toBe(58);
+    expect(stored.error_count).toBe(2);
+    expect(JSON.parse(stored.error_codes_json!)).toEqual({ crawl_error: 2 });
+    expect(stored.is_baseline).toBe(1);
+    // Error records never reach stored rows or the preview.
+    expect(stored.rows_json).not.toMatch(/crawl_error/);
+    expect(stored.rows_preview_json).not.toMatch(/error/);
+    expect(JSON.parse(stored.rows_json!)).toHaveLength(58);
+  });
+
+  it('error records: all `blocked` → cause BLOCKED, not PASS, collector HELD/BLOCKED with no cycle', async () => {
+    await h.ingest(healthyRows());
+    const r = await h.ingest(ERRORS('blocked', 60));
+    expect(r.cause).toBe('BLOCKED');
+    expect(r.verdict).not.toBe('PASS');
+    expect(r.rowCount).toBe(0);
+    expect(r.errorCount).toBe(60);
+    expect(r.cycleId).toBeNull();
+    expect(r.state).toBe('HELD');
+    expect(r.heldReason).toBe('BLOCKED');
+    expect(h.recovery.cycles.listForCollector(h.tenantId, h.collectorId)).toEqual([]);
+    expect(JSON.parse(h.deliveries.findById(h.tenantId, r.deliveryId!)!.error_codes_json!)).toEqual({ blocked: 60 });
+  });
+
+  it('error records: terminal/structural codes with no data rows → STRUCTURAL and an eligible baseline cycle carrying error_summary and a prompt hint', async () => {
+    await h.ingest(healthyRows());
+    const r = await h.ingest([...ERRORS('dead_page', 5), ...ERRORS('parse_error', 1, 200)]);
+    expect(r.cause).toBe('STRUCTURAL');
+    expect(r.verdict).not.toBe('PASS');
+    expect(r.cycleId).toBeTruthy();
+    expect(r.state).toBe('RECOVERING');
+    const cycle = h.recovery.cycles.get(h.tenantId, r.cycleId!)!;
+    expect(cycle.mode).toBe('baseline');
+    const evidence = JSON.parse(cycle.policy_evidence_json) as {
+      error_summary: { count: number; codes: Record<string, number> };
+      heal_prompt: string;
+      regressed_fields: string[];
+    };
+    expect(evidence.error_summary).toEqual({ count: 6, codes: { dead_page: 5, parse_error: 1 } });
+    expect(evidence.regressed_fields).toEqual(['sku', 'title', 'price']);
+    expect(evidence.heal_prompt).toMatch(/Provider error codes: dead_page×5, parse_error×1/);
+    // Redaction: no message, no input, no value.
+    expect(cycle.policy_evidence_json).not.toMatch(/shop\.example/);
+    expect(cycle.policy_evidence_json).not.toMatch(/failed:/);
+  });
+
+  it('error records: terminal/structural codes with no data rows and no baseline open a bootstrap cycle', async () => {
+    const r = await h.ingest(ERRORS('dead_page', 6));
+    expect(r.cause).toBe('STRUCTURAL');
+    expect(r.cycleId).toBeTruthy();
+    const cycle = h.recovery.cycles.get(h.tenantId, r.cycleId!)!;
+    expect(cycle.mode).toBe('bootstrap');
+    expect(cycle.baseline_delivery_id).toBeNull();
+    const evidence = JSON.parse(cycle.policy_evidence_json) as { heal_prompt: string; error_summary: { count: number } };
+    expect(evidence.error_summary.count).toBe(6);
+    expect(evidence.heal_prompt).toMatch(/returns no fields/);
+    expect(evidence.heal_prompt).toMatch(/Provider error codes: dead_page×6/);
+    // The reusable input was captured from an error record's `input`.
+    expect(h.deliveries.activeInput(h.tenantId, h.collectorId)).toBeDefined();
+  });
+
+  it('error records: transient codes never reach the heal prompt hint', async () => {
+    await h.ingest(healthyRows());
+    const broken = healthyRows().map(({ price: _p, ...row }) => row);
+    const r = await h.ingest([...broken, ...ERRORS('crawl_error', 1)]);
+    expect(r.cycleId).toBeTruthy();
+    const evidence = JSON.parse(h.recovery.cycles.get(h.tenantId, r.cycleId!)!.policy_evidence_json) as {
+      heal_prompt: string;
+      error_summary: { codes: Record<string, number> };
+    };
+    expect(evidence.error_summary.codes).toEqual({ crawl_error: 1 });
+    expect(evidence.heal_prompt).not.toMatch(/Provider error codes/);
+  });
+
+  it('error records: a majority-error delivery never PASSes and never becomes a baseline, even when every code is transient', async () => {
+    const first = await h.ingest([...healthyRows(3), ...ERRORS('timeout', 3)]);
+    expect(first.verdict).not.toBe('PASS');
+    expect(h.state()!.baseline_delivery_id).toBeNull();
+    expect(h.deliveries.baselineDelivery(h.tenantId, h.collectorId)).toBeUndefined();
+    // Against an existing baseline it does not refresh it either.
+    const healthy = await h.ingest(healthyRows());
+    expect(healthy.verdict).toBe('PASS');
+    const again = await h.ingest([...healthyRows(3), ...ERRORS('timeout', 4, 300)]);
+    expect(again.verdict).not.toBe('PASS');
+    expect(again.cycleId).toBeNull();
+    expect(h.state()!.baseline_delivery_id).toBe(healthy.deliveryId);
+  });
+
+  it('error records: a delivery that is ONLY transient error records is not an ambiguous empty delivery for the counts, but still opens no cycle', async () => {
+    await h.ingest(healthyRows());
+    const r = await h.ingest(ERRORS('timeout', 4));
+    expect(r.verdict).not.toBe('PASS');
+    expect(r.cycleId).toBeNull();
+    expect(r.errorCount).toBe(4);
+    expect(r.rowCount).toBe(0);
+    expect(h.state()!.state).toBe('READY');
+  });
+
   // -- bootstrap repair (docs/recovery.md) -----------------------------------
 
   const EMPTY = (count = 6) =>

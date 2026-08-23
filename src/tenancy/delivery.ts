@@ -5,14 +5,20 @@ import type Database from 'better-sqlite3';
 import { BrightDataClient } from '../brightdata/client.js';
 import { buildTenantContext } from '../core/config.js';
 import type { LedgerEventInput } from '../store/ledger.js';
-import { decideWithGovernor } from '../loop/policy.js';
+import { causeForErrorCode, decideWithGovernor } from '../loop/policy.js';
 import { evaluateRunResult } from '../loop/runner.js';
 import { SAFE_OUTPUT_MAX_BYTES } from '../store/safe-output.js';
 import type { Cause, Evidence, RunError, RunResult } from '../core/types.js';
 import type { Governor } from '../loop/policy.js';
 import type { TenantCollectorRow } from './scope.js';
 import { scopeFor } from './scope.js';
-import { DeliveryStore, deliveryPayloadHash, stripProviderMetadata } from './delivery-store.js';
+import { DeliveryStore, deliveryPayloadHash } from './delivery-store.js';
+import {
+  partitionDeliveryRows,
+  summarizeErrorCodes,
+  toRunErrors,
+  type DeliveryErrorRecord,
+} from './delivery-partition.js';
 import { COLLECTOR_REGISTRY } from '../evidence/extractors.js';
 import {
   ActiveCycleExistsError,
@@ -228,7 +234,10 @@ export async function readDeliveryPayload(req: IncomingMessage): Promise<Deliver
 interface DeliveryDecision {
   collectorId: string;
   runId: string;
+  /** Data rows only; error records are counted in `errorCount`. */
   rowCount: number;
+  /** Bright Data error records partitioned out of the payload. */
+  errorCount: number;
   verdict: string;
   cause: string;
   action: string;
@@ -317,17 +326,21 @@ export async function recordDeliveredRows(
   // which fields are "real".
   const gradingSchema = ctx.schemas?.[collector.id] ?? COLLECTOR_REGISTRY[collector.name]?.schema;
   const schemaFields: ReadonlySet<string> = new Set(Object.keys(gradingSchema?.fields ?? {}));
-  const rows = stripProviderMetadata(deliveredRows, schemaFields);
+  // Error records ("Results and errors together in one file") are split off
+  // BEFORE stripping, so their codes become evidence instead of empty rows.
+  const { rows, errors: errorRecords } = partitionDeliveryRows(deliveredRows, schemaFields);
+  const errorCodes = summarizeErrorCodes(errorRecords);
 
   const runId = externalRunId ?? `delivery_${randomUUID()}`;
-  const emptyError: RunError[] | undefined = rows.length === 0
+  const runErrors = gradingErrors(rows, errorRecords);
+  const emptyError: RunError[] | undefined = rows.length === 0 && runErrors.length === 0
     ? [{ input: null, error_code: 'DELIVERY_EMPTY', message: 'Bright Data delivered zero result rows' }]
     : undefined;
   const runResult: RunResult = {
     collector: target.collectorId,
     run_id: runId,
     rows,
-    ...(emptyError ? { errors: emptyError } : {}),
+    ...(runErrors.length > 0 ? { errors: runErrors } : emptyError ? { errors: emptyError } : {}),
   };
   const evaluated = await evaluateRunResult(collector, runResult, ctx, { runCanary: false });
   const decision = decideWithGovernor(evaluated.cause, evaluated.evidence, {
@@ -367,6 +380,7 @@ export async function recordDeliveredRows(
     collectorId: collector.id,
     runId,
     rowCount: rows.length,
+    errorCount: errorRecords.length,
     verdict: decision.verdict.code,
     cause: decision.verdict.cause,
     action: decision.action.type,
@@ -375,7 +389,12 @@ export async function recordDeliveredRows(
 
   if (!recoveryOptions || !recoveryEnabled) return base;
 
-  const recovery = recordForRecovery(db, target, collectorRow, rows, runResult.errors, {
+  // Policy sees EVERY error record (it reports codes + counts as evidence);
+  // only the grader applied the transient-minority tolerance above.
+  const recovery = recordForRecovery(db, target, collectorRow, rows, toRunErrors(errorRecords), {
+    errorCount: errorRecords.length,
+    errorCodes,
+    fallbackInput: errorRecordInput(errorRecords),
     verdict: decision.verdict.code,
     cause: evaluated.cause,
     evidence: decision.verdict.evidence,
@@ -385,6 +404,34 @@ export async function recordDeliveredRows(
     governor: ctx.governor,
   });
   return { ...base, ...recovery };
+}
+
+/** The first object-valued `input` among the error records — the reusable
+ * run input when the delivery has no data row to take one from. */
+function errorRecordInput(errors: DeliveryErrorRecord[]): Record<string, unknown> | undefined {
+  for (const e of errors) {
+    if (e.input !== null && !Array.isArray(e.input) && typeof e.input === 'object') {
+      return e.input as Record<string, unknown>;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Which error records the grader sees. A CLI run retries transient
+ * (`retryable_transient`) failures before grading; a webhook delivery cannot,
+ * so a FEW transient errors beside a healthy majority of data rows must not
+ * fail the contract check (which fails on any error row) and turn a good
+ * delivery into a quarantined one. Structural, block, compliance and unknown
+ * codes always reach the grader, exactly as hp_errors would. Transient codes
+ * reach it too once they are at least as numerous as the data rows: a
+ * majority-error delivery is never healthy and must never become a baseline.
+ */
+function gradingErrors(rows: Record<string, unknown>[], errors: DeliveryErrorRecord[]): RunError[] {
+  const majorityErrors = errors.length >= rows.length;
+  return toRunErrors(
+    errors.filter((e) => majorityErrors || causeForErrorCode(e.error_code) !== 'NONE')
+  );
 }
 
 /**
@@ -413,10 +460,13 @@ function recordVerificationRedelivery(
   const knownRun = existing !== undefined || recovery.cycles.hasVerificationRun(tenantId, collectorId, runIds);
   if (!knownRun) return undefined;
 
+  const partitioned = partitionDeliveryRows(rows);
   const stored = deliveries.record({
     tenantId,
     collectorId,
-    rows,
+    rows: partitioned.rows,
+    errorCount: partitioned.errors.length,
+    errorCodes: summarizeErrorCodes(partitioned.errors),
     receivedAt: nowIso,
     source: 'verification',
     ...(externalRunId ? { providerRunId: externalRunId } : {}),
@@ -431,7 +481,8 @@ function recordVerificationRedelivery(
   return {
     collectorId,
     runId: externalRunId ?? `delivery_${randomUUID()}`,
-    rowCount: rows.length,
+    rowCount: partitioned.rows.length,
+    errorCount: partitioned.errors.length,
     verdict: existing?.verdict ?? 'VERIFICATION',
     cause: existing?.cause ?? 'NONE',
     action: 'NONE',
@@ -446,6 +497,9 @@ function recordVerificationRedelivery(
 }
 
 interface RecordForRecoveryInput {
+  errorCount: number;
+  errorCodes: Record<string, number>;
+  fallbackInput: Record<string, unknown> | undefined;
   verdict: string;
   cause: Cause;
   evidence: Evidence[];
@@ -485,6 +539,9 @@ function recordForRecovery(
     tenantId,
     collectorId,
     rows,
+    errorCount: input.errorCount,
+    errorCodes: input.errorCodes,
+    ...(input.fallbackInput ? { fallbackInput: input.fallbackInput } : {}),
     receivedAt: input.nowIso,
     source: 'webhook',
     providerRunId: input.runId,

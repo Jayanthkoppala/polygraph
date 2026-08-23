@@ -75,7 +75,7 @@ describe('M014 — recovery_cycles.mode', () => {
     expect(() => migrate(db, path)).not.toThrow();
     expect(columns(db, 'recovery_cycles').filter((c) => c === 'mode')).toHaveLength(1);
     const versions = db.prepare(`SELECT COUNT(*) AS n FROM schema_migrations`).get() as { n: number };
-    expect(versions.n).toBe(15);
+    expect(versions.n).toBe(16);
     db.close();
   });
 });

@@ -227,6 +227,10 @@ export interface RecoveryDeliveryItem {
   verdict: string | null;
   cause: string | null;
   is_baseline: boolean;
+  /** M016: Bright Data error records partitioned out of the payload. 0 / {}
+   * for deliveries recorded before the columns existed. */
+  error_count: number;
+  error_codes: Record<string, number>;
   preview: unknown[];
 }
 
@@ -254,6 +258,21 @@ function pageOf<T>(rows: T[], limit: number, total: number, idOf: (row: T) => st
   // keyset predicate expects.
   const next = rows.length === limit && rows.length > 0 ? idOf(rows[rows.length - 1]) : null;
   return { items: rows, next_before: next, total };
+}
+
+function errorCodesOf(row: DeliveryRow): Record<string, number> {
+  if (!row.error_codes_json) return {};
+  try {
+    const parsed = JSON.parse(row.error_codes_json) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, number> = {};
+    for (const [code, n] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof n === 'number') out[code] = n;
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 function previewOf(row: DeliveryRow): unknown[] {
@@ -290,6 +309,8 @@ export function listRecoveryDeliveries(
     verdict: row.verdict,
     cause: row.cause,
     is_baseline: row.is_baseline === 1,
+    error_count: row.error_count ?? 0,
+    error_codes: errorCodesOf(row),
     preview: previewOf(row),
   }));
   const total = store.countDeliveries(tenantId, collectorId);

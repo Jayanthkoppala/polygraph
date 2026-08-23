@@ -372,6 +372,52 @@ describe('automatic recovery HTTP contract', () => {
     expect(page.items[0].preview).toEqual([{ sku: 'SKU-1', title: 'Coffee Grinder', price: 89 }]);
   });
 
+  it('partitions Bright Data error records at ingest and surfaces error_count / error_codes in the deliveries feed', async () => {
+    const base = await boot();
+    const account = await signIn(base, 'tenant-a');
+    const { webhookUrl } = await account.connect('c_customer');
+
+    const errorRecord = (code: string, i: number) => ({
+      input: { url: `https://shop.example/p/${i}` },
+      sku: null,
+      title: null,
+      price: null,
+      error: `request failed: ${code}`,
+      error_code: code,
+      status_code: 500,
+      warning: null,
+      warning_code: null,
+    });
+    const payload = [
+      ...Array.from({ length: 10 }, (_, i) => ({ sku: `SKU-${i}`, title: `Item ${i}`, price: 10 + i, error: null, error_code: null })),
+      errorRecord('crawl_error', 1),
+      errorRecord('crawl_error', 2),
+      errorRecord('dead_page', 3),
+    ];
+    const res = await ingest(webhookUrl, payload, 'run-errors');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ accepted: true, rows: 10, errors: 3 });
+
+    const page = (await (
+      await get(base, account.cookie, '/api/recovery/deliveries?collector_id=c_customer')
+    ).json()) as { items: Array<Record<string, unknown>> };
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({
+      provider_run_id: 'run-errors',
+      row_count: 10,
+      error_count: 3,
+      error_codes: { crawl_error: 2, dead_page: 1 },
+    });
+    // Preview stays data rows only (the null error fields are provider
+    // metadata and are stripped), and no error text leaves the server.
+    expect(page.items[0].preview).toEqual([
+      { sku: 'SKU-0', title: 'Item 0', price: 10 },
+      { sku: 'SKU-1', title: 'Item 1', price: 11 },
+      { sku: 'SKU-2', title: 'Item 2', price: 12 },
+    ]);
+    expect(JSON.stringify(page)).not.toMatch(/request failed/);
+  });
+
   // -- read model ----------------------------------------------------------
 
   /** Seeds one delivery through the same store the ingest path will use. */

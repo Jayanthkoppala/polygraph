@@ -158,6 +158,7 @@ export async function handlePublicRoutes(ctx: RouteContext): Promise<boolean> {
         collector_id: decision.collectorId,
         run_id: decision.runId,
         rows: decision.rowCount,
+        errors: decision.errorCount,
         verdict: decision.verdict,
         cause: decision.cause,
         action: decision.action,
