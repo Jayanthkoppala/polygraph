@@ -19,7 +19,10 @@ ref="${2:?usage: deploy.sh <vm> <git-ref>}"
 sha="$(git -C "$repo_root" rev-parse --short=7 "$ref")"
 image="polygraph:${sha}"
 release_dir="polygraph-releases/${sha}"
-env_file="polygraph-runtime-${vm}.env"
+env_file="${POLYGRAPH_ENV_FILE:-polygraph-runtime-${vm}.env}"
+# Extra non-secret vars appended at run time (e.g. POLYGRAPH_AUTO_RECOVERY=1).
+extra_env=""
+for kv in ${POLYGRAPH_EXTRA_ENV:-}; do extra_env="$extra_env -e $kv"; done
 
 echo "==> deploying ${ref} (${sha}) to ${vm}"
 
@@ -48,7 +51,7 @@ bash "$here/remote.sh" "$vm" exec "
     docker stop \"polygraph-pre-${sha}\" >/dev/null
   fi
   docker run -d --name polygraph --restart unless-stopped --network host \
-    --env-file ~/${env_file} -v /data:/data ${image}
+    --env-file ~/${env_file}${extra_env} -v /data:/data ${image}
 
   healthy=0
   for _ in \$(seq 1 60); do

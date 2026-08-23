@@ -239,3 +239,8 @@ Data mutation authority stay prod-only.
    monitoring product that is an outage, not a saving.
 3. **Back up `POLYGRAPH_DB`.** The ledger is the product's memory.
 4. **Rotate with `admin rekey`**, never by editing rows.
+
+### Deploy-time overrides
+
+`POLYGRAPH_ENV_FILE=<name in ~>` selects the runtime env file (default `polygraph-runtime-<vm>.env`).
+`POLYGRAPH_EXTRA_ENV="K=V K2=V2"` appends non-secret variables at `docker run` time without editing the env file, e.g. `POLYGRAPH_EXTRA_ENV="POLYGRAPH_AUTO_RECOVERY=1"`.
