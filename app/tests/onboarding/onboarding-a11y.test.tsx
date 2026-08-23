@@ -14,6 +14,7 @@ vi.mock('@/onboarding/api', async () => {
   return {
     ...actual,
     saveApiKey: vi.fn(),
+    listAvailableCollectors: vi.fn(),
     connectCollector: vi.fn().mockResolvedValue({
       id: 'amazon-prices',
       name: 'amazon-prices',
@@ -36,9 +37,10 @@ afterEach(() => {
 const noop = () => {};
 
 describe('every onboarding input carries a real, associated label', () => {
-  it('the manual collector-ID textarea is labelled, not just placeheld', () => {
-    render(<CollectorsFallbackStep onContinue={noop} />);
-    expect(screen.getByLabelText(/collector id/i)).toBe(screen.getByTestId('manual-collector-ids'));
+  it('the collector-list fallback has a named reconnect action, never an unlabeled ID field', () => {
+    render(<CollectorsFallbackStep onRetry={noop} />);
+    expect(screen.getByRole('button', { name: /reconnect bright data/i })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 
   it('the canary-input textarea is labelled', () => {
@@ -113,7 +115,7 @@ describe('keyboard', () => {
       fireEvent.click(screen.getByTestId('connect-button'));
     });
 
-    const heading = await screen.findByRole('heading', { name: /point us at your collectors/i });
+    const heading = await screen.findByRole('heading', { name: /couldn't load your collector list/i });
     expect(document.activeElement).toBe(heading);
   });
 
@@ -123,6 +125,9 @@ describe('keyboard', () => {
       last4: '3f2a',
       collectors: [{ id: 'amazon-prices', name: 'amazon-prices' }],
     });
+    vi.mocked(api.listAvailableCollectors).mockResolvedValue([
+      { id: 'amazon-prices', name: 'amazon-prices' },
+    ]);
     render(<OnboardingWizard initialStage="key-paste" />);
     fireEvent.change(screen.getByTestId('api-key-input'), { target: { value: 'brd_customer_hp_focus' } });
     await act(async () => {

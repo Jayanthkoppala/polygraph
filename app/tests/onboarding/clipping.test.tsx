@@ -153,7 +153,7 @@ const STEPS: Array<{ name: string; node: React.ReactNode }> = [
       />
     ),
   },
-  { name: 'collectors-fallback', node: <CollectorsFallbackStep onContinue={noop} /> },
+  { name: 'collectors-fallback', node: <CollectorsFallbackStep onRetry={noop} /> },
   {
     name: 'schema-confirm',
     node: (

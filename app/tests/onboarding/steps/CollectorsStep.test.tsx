@@ -38,26 +38,19 @@ describe('CollectorsFoundStep', () => {
 
 describe('CollectorsFallbackStep — calm, never the user\'s fault', () => {
   it('never blames the account or calls it broken', () => {
-    render(<CollectorsFallbackStep onContinue={vi.fn()} />);
+    render(<CollectorsFallbackStep onRetry={vi.fn()} />);
     const text = document.body.textContent ?? '';
     expect(text).not.toMatch(/your account is broken/i);
     expect(text).not.toMatch(/error/i);
     expect(text).not.toMatch(/problem with your account/i);
-    expect(text).toMatch(/doesn't expose the collector list/i);
+    expect(text).toMatch(/couldn't load your collector list/i);
   });
 
-  it('connects the first pasted collector id', async () => {
-    const onContinue = vi.fn().mockResolvedValue(undefined);
-    render(<CollectorsFallbackStep onContinue={onContinue} />);
-    fireEvent.change(screen.getByTestId('manual-collector-ids'), {
-      target: { value: 'amazon-prices\n\nshopify-skus\n' },
-    });
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: /connect collector/i })));
-    expect(onContinue).toHaveBeenCalledWith([{ id: 'amazon-prices', name: 'amazon-prices' }]);
-  });
-
-  it('continue is disabled with no input', () => {
-    render(<CollectorsFallbackStep onContinue={vi.fn()} />);
-    expect(screen.getByRole('button', { name: /connect collector/i })).toBeDisabled();
+  it('offers a reconnect action instead of an opaque collector-ID textbox', () => {
+    const onRetry = vi.fn();
+    render(<CollectorsFallbackStep onRetry={onRetry} />);
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /reconnect bright data/i }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });

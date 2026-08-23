@@ -102,7 +102,7 @@ export function OnboardingWizard({ initialStage, onComplete }: OnboardingWizardP
         onContinue={(selected) => connectFirst('COLLECTORS_SELECTED', selected)}
       />
     ) : state.stage === 'collectors-fallback' ? (
-      <CollectorsFallbackStep onContinue={(collectors) => connectFirst('MANUAL_COLLECTORS_ENTERED', collectors)} />
+      <CollectorsFallbackStep onRetry={() => dispatch({ type: 'KEY_RETRY' })} />
     ) : null;
 
   const connectionPosition: 1 | 2 | 3 = position === 1 || position === 2 ? position : 3;

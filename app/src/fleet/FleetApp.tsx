@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { FleetShell } from '@/components/fleet/FleetShell';
 import { fetchFleetState, fetchLedger, acknowledgeCollector, ApiError } from '@/lib/api';
 import { signOut } from '@/lib/session';
-import { connectCollector } from '@/onboarding/api';
+import { connectCollector, listAvailableCollectors } from '@/onboarding/api';
 import type { CollectorState, FleetState } from '@/lib/api';
 import { toVerdictState } from '@/lib/verdict';
 import type { LedgerRow } from '@/components/ledger/LedgerStream';
@@ -122,6 +122,7 @@ export function FleetApp() {
       onRepair={handleRepair}
       onAcknowledge={handleAcknowledge}
       onAddCollector={handleAddCollector}
+      onListCollectors={listAvailableCollectors}
       onSignOut={handleSignOut}
       signingOut={signingOut}
       signOutError={signOutError}

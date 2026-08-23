@@ -3,8 +3,6 @@
 import { useState } from 'react';
 import { CheckCircle, CircleNotch } from '@phosphor-icons/react';
 import { OnboardingPanel } from '../OnboardingPanel';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import type { CollectorCandidate } from '../machine';
 
@@ -88,43 +86,20 @@ export function CollectorsFoundStep({ last4, discovered, onContinue }: Collector
 }
 
 export interface CollectorsFallbackStepProps {
-  onContinue: (collectors: CollectorCandidate[]) => void | Promise<void>;
+  onRetry: () => void;
 }
 
 /** ux-spec.md §6: never framed as a problem with the user's account. */
-export function CollectorsFallbackStep({ onContinue }: CollectorsFallbackStepProps) {
-  const [raw, setRaw] = useState('');
-  const { connecting, error, connect } = useCollectorConnect(onContinue);
-
-  const collectors: CollectorCandidate[] = raw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .slice(0, 1)
-    .map((id) => ({ id, name: id }));
-
+export function CollectorsFallbackStep({ onRetry }: CollectorsFallbackStepProps) {
   return (
     <OnboardingPanel
       bare
-      title="Point us at your collectors"
-      subtitle="Your account doesn't expose the collector list to us. Paste one collector ID instead."
+      title="We couldn't load your collector list"
+      subtitle="Your Bright Data key is saved. Reconnect to refresh the collectors that are currently available."
     >
       <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="manual-collector-ids">Collector ID</Label>
-          <Textarea
-            id="manual-collector-ids"
-            data-testid="manual-collector-ids"
-            rows={3}
-            value={raw}
-            onChange={(e) => setRaw(e.target.value)}
-            placeholder="c_your_collector_id"
-          />
-        </div>
-        <ConnectError message={error} />
-        <Button type="button" disabled={collectors.length === 0 || connecting} onClick={() => void connect(collectors)} className="h-10 w-full gap-2">
-          {connecting && <CircleNotch size={15} className="animate-spin" aria-hidden />}
-          {connecting ? 'Connecting collector…' : 'Connect collector'}
+        <Button type="button" onClick={onRetry} className="h-10 w-full gap-2">
+          Reconnect Bright Data
         </Button>
       </div>
     </OnboardingPanel>

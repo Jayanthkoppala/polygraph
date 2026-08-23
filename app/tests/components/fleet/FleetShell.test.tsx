@@ -88,6 +88,7 @@ describe('FleetShell — account exit and collector entry', () => {
         onAcknowledge={noop}
         onSignOut={onSignOut}
         onAddCollector={onAddCollector}
+        onListCollectors={vi.fn().mockResolvedValue([{ id: 'c_new', name: 'New collector' }])}
         signOutError="Could not sign you out. Please try again."
       />,
     );
@@ -99,7 +100,7 @@ describe('FleetShell — account exit and collector entry', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add collector' }));
     const dialog = screen.getByRole('dialog', { name: 'Add a collector' });
     expect(dialog).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Bright Data collector ID'), { target: { value: 'c_new' } });
+    await vi.waitFor(() => expect(screen.getByLabelText('Add New collector')).toBeInTheDocument());
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add collector' }));
     await vi.waitFor(() => expect(onAddCollector).toHaveBeenCalledWith('c_new'));
   });
