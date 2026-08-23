@@ -23,8 +23,10 @@ export class GithubFixtureClient implements DemoGithubClient {
       await this.sleep(intervalMs);
     }
   }
-  async readCurrentManifest(): Promise<DemoFixtureManifest> {
+  async readCurrentManifest(expectedGeneration?: string, expectedMissionId?: string): Promise<DemoFixtureManifest> {
     const markerUrl = new URL('version.json', this.options.config.fixtureUrl.endsWith('/') ? this.options.config.fixtureUrl : `${this.options.config.fixtureUrl}/`);
+    if (expectedGeneration) markerUrl.searchParams.set('generation', expectedGeneration);
+    if (expectedMissionId) markerUrl.searchParams.set('mission', expectedMissionId);
     const response = await this.fetchImpl(markerUrl, { cache: 'no-store', headers: { accept: 'application/json' } } as unknown as RequestInit);
     if (!response.ok) throw new Error(`fixture version manifest failed: HTTP ${response.status}`);
     const marker = await response.json() as Record<string, unknown>;

@@ -49,7 +49,7 @@ export interface DemoGithubClient {
   dispatch(version: DemoFixtureVersion, generation: string, missionId: string, options?: { parentGeneration: string; seed: string }): Promise<void>;
   waitForMarker(version: DemoFixtureVersion, generation: string, missionId: string, options?: { parentGeneration: string; seed: string }): Promise<void>;
   /** Optional for old test doubles; the production client always reads the live manifest. */
-  readCurrentManifest?(): Promise<DemoFixtureManifest>;
+  readCurrentManifest?(expectedGeneration?: string, expectedMissionId?: string): Promise<DemoFixtureManifest>;
   workflowUrl: string;
 }
 export interface DemoMissionEvent { step: string; detail: string; at: string }
@@ -360,7 +360,7 @@ export class DemoMissionService {
     const options = { parentGeneration, seed };
     await this.deps.github.dispatch(version, generation, mission.id, options);
     await this.deps.github.waitForMarker(version, generation, mission.id, options);
-    const manifest = await this.readLiveManifest();
+    const manifest = await this.readLiveManifest(generation, mission.id);
     if (manifest.generation !== generation || manifest.parent_generation !== parentGeneration || manifest.seed !== seed || manifest.mission_id !== mission.id) {
       throw new Error('the public fixture manifest did not match the dispatched generation contract');
     }
@@ -391,8 +391,8 @@ export class DemoMissionService {
     mission.evidence.heal_run_id = typeof progress.id === 'string' ? progress.id : null;
     this.event(mission, 'heal_complete', `Bright Data reported repair progress status ${progress.status}.`);
   }
-  private async readLiveManifest(): Promise<DemoFixtureManifest> {
-    if (this.deps.github.readCurrentManifest) return this.deps.github.readCurrentManifest();
+  private async readLiveManifest(expectedGeneration?: string, expectedMissionId?: string): Promise<DemoFixtureManifest> {
+    if (this.deps.github.readCurrentManifest) return this.deps.github.readCurrentManifest(expectedGeneration, expectedMissionId);
     const fallback = this.nextGeneration();
     if (!/^\d+$/.test(fallback)) throw new Error('fixture client did not provide a numeric live generation');
     return { version: 'evolving', generation: fallback };

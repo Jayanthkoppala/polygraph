@@ -57,13 +57,14 @@ describe('GithubFixtureClient', () => {
     });
     const client = new GithubFixtureClient({ config, fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    await expect(client.readCurrentManifest()).resolves.toMatchObject({
+    await expect(client.readCurrentManifest('45', 'mission-10')).resolves.toMatchObject({
       generation: '45',
       commit_sha: 'abc123def456',
       workflow_run_id: '987',
       workflow_run_url: 'https://github.test/runs/987',
       html_sha256: 'html-hash',
     });
+    expect(String((fetchImpl.mock.calls[0] as unknown as [string | URL])[0])).toContain('version.json?generation=45&mission=mission-10');
   });
 
   it('refuses to attach a branch head whose committed marker differs from the deployed marker', async () => {
