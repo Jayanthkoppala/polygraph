@@ -1,146 +1,173 @@
+<div align="center">
+
 # Polygraph
 
-**Your scraper says 200 OK. Polygraph says whether it's telling the truth.**
+**Your scraper says 200 OK. Polygraph says whether it's telling the truth — and fixes it when it isn't.**
+
+[![Live](https://img.shields.io/badge/live-35.193.31.253.sslip.io-0100ff?style=for-the-badge)](https://35.193.31.253.sslip.io)
+[![Node](https://img.shields.io/badge/Node-22+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![React](https://img.shields.io/badge/React-19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://react.dev)
+[![Bright Data](https://img.shields.io/badge/Bright_Data-Scraper_Studio-b45309?style=for-the-badge)](https://brightdata.com)
+[![License](https://img.shields.io/badge/license-MIT-000000?style=for-the-badge)](LICENSE)
+
+<a href="https://35.193.31.253.sslip.io/how-it-works">
+  <img src="docs/how-it-works.svg" alt="How Polygraph works: a Bright Data collector delivers by webhook, Polygraph checks every delivery deterministically, a bounded AI drafts a repair, the candidate is safety-tested against stored input, auto-published, and only a fresh production run counts as recovery. Every step lands in a hash-chained ledger and a repair receipt." width="960">
+</a>
+
+<sub><a href="https://35.193.31.253.sslip.io/how-it-works">Open the interactive version</a> · <a href="https://35.193.31.253.sslip.io/app">Open the product</a> · <a href="docs/recovery.md">Operator reference</a></sub>
+
+</div>
+
+---
+
+## What this is
 
 Scrapers fail by succeeding. The request goes through, the JSON parses, the job reports
-success — and the price field has quietly collapsed to zero, or the whole response is for
-the wrong product. Status monitoring watches HTTP codes and job states. It cannot tell you
-whether the data is *right*.
+success — and the `price` field has quietly collapsed to `null`, or the whole page is the
+wrong product. Status monitoring watches HTTP codes. It cannot tell you whether the
+*data* is right.
 
-Polygraph re-reads the data itself, decides what happens to it, and writes down why.
+Polygraph sits behind a [Bright Data](https://brightdata.com) Scraper Studio collector and
+does three things:
 
-![How Polygraph works](docs/polygraph-overview.svg)
+1. **Reads every delivery** and grades the data itself — not the status code.
+2. **Repairs the collector when it breaks**, with no human from break to verified, using
+   Bright Data's own Self-Healing under a strict safety test.
+3. **Proves it** — a repair only counts when a *fresh production run* passes the same
+   checks, and every step is written to an append-only, hash-chained ledger you can audit.
 
----
+It is built on one rule: **a tool that verifies scrapers must never lie about its own
+progress.** No fake progress bars, no "healed" badge without a receipt, no repair that a
+fresh run hasn't confirmed.
 
-## What it actually does
+## How it works
 
-A scrape comes back. Polygraph runs four checks against the data, not the status code:
+Read the board above left to right. Three actors, one closed loop.
 
-| Check | The question it asks |
+### Outside — the customer's target sites and Bright Data
+
+The customer's collector runs on the customer's own schedule inside Bright Data. Polygraph
+has **no scheduler of its own**; Bright Data is the only run source. Each completed run is
+delivered to Polygraph by webhook. One day a site changes its markup, a required field
+turns to `null`, and nobody announces it.
+
+### Inside — Polygraph's closed autonomous loop
+
+| Stage | What happens |
 |---|---|
-| **Shape** | Is every field still there, or did one collapse to its default? |
-| **Consistency** | Do the rows agree with each other? |
-| **Identity** | Is this the thing we asked for, or a different page entirely? |
-| **Canary** | Does a page we already know the answer for still come back correct? |
+| **Ingest · baseline** | Every delivery arrives at a per-collector webhook URL. The first healthy delivery (≥ 5 rows) becomes the *contract*: required fields, their types, and which field identifies the entity. From that delivery Polygraph also derives and encrypts a **reusable run input**, so it can trigger a verification run later without ever asking the customer for anything. |
+| **Checks · deterministic, not AI** | Four checks on every delivery — **Shape** (required fields and types), **Identity** (same entity as the baseline), **Access** (no captcha / login wall / block page), **Coherence** (fields that should have survived a break are undamaged). Error records Bright Data ships alongside rows are partitioned at ingest and can never become a baseline. Failure → the delivery is quarantined, the last safe output keeps serving, an incident opens. |
+| **AI · bounded to 3 tasks** | Gemini explains the diff, matches it against past incidents, and drafts the repair prompt. It never approves, never publishes, never declares recovery. |
+| **Candidate safety test** | The prompt goes to Bright Data Self-Healing, which proposes a repaired scraper. Polygraph runs the candidate against the stored input and checks fields, entity, access, and that healthy fields are intact. Pass → **auto-approve and publish** (`auto_save`). Fail → the candidate is rejected, the collector stays quarantined, the incident stays open. |
+| **Proof gate** | Publishing is not recovery. Polygraph triggers one fresh production run on the published template and grades that delivery. Only a **fresh production pass** moves the collector to Verified and advances the safe output. |
+| **Memory** | The ledger records deliveries and incidents, hash-chained to the entry before. A **repair receipt** records the ids, template versions, and hashes behind each repair, with an end-to-end timeline. The incident becomes a permanent test case, so the next diagnosis starts smarter. |
+| **Control** | An incident controller replays stored input; a server-sent event stream shows real progress only; optional Telegram updates on cycle start, verify, and hold. |
 
-Then it decides — and the decision is the product:
+### Collector states
 
-- **Release** — the data held up. It goes through.
-- **Hold** — something is off. A human looks before it reaches your database.
-- **Repair** — a field broke in a fixable way. Here is the exact command to fix it.
-- **Refuse** — the scraper fetched the *wrong thing*. A repair here would teach the
-  scraper to be confidently wrong, so Polygraph refuses to offer one and tells you why.
+```
+WAITING_BASELINE ──PASS──▶ READY ──eligible incident──▶ RECOVERING ──verified──▶ READY
+                             │                              │
+                             └──── holding veto ────▶ HELD ◀┘  (cycle ended non-verified)
+                                                      │
+                                                      └── healthy delivery ──▶ READY
+```
 
-Polygraph takes a deliberately cautious position: healing a wrong-target failure can be
-worse than leaving it broken, because a repaired scraper that fetches the wrong page still
-returns 200 OK — and now nobody is looking.
+`HELD` always carries a bare reason code (`VERIFICATION_FAILED`, `BLOCKED`,
+`IDENTITY_UNSTABLE`, `BUDGET`, `PROVIDER_STATE_UNKNOWN`, …) that the UI turns into plain
+language. A collector the customer removes is tombstoned, never deleted — the proof of a
+repair outlives the thing it repaired. Full state machines, held codes, retention and the
+security contract are in [`docs/recovery.md`](docs/recovery.md).
 
-**Polygraph does not auto-heal customer collectors. It decides when healing is safe.**
-The only unattended repair path in this repository is the disposable,
-repository-owned hackathon fixture described below; it has a separate exact
-collector/URL allowlist and a process-lifetime paid-run cap.
+### What a repair is *not* allowed to do
 
----
+- **Approve a gate that reports `success: false`.** The provider's own verdict is final.
+- **Re-approve after a crash.** Intent is persisted before every provider mutation, so a
+  worker that restarts mid-cycle resumes by *reading* provider state, never by acting twice.
+- **Heal a wrong-target failure.** If the scraper fetched the wrong thing, a "repair" would
+  teach it to be confidently wrong. Polygraph refuses and says why.
+- **Spend money silently.** Attempt, cooldown and daily budgets are enforced by a governor
+  before a cycle opens.
 
-## Every decision leaves a receipt
+## Proven, not promised
 
-Verdicts land in an append-only ledger, each entry hashed together with the one before it.
-Change any row and the chain snaps at that row and every row after it. `ledger verify` walks
-the chain and tells you where it broke.
+The production loop was run end to end on 2026-08-23 against a real Bright Data collector:
+baseline → deliberately broken delivery → Self-Healing → `auto_save` publish → template
+`.2` → fresh verification run → repair receipt, in **16 minutes 22 seconds**. The raw API
+responses are committed under [`docs/evidence/`](docs/evidence/).
 
-This matters because "the data was wrong for six days" is an argument, and an argument needs
-evidence. The ledger is the evidence.
+Three days earlier, the same discipline caught a vendor heal *lying*: it reported
+`status: "done"` while the change sat in an unpublished draft and production stayed broken.
+That finding — and what changed because of it — is written up in
+[`docs/FINDING-heal-promotion.md`](docs/FINDING-heal-promotion.md).
 
----
+## Stack
 
-## We caught a repair lying, too
+| | |
+|---|---|
+| Server | Node 22, TypeScript, `commander` CLI — one process serves the API, the app, the recovery worker and the scheduler |
+| Storage | SQLite via `better-sqlite3` — hash-chained ledger, insert-only receipts, per-tenant AES-256-GCM key custody |
+| Provider | Bright Data Scraper Studio (runs, webhooks, Self-Healing, `auto_save`) — the only outbound client lives in `src/brightdata/` |
+| AI | Gemini, confined to explain / match / draft |
+| Front end | React 19, Vite, Tailwind v4, `react-router` — landing, onboarding, `/app` recovery workspace, `/receipts`, `/how-it-works` |
+| Agent surface | MCP server with four read-mostly tools |
+| Hosting | One Google Cloud VM, Docker, Caddy for TLS |
+| Tests | Vitest — 78 test files; backend suite runs a real server against a real database |
 
-Running this against a live vendor self-heal on 2026-08-20 turned up something worth
-reporting:
+## Running it
 
-The heal reported `status: "done"` in about 105 seconds, with the approval step completed.
-The change landed in a **draft**. The collector's production schema was unchanged, and we
-found no API endpoint that promotes a draft to production. So the run reported success and
-production stayed exactly as broken as it was.
-
-Which is the same failure Polygraph exists to catch, one level up.
-
-Polygraph currently detects this by snapshotting the collector's declared fields before and
-after a repair and refusing to call it a recovery when they are identical. **That check is a
-weak proxy and we know it**: a price selector can be repaired perfectly while the output
-schema stays `{sku, title, price, stock}`, so schema equality is the expected result, not
-evidence of a failed promotion. The replacement is behavioural proof from a fresh production
-run. Full write-up: [`docs/FINDING-heal-promotion.md`](docs/FINDING-heal-promotion.md).
-
----
-
-## Run it yourself
-
-No account, no API key, no network. The demo runs offline against a local fixture.
-
-**Node 22 or newer is required** — `better-sqlite3` is a native module and older runtimes
+**Node 22 or newer is required.** `better-sqlite3` is a native module and older runtimes
 fail with a confusing ABI error rather than a clear one.
+
+### The offline demo — no account, no key, no network
 
 ```bash
 git clone https://github.com/Jayanthkoppala/polygraph.git && cd polygraph
-npm install && npm run demo
+npm install
+npm run demo
 ```
 
-You'll watch a healthy fleet pass, a price field die and get quarantined with a suggested
-repair, a scraper fetch the wrong product and have its repair **refused**, and finally
-`ledger verify` confirming the chain is intact.
+You watch a healthy fleet pass, a price field die and get quarantined with a suggested
+repair, a scraper fetch the wrong product and have its repair **refused**, and `ledger
+verify` confirm the chain is intact.
 
-## The hosted server
-
-One instance is live on a Google Cloud VM behind Caddy:
-
-```bash
-npm run build:all
-POLYGRAPH_MASTER_KEY=<32-byte hex> npm run serve
-```
-
-### One local product URL
-
-For local hosted-product work, use one command and one URL:
+### The hosted product locally
 
 ```bash
 POLYGRAPH_MASTER_KEY=<32-byte hex> npm run local
 ```
 
-Open **http://127.0.0.1:8080**. This command first checks whether another process
-already owns port 8080, builds the React app, then serves the app and tenant API
-from the same hosted server. It deliberately refuses to start a second copy.
+Open **http://127.0.0.1:8080**. This builds the React app and serves app + tenant API from
+one process; it refuses to start a second copy if port 8080 is taken. Sign up, connect a
+Bright Data key, add a collector, and point the collector's delivery webhook at the URL
+Polygraph shows you.
 
-`app/npm run dev` is optional frontend-only work on fixed port 5174; it proxies API
-calls to 8080 and exits when 5174 is already in use. It is not the supported local
-product URL. The legacy `watch`, demo, and fixture commands are separate tools and
-must not be used to judge the hosted product.
+| Variable | Purpose |
+|---|---|
+| `POLYGRAPH_MASTER_KEY` | Required. Encrypts tenant keys, ingest tokens and stored run inputs. Never in the database. |
+| `POLYGRAPH_AUTO_RECOVERY=1` | Turns the repair worker on. Unset = deliveries are still graded and ledgered, nothing is mutated at the provider. |
+| `POLYGRAPH_TELEGRAM_BOT_TOKEN` + `POLYGRAPH_TELEGRAM_CHAT_ID` | Optional. Both or neither; there is no half-configured state. |
 
-Each account connects its own Bright Data key and gets its own collectors, schedule, and
-ledger chain starting from its own genesis hash. See [`deploy/README.md`](deploy/README.md)
-for the environment contract and why exactly one instance may ever run.
-
-**On key custody**, because you should ask before pasting an API key anywhere: keys are
-encrypted per tenant with AES-256-GCM, and the key that decrypts them lives in the server
-environment, never in the database — stealing the database file yields ciphertext and
-nothing else. No endpoint returns a key back to you. The server never spends your Bright
-Data credits: auto-repair is structurally disabled in the hosted path.
-
-## Use it from a coding agent
-
-A local MCP server exposes four narrow tools: fleet status, ledger verification, last
-verified output, and an explicit one-collector verification run.
+### From a coding agent
 
 ```bash
 npm run build
 codex mcp add polygraph --env POLYGRAPH_CONFIG=$PWD/fleet.yaml -- node $PWD/dist/index.js mcp
 ```
 
-MCP can never auto-heal. Network-backed runs are off by default and need both a server
-opt-in and per-call confirmation. See [`docs/MCP.md`](docs/MCP.md).
+Fleet status, ledger verification, last verified output, and one explicit verification
+run. MCP can never heal. See [`docs/MCP.md`](docs/MCP.md).
 
----
+### Everything else
+
+```bash
+npm test              # backend suite
+npm run test:all      # backend + front end
+npm run typecheck:all # both halves
+npm run build:all     # compile server + front end
+npm run serve         # production server (needs POLYGRAPH_MASTER_KEY)
+```
 
 ## Layout
 
@@ -148,65 +175,96 @@ Flat files at `src/` root are entry points. Everything else is a folder named fo
 does, and every test sits at the mirror path of the file it covers.
 
 ```
-src/index.ts       CLI entry — builds the program, registers commands
-src/mcp.ts         coding-agent tool surface
-src/cli/           one module per command
-src/core/          types, config, error classification
-src/evidence/      the four checks, adapters, extractors
-src/brightdata/    the only outbound Bright Data client, plus heal
-src/loop/          runner, policy governor, alerts
-src/store/         hash-chained ledger, safe-output retention
-src/http/          the offline dashboard server
-src/tenancy/       multi-tenant isolation, auth, key custody, scheduler
-src/fixture/       the local break lab
-src/demo/          the live V1→V2 mission
-app/               React front end — landing, sandbox, onboarding, fleet
-scripts/test/      backend suite, mirroring src/
-deploy/            how the live instance runs
-docs/              architecture, design specs, the heal-promotion finding
+src/
+  index.ts          CLI entry — builds the program, registers commands
+  mcp.ts            coding-agent tool surface
+  cli/              one module per command
+  core/             types, config, error classification
+  evidence/         the four checks, adapters, extractors
+  brightdata/       the only outbound Bright Data client, plus heal
+  ai/               Gemini advisor — explain, match, draft
+  loop/             runner, policy governor, alerts
+  store/            hash-chained ledger, safe-output retention
+  tenancy/          multi-tenant isolation, auth, key custody, scheduler, migrations
+    recovery/       policy, worker, provider adapter, stores, read API, notifier
+  fixture/          the local break lab
+  demo/             the live V1→V2 fixture mission
+app/                React front end
+  src/recovery/     the /app workspace
+  src/receipts/     repair receipts with expandable timelines
+  src/howitworks/   the architecture board
+scripts/test/       backend suite, mirroring src/
+deploy/             VM provisioning, deploy script, startup contract
+docs/               recovery reference, MCP, design specs, evidence, findings
 ```
 
-## Commands
+## Deploying
 
-```bash
-npm run demo          # offline story, no account needed
-npm test              # backend suite
-npm run test:all      # backend + front end
-npm run typecheck:all # both halves
-npm run build:all     # compile server + front end
+One always-on VM runs one process — deliberately. The ledger and every tenant's encrypted
+key live in one SQLite file, so a second instance would fork the hash chain. **Never run
+two.**
+
+```
+client ──HTTPS──▶ Caddy ──▶ node dist/index.js serve ──▶ SQLite on /data
 ```
 
----
+`bash deploy/deploy.sh <vm> <git-ref>` builds the ref on the box and swaps the container
+with a health-gated rollback. Cold boots rebuild from the commit pinned in instance
+metadata. Migrations are non-destructive and idempotent; every deploy runs them.
+[`deploy/README.md`](deploy/README.md) has the full contract.
 
-## Where this actually is
+## A few things I'd point out
 
-Stated plainly, because a verification tool that overstates its own progress is
-self-defeating:
+**The AI never holds the pen.** Three tasks, all advisory. Approval is a deterministic
+safety test; publication is Bright Data's `auto_save`; recovery is a fresh run. Remove the
+model and the loop still refuses unsafe repairs — it just drafts worse prompts.
 
-| Piece | State | What that means |
-|---|---|---|
-| Verdict engine — four checks, classifier, policy | **Done** | Tested, drives both paths |
-| Hash-chained ledger + `ledger verify` | **Done** | Per-account chains, tamper-evident |
-| Bright Data integration | **Done** | Proven against a live collector, not mocks |
-| Offline demo | **Done** | `npm run demo`, no account, no network |
-| Multi-tenancy — isolation, key custody, onboarding | **Live** | One instance running, auth enforced |
-| Dashboard — fleet view, evidence, ledger stream | **Built, polishing** | Density and keyboard nav unfinished |
-| Front end / landing page | **Built** | V1→V2 mission, real event tracker, legal routes |
-| Published to npm | **Not yet** | Configured as `polygraph-data`, unpublished |
-| Peer corroboration between collectors | **Not wired** | Needs 3+ same-purpose collectors to say anything |
-| Drift / trend detection | **Not built** | No trend signal exists; a chart drawn from nothing would be a lie |
-| Automated rollback | **Not built** | No supported API found — recovery is the documented Versions UI |
+**Key custody is structural.** Tenant keys are encrypted per tenant with AES-256-GCM; the
+decrypting key lives only in the server environment. Steal the database file and you hold
+ciphertext. No endpoint ever returns a key, a token, or a stored run input.
 
-- **Customer auto-repair is off in the hosted path**, structurally, not as a default. Only
-  the repository-owned fixture can mint the separate demo permit, and it carries its own
-  collector/URL allowlist and a process-lifetime paid-run cap.
-- **The landing mission never fabricates success.** It renders only server events and
-  visibly falls back when the mission API is unavailable.
+**Receipts outlive collectors.** `repair_receipts` is insert-only, enforced by database
+triggers that fire even on cascaded deletes. Removing a collector revokes its webhook and
+tombstones the row; its receipts stay, still named.
 
----
+**Unknown webhook tokens get one answer.** Unknown, rotated and revoked tokens all receive
+the same `401`, so the URL cannot be probed. Deliveries are rate-limited and size-capped
+before anything is stored.
+
+**The UI only renders server events.** Progress is a server-sent stream of things that
+actually happened. When the API is unreachable the page says so instead of animating.
+
+## Where this is
+
+| Piece | State |
+|---|---|
+| Four checks, classifier, policy governor | Done, tested |
+| Hash-chained ledger + `ledger verify` | Done, per-tenant chains |
+| Bright Data integration (runs, webhooks, Self-Healing, `auto_save`) | Done, proven live |
+| Autonomous repair loop with proof gate and receipts | Done, production canary passed 2026-08-23 |
+| Multi-tenancy, key custody, onboarding | Live |
+| `/app` workspace, `/receipts`, `/how-it-works` | Live |
+| Remove collector, webhook URL reveal, Telegram notifier | Shipped |
+| Started / finished timestamps from job-log polling | Open |
+| Published to npm | Not yet |
+| Peer corroboration across collectors | Not wired |
+| Drift / trend detection | Not built — no trend signal exists yet |
+
+## Documentation
+
+- [`docs/recovery.md`](docs/recovery.md) — operator reference: state machines, held codes, ingest caps, retention, secrets
+- [`docs/MCP.md`](docs/MCP.md) — the agent tool surface and its limits
+- [`docs/FINDING-heal-promotion.md`](docs/FINDING-heal-promotion.md) — the vendor heal that reported success into a draft
+- [`docs/evidence/`](docs/evidence/) — raw API captures from the live proofs
+- [`deploy/README.md`](deploy/README.md) — infrastructure, deploy and startup contract
+- [`docs/design/`](docs/design/) — positioning, UX spec, UI system, tenant architecture
 
 ## Author
 
-Built by **Jayanth Koppala**.
+Built by **Jayanth Koppala** — [site](https://jayanthkoppala.vercel.app) ·
+[X](https://x.com/JayBosshq) · [LinkedIn](https://www.linkedin.com/in/jayanth-koppala-71a8091b9/) ·
+jay@bosshq.in
 
-MIT licensed — see [`LICENSE`](LICENSE). Use it, fork it, run it against your own fleet.
+## License
+
+MIT — see [`LICENSE`](LICENSE). Use it, fork it, run it against your own fleet.
