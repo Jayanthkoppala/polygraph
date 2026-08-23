@@ -31,8 +31,8 @@ afterEach(() => {
   const restore = (key: string, value: string | undefined) => { if (value === undefined) delete process.env[key]; else process.env[key] = value; };
   restore('POLYGRAPH_HEAL_ENABLED', savedGateEnv.heal); restore('POLYGRAPH_DEMO_LIVE', savedGateEnv.live); restore('POLYGRAPH_DEMO_OWNED_FIXTURE_AUTOSAVE', savedGateEnv.autosave); restore('POLYGRAPH_DEMO_COLLECTOR_ID', savedGateEnv.collector); restore('POLYGRAPH_DEMO_FIXTURE_URL', savedGateEnv.fixture);
 });
-function fakes(options: { brokenRow?: Record<string, unknown>; healthyRow?: Record<string, unknown>; recoveredRow?: Record<string, unknown>; rows?: Record<string, unknown>[]; jobIds?: string[]; idOffset?: number; maxMissions?: number; store?: DemoMissionStore; stateStore?: SqliteDemoMissionStateStore; advisor?: FailureAdvisor } = {}) {
-  const calls: string[] = []; let dataset = 0; let ids = options.idOffset ?? 0; let healPolls = 0;
+function fakes(options: { brokenRow?: Record<string, unknown>; healthyRow?: Record<string, unknown>; recoveredRow?: Record<string, unknown>; rows?: Record<string, unknown>[]; jobIds?: string[]; idOffset?: number; maxMissions?: number; store?: DemoMissionStore; stateStore?: SqliteDemoMissionStateStore; advisor?: FailureAdvisor; rejectFirstHealCandidate?: boolean } = {}) {
+  const calls: string[] = []; let dataset = 0; let ids = options.idOffset ?? 0; let healPolls = 0; let healsStarted = 0; let currentHealId = 'heal-old';
   let liveManifest = { version: 'evolving', generation: '100', parent_generation: '99', seed: 'seed-100', mission_id: 'prior', anchors: { product_code: '[data-old-code]', title: '.old-title', price: '.old-price', availability: '.stock-status' } };
   let pendingManifest = liveManifest;
   const github: DemoGithubClient = {
@@ -48,7 +48,21 @@ function fakes(options: { brokenRow?: Record<string, unknown>; healthyRow?: Reco
   const brightData: DemoBrightDataClient = {
     async trigger() { dataset++; calls.push(`trigger:${dataset}`); return options.jobIds?.[dataset - 1] ?? `job-${dataset}`; },
     async pollDataset() { calls.push(`poll:${dataset}`); const phase = (dataset - 1) % 3; const row = options.rows?.[dataset - 1] ?? (phase === 0 ? options.healthyRow ?? HEALTHY_ROW : phase === 1 ? options.brokenRow ?? BROKEN_ROW : options.recoveredRow ?? options.healthyRow ?? HEALTHY_ROW); return { rows: [row], ambiguous: false }; },
-    async refactorTemplate() { calls.push('heal:start'); return {}; }, async pollRefactorTemplateProgress() { calls.push('heal:poll'); healPolls++; return healPolls % 2 === 0 ? { status: 'completed', id: 'heal-1', completed_steps: ['user_approval', 'save_new_template'] } : { status: 'pending_answer', id: 'heal-1', success: true, preview_result: [HEALTHY_ROW] }; }, async resumeAutomationJob(_id, opts) { calls.push(`heal:resume:${opts.message}:${opts.autoSave}`); },
+    async refactorTemplateProgress() { return { status: 'done', id: currentHealId, completed_steps: ['user_approval'] }; },
+    async refactorTemplate() { calls.push('heal:start'); currentHealId = `heal-${++healsStarted}`; healPolls = 0; return { id: currentHealId }; },
+    async pollRefactorTemplateProgress() {
+      calls.push('heal:poll');
+      healPolls++;
+      if (options.rejectFirstHealCandidate && healsStarted === 1) {
+        return healPolls === 1
+          ? { status: 'pending_answer', id: currentHealId, success: true, completed_steps: ['code_fixer', 'step_preview_runner', 'request_fulfillment_validator', 'user_approval'], preview_result: [{ ...HEALTHY_ROW, product_code: '' }] }
+          : { status: 'done', id: currentHealId, completed_steps: ['user_approval'] };
+      }
+      return healPolls % 2 === 0
+        ? { status: 'completed', id: currentHealId, completed_steps: ['user_approval', 'save_new_template'] }
+        : { status: 'pending_answer', id: currentHealId, success: true, completed_steps: ['code_fixer', 'step_preview_runner', 'request_fulfillment_validator', 'user_approval'], preview_result: [HEALTHY_ROW] };
+    },
+    async resumeAutomationJob(_id, opts) { calls.push(`heal:resume:${opts.message}:${opts.autoSave}`); },
   };
   const service = new DemoMissionService({ config, github, brightData, advisor: options.advisor, store: options.store, stateStore: options.stateStore, now: () => '2026-08-22T00:00:00.000Z', id: () => `mission-${++ids}`, workerId: `worker-${ids}` });
   return { calls, service };
@@ -88,6 +102,28 @@ describe('demo mission sequence', () => {
       }),
     ]);
   });
+  it('records a safely rejected provider candidate, retries once, and emits a receipt only after exact C', async () => {
+    const { calls, service } = fakes({ rejectFirstHealCandidate: true });
+    const mission = service.create();
+    await service.whenSettled(mission.id);
+    service.shift(mission.id);
+    await service.whenSettled(mission.id);
+
+    expect(service.current(mission.id)).toMatchObject({ status: 'healed', scene: 'receipt' });
+    expect(service.current(mission.id)?.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ step: 'heal_candidate_rejected', detail: expect.stringMatching(/candidate 1 \(heal-1\).*without saving.*product_code/i) }),
+      expect.objectContaining({ step: 'heal_approved' }),
+      expect.objectContaining({ step: 'receipt' }),
+    ]));
+    expect(service.current(mission.id)?.evidence).toMatchObject({ heal_run_id: 'heal-2', proof_run_id: 'job-3', proof_result: HEALTHY_ROW });
+    expect(calls).toEqual(expect.arrayContaining([
+      'heal:resume:false:false',
+      'heal:resume:true:true',
+      'trigger:3',
+      'poll:3',
+    ]));
+    expect(service.repairReceipts()).toEqual([expect.objectContaining({ id: mission.id, heal_job_id: 'heal-2', proof_run_id: 'job-3' })]);
+  });
   it('blocks shift before baseline and duplicate shift while running', async () => {
     const { service } = fakes(); const mission = service.create();
     expect(() => service.shift(mission.id)).toThrow(/baseline/);
@@ -124,9 +160,10 @@ describe('demo mission sequence', () => {
       expect.objectContaining({ step: 'proof_authority' }),
     ]));
     const prompt = service.current(mission.id)?.events.find((event) => event.step === 'healing_prompt')?.detail ?? '';
-    expect(prompt).toContain('Repair only the three moved selectors.');
     expect(prompt).toContain('The required product is product_code "Product/Code-123"');
-    expect(prompt).toContain('Authoritative scope: change only product_code, title, and price');
+    expect(prompt).toContain('Modify the collector parser code now');
+    expect(prompt).toContain('Preserve the input URL and output schema unchanged, and leave availability extraction untouched.');
+    expect(prompt.replace(/^Healing prompt prepared: /, '').length).toBeLessThanOrEqual(1000);
   });
   it('tries one additional generated structure when the collector survives the first evolution', async () => {
     const { calls, service } = fakes({ rows: [HEALTHY_ROW, HEALTHY_ROW, BROKEN_ROW, HEALTHY_ROW] });
@@ -184,6 +221,11 @@ describe('demo mission sequence', () => {
     expect(prompt).toContain(`title ${JSON.stringify(PRODUCT_TITLE)}`);
     expect(prompt).toContain('price £51.77 GBP');
     expect(prompt).toContain('stable availability "In stock"');
+    const providerPrompt = prompt.replace(/^Healing prompt prepared: /, '');
+    expect(providerPrompt.length).toBeLessThanOrEqual(1000);
+    expect(providerPrompt).toContain('Modify the collector parser code now');
+    expect(providerPrompt).toContain('Run a fresh preview proving the exact row.');
+    expect(providerPrompt).toContain('Preserve the input URL and output schema unchanged, and leave availability extraction untouched.');
   });
   it('rejects an otherwise equal A price in the wrong currency', async () => {
     const { service } = fakes({ healthyRow: { ...HEALTHY_ROW, price: { value: 51.77, currency: 'USD', symbol: '$' } } });

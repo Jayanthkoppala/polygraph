@@ -135,15 +135,24 @@ export function mintOwnedFixtureHealPermit(
  * its own set, not client.ts's REFACTOR_SUCCESS_STATES — this path demands a
  * post-approval completion, and the two lists are not the same. */
 const OWNED_FIXTURE_SUCCESS_STATES = new Set(['done', 'complete', 'completed', 'success', 'succeeded']);
+const OWNED_FIXTURE_SUBSTANTIVE_STEPS = ['code_fixer', 'step_preview_runner', 'request_fulfillment_validator'];
+const OWNED_FIXTURE_MAX_CANDIDATES = 2;
+
+export interface OwnedFixtureCandidateRejection {
+  attempt: number;
+  id: string;
+  reason: string;
+}
 
 export interface HealOwnedFixtureOptions {
-  client: Pick<BrightDataClient, 'refactorTemplate' | 'pollRefactorTemplateProgress' | 'resumeAutomationJob'>;
+  client: Pick<BrightDataClient, 'refactorTemplate' | 'refactorTemplateProgress' | 'pollRefactorTemplateProgress' | 'resumeAutomationJob'>;
   policy: Policy;
   permit: OwnedFixtureHealPermit;
   /** The exact single-row contract a candidate repair must prove before the
    * disposable fixture is allowed to save it automatically. */
   previewContract: OwnedFixturePreviewContract;
   poll?: PollOptions;
+  onCandidateRejected?: (rejection: OwnedFixtureCandidateRejection) => void;
 }
 
 export interface OwnedFixturePreviewContract {
@@ -151,6 +160,12 @@ export interface OwnedFixturePreviewContract {
   title: string;
   price: { value: number; currency: string; symbol: string };
   availability: string;
+}
+
+function refactorJobId(envelope: unknown): string | undefined {
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return undefined;
+  const id = (envelope as Record<string, unknown>).id;
+  return typeof id === 'string' && id.trim() ? id.trim() : undefined;
 }
 
 function previewContractError(progress: RefactorProgress, contract: OwnedFixturePreviewContract): string | undefined {
@@ -178,6 +193,91 @@ function previewContractError(progress: RefactorProgress, contract: OwnedFixture
   return undefined;
 }
 
+function candidateRejectionReason(progress: RefactorProgress, contract: OwnedFixturePreviewContract): string | undefined {
+  if (progress.success !== true) {
+    return isHealUnfulfilled(progress) ? 'Bright Data reported success:false; explicit success:true is required' : 'Bright Data omitted success; explicit success:true is required';
+  }
+  const invalidPreview = previewContractError(progress, contract);
+  if (invalidPreview) return invalidPreview;
+  const completed = new Set(progress.completed_steps ?? []);
+  const missing = OWNED_FIXTURE_SUBSTANTIVE_STEPS.filter((step) => !completed.has(step));
+  return missing.length > 0 ? `the pending candidate omitted substantive repair steps: ${missing.join(', ')}` : undefined;
+}
+
+function retryPrompt(prompt: string, jobId: string, reason: string): string {
+  const clean = (value: string, max: number) => value.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max);
+  const suffix = `Previous candidate ${clean(jobId, 120)} was rejected: ${clean(reason, 500)}. Modify the parser code, run a fresh preview, and do not return unchanged code or blank/default values.`;
+  const prefix = clean(prompt, Math.max(0, 999 - suffix.length)).trimEnd();
+  return prefix ? `${prefix}\n${suffix}` : suffix;
+}
+
+function assertSameRefactorJob(progress: RefactorProgress, jobId: string): void {
+  if (refactorJobId(progress) !== jobId) throw new BrightDataError(`owned fixture heal provider state unknown: expected job ${jobId}, received ${String(progress.id)}`);
+}
+
+const OWNED_FIXTURE_FENCE_STATES = new Set([
+  ...OWNED_FIXTURE_SUCCESS_STATES,
+  'ready',
+  'finished',
+  'failed',
+  'error',
+  'errored',
+  'cancelled',
+  'canceled',
+  'rejected',
+]);
+
+function terminalFenceId(progress: RefactorProgress): string | undefined {
+  const id = refactorJobId(progress);
+  if (!id && Object.keys(progress).length === 0) return undefined;
+  if (!id) throw new BrightDataError('owned fixture heal provider state unknown: pre-trigger progress omitted a job id');
+  const status = String(progress.status ?? '').toLowerCase();
+  if (!OWNED_FIXTURE_FENCE_STATES.has(status)) {
+    throw new BrightDataError(`owned fixture heal refused to trigger while prior job ${id} is not terminal (status "${progress.status}")`);
+  }
+  return id;
+}
+
+async function acquireFreshRefactorJobId(
+  accepted: unknown,
+  collectorId: string,
+  staleJobIds: ReadonlySet<string>,
+  candidateJobIds: ReadonlySet<string>,
+  options: HealOwnedFixtureOptions,
+  pollOpts: PollOptions
+): Promise<string> {
+  const acceptedId = refactorJobId(accepted);
+  if (acceptedId) {
+    if (staleJobIds.has(acceptedId) || candidateJobIds.has(acceptedId)) {
+      throw new BrightDataError(`owned fixture heal provider state unknown: accepted stale or duplicate job id ${acceptedId}`);
+    }
+    return acceptedId;
+  }
+  const discovered = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts, {
+    returnOnFreshJobId: true,
+    staleJobIds: [...staleJobIds],
+  });
+  const discoveredId = refactorJobId(discovered);
+  if (!discoveredId || staleJobIds.has(discoveredId) || candidateJobIds.has(discoveredId)) {
+    throw new BrightDataError('owned fixture heal provider state unknown: could not acquire a unique fresh job id');
+  }
+  return discoveredId;
+}
+
+function assertRejectedWithoutSave(progress: RefactorProgress, jobId: string): void {
+  assertSameRefactorJob(progress, jobId);
+  const status = String(progress.status ?? '').toLowerCase();
+  if (!OWNED_FIXTURE_SUCCESS_STATES.has(status)) {
+    throw new BrightDataError(`owned fixture heal rejection did not reach a terminal state (status "${progress.status}")`);
+  }
+  if (!Array.isArray(progress.completed_steps)) {
+    throw new BrightDataError('owned fixture heal rejection omitted completed_steps; provider state is unknown');
+  }
+  if (progress.completed_steps.includes('save_new_template')) {
+    throw new BrightDataError('owned fixture heal rejection unexpectedly reported save_new_template; provider state is unknown');
+  }
+}
+
 /**
  * Executes the one exceptional unattended repair supported by Polygraph:
  * the repository-owned, disposable hackathon fixture. The same general heal
@@ -190,41 +290,70 @@ export async function healOwnedFixture(
   options: HealOwnedFixtureOptions
 ): Promise<RefactorProgress> {
   assertHealEnabled(options.policy);
-  const { collectorId, fixtureUrl } = options.permit;
+  const { collectorId } = options.permit;
   if (options.permit[OWNED_FIXTURE_PERMIT] !== true) throw new PolygraphHealDisabled('owned fixture permit is invalid');
-
-  await options.client.refactorTemplate(collectorId, prompt, [{ url: fixtureUrl }]);
   const pollOpts = resolvePollOptions(options.poll);
-  let progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts);
-  if (!isAwaitingApproval(progress)) {
-    throw new BrightDataError(`owned fixture heal did not stop at the required approval gate (status "${progress.status}")`);
+  const candidateJobIds = new Set<string>();
+  const staleJobIds = new Set<string>();
+  let candidatePrompt = prompt;
+  let previousCandidateId: string | undefined;
+
+  for (let attempt = 1; attempt <= OWNED_FIXTURE_MAX_CANDIDATES; attempt++) {
+    const fence = await options.client.refactorTemplateProgress(collectorId);
+    const fenceId = terminalFenceId(fence);
+    if (previousCandidateId && fenceId !== previousCandidateId) {
+      throw new BrightDataError(`owned fixture heal provider-state collision before retry: expected terminal job ${previousCandidateId}, received ${fenceId}`);
+    }
+    if (fenceId) staleJobIds.add(fenceId);
+    // Official CLI parity is load-bearing: URL hints are not custom heal inputs.
+    const accepted = await options.client.refactorTemplate(collectorId, candidatePrompt, []);
+    const jobId = await acquireFreshRefactorJobId(accepted, collectorId, staleJobIds, candidateJobIds, options, pollOpts);
+    candidateJobIds.add(jobId);
+
+    let progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts, {
+      expectedJobId: jobId,
+      staleJobIds: [...staleJobIds],
+    });
+    assertSameRefactorJob(progress, jobId);
+    const gateStatus = String(progress.status ?? '').toLowerCase();
+    if (!isAwaitingApproval(progress) || OWNED_FIXTURE_FENCE_STATES.has(gateStatus)) {
+      throw new BrightDataError(`owned fixture heal did not stop at the required approval gate (status "${progress.status}")`);
+    }
+    const rejectionReason = candidateRejectionReason(progress, options.previewContract);
+    if (rejectionReason) {
+      await options.client.resumeAutomationJob(collectorId, { message: false, autoSave: false });
+      progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts, {
+        stopAtApproval: false,
+        expectedJobId: jobId,
+        staleJobIds: [...staleJobIds],
+      });
+      assertRejectedWithoutSave(progress, jobId);
+      options.onCandidateRejected?.({ attempt, id: jobId, reason: rejectionReason });
+      if (attempt === OWNED_FIXTURE_MAX_CANDIDATES) {
+        throw new BrightDataError(`owned fixture heal rejected before approval: ${rejectionReason}`);
+      }
+      previousCandidateId = jobId;
+      candidatePrompt = retryPrompt(prompt, jobId, rejectionReason);
+      continue;
+    }
+
+    await options.client.resumeAutomationJob(collectorId, { message: true, autoSave: true });
+    progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts, {
+      stopAtApproval: false,
+      expectedJobId: jobId,
+      staleJobIds: [...staleJobIds],
+    });
+    assertSameRefactorJob(progress, jobId);
+    const status = String(progress.status ?? '').toLowerCase();
+    if (!OWNED_FIXTURE_SUCCESS_STATES.has(status)) {
+      throw new BrightDataError(`owned fixture heal did not finish successfully (status "${progress.status}")`);
+    }
+    if (!Array.isArray(progress.completed_steps) || !progress.completed_steps.includes('save_new_template')) {
+      throw new BrightDataError('owned fixture heal completed without save_new_template evidence after approval');
+    }
+    return progress;
   }
-  if (progress.success !== true) {
-    await options.client.resumeAutomationJob(collectorId, { message: false, autoSave: false });
-    const reason = isHealUnfulfilled(progress) ? 'Bright Data reported success:false' : 'Bright Data omitted success';
-    throw new BrightDataError(`owned fixture heal rejected before approval: ${reason}; explicit success:true is required`);
-  }
-  const invalidPreview = previewContractError(progress, options.previewContract);
-  if (invalidPreview) {
-    // Explicitly reject the candidate: an owned-fixture permit authorizes
-    // one proven repair, never a best-effort draft save.
-    await options.client.resumeAutomationJob(collectorId, { message: false, autoSave: false });
-    throw new BrightDataError(`owned fixture heal rejected before approval: ${invalidPreview}`);
-  }
-  await options.client.resumeAutomationJob(collectorId, { message: true, autoSave: true });
-  // Bright Data preserves step="user_approval" after resume, including on
-  // its terminal done envelope. Approval has already happened here, so this
-  // poll must wait for terminal success/failure instead of stopping on that
-  // stale step marker a second time.
-  progress = await options.client.pollRefactorTemplateProgress(collectorId, pollOpts, { stopAtApproval: false });
-  const status = String(progress.status ?? '').toLowerCase();
-  if (!OWNED_FIXTURE_SUCCESS_STATES.has(status)) {
-    throw new BrightDataError(`owned fixture heal did not finish successfully (status "${progress.status}")`);
-  }
-  if (!Array.isArray(progress.completed_steps) || !progress.completed_steps.includes('save_new_template')) {
-    throw new BrightDataError('owned fixture heal completed without save_new_template evidence after approval');
-  }
-  return progress;
+  throw new BrightDataError('owned fixture heal exhausted its bounded candidate loop');
 }
 
 /** Both gates must be open: the fleet policy's own heal_enabled flag AND

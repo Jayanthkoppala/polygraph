@@ -163,6 +163,59 @@ describe('pollDataset', () => {
 });
 
 describe('pollRefactorTemplateProgress', () => {
+  it('ignores a stale terminal envelope until the accepted refactor job id appears', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        id: 'heal-old',
+        status: 'done',
+        step: 'user_approval',
+        success: true,
+        completed_steps: ['code_fixer', 'step_preview_runner', 'request_fulfillment_validator'],
+        preview_result: [{ product_code: 'SKU-1' }],
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'heal-new', status: 'pending_answer', step: 'user_approval' }));
+    const client = makeClient(fetchImpl);
+
+    const progress = await client.pollRefactorTemplateProgress(
+      'c_owned_fixture',
+      { intervalMs: 1, deadlineMs: 10 },
+      { expectedJobId: 'heal-new', staleJobIds: ['heal-old'] }
+    );
+
+    expect(progress).toMatchObject({ status: 'pending_answer', id: 'heal-new' });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('discovers a fresh operation after an old id and blank envelope remain visible', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'heal-old', status: 'done' }))
+      .mockResolvedValueOnce(jsonResponse(200, { status: 'running' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'heal-new', status: 'running' }));
+    const client = makeClient(fetchImpl);
+
+    const progress = await client.pollRefactorTemplateProgress(
+      'c_owned_fixture',
+      { intervalMs: 1, deadlineMs: 10 },
+      { returnOnFreshJobId: true, staleJobIds: ['heal-old'] }
+    );
+
+    expect(progress).toMatchObject({ id: 'heal-new', status: 'running' });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('fails closed when an unrelated nonblank operation appears after an expected id is locked', async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonResponse(200, { id: 'heal-third', status: 'done' }));
+    const client = makeClient(fetchImpl);
+
+    await expect(client.pollRefactorTemplateProgress(
+      'c_owned_fixture',
+      { intervalMs: 1, deadlineMs: 10 },
+      { expectedJobId: 'heal-new', staleJobIds: ['heal-old'] }
+    )).rejects.toThrow(/provider-state collision.*expected heal-new.*heal-third/i);
+  });
+
   it('ignores a stale user_approval step after resume and waits for terminal success', async () => {
     const fetchImpl = vi
       .fn()

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DatasetPollResult, RefactorProgress } from '../brightdata/client.js';
+import type { BrightDataClient, DatasetPollResult } from '../brightdata/client.js';
 import { healOwnedFixture, mintOwnedFixtureHealPermit, type OwnedFixturePreviewContract } from '../brightdata/heal.js';
 import type { FailureAdvisor, RecoveryAdvice } from '../ai/gemini-advisor.js';
 import type { PersistedDemoMission, SqliteDemoMissionStateStore } from '../tenancy/demo-mission-store.js';
@@ -90,7 +90,7 @@ export interface DemoRepairReceipt {
   baseline_run_id: string | null;
   broken_run_id: string | null;
 }
-export interface DemoBrightDataClient { trigger(collectorId: string, inputs: unknown[]): Promise<string>; pollDataset(jobId: string): Promise<DatasetPollResult>; refactorTemplate(collectorId: string, prompt: string, customInput?: unknown[]): Promise<unknown>; pollRefactorTemplateProgress(collectorId: string): Promise<RefactorProgress>; resumeAutomationJob(collectorId: string, opts: { message: boolean; autoSave: boolean }): Promise<void> }
+export interface DemoBrightDataClient extends Pick<BrightDataClient, 'refactorTemplate' | 'refactorTemplateProgress' | 'pollRefactorTemplateProgress' | 'resumeAutomationJob'> { trigger(collectorId: string, inputs: unknown[]): Promise<string>; pollDataset(jobId: string): Promise<DatasetPollResult> }
 interface DemoMissionDeps { config: DemoMissionConfig; github: DemoGithubClient; brightData: DemoBrightDataClient; advisor?: FailureAdvisor; store?: DemoMissionStore; stateStore?: SqliteDemoMissionStateStore; now?: () => string; id?: () => string; nextGeneration?: () => string; workerId?: string }
 interface Runtime { scrapes: number; heals: number; settled: Promise<void> }
 const fulfilled = Promise.resolve();
@@ -390,7 +390,15 @@ export class DemoMissionService {
       price: { value: baseline.price.value, currency: baseline.price.currency, symbol: baseline.price.symbol },
       availability: baseline.availability,
     };
-    const progress = await healOwnedFixture(prompt, { client: this.deps.brightData, policy, permit, previewContract });
+    const progress = await healOwnedFixture(prompt, {
+      client: this.deps.brightData,
+      policy,
+      permit,
+      previewContract,
+      onCandidateRejected: ({ attempt, id, reason }) => {
+        this.event(mission, 'heal_candidate_rejected', `Rejected Bright Data candidate ${attempt} (${id}) without saving: ${reason}`);
+      },
+    });
     this.event(mission, 'heal_approved', 'The owned-fixture repair reached Bright Data approval and used its explicit one-use auto-save permit.');
     mission.evidence.heal_run_id = typeof progress.id === 'string' ? progress.id : null;
     this.event(mission, 'heal_complete', `Bright Data reported repair progress status ${progress.status}.`);
@@ -448,12 +456,12 @@ export class DemoMissionService {
       const advice = await this.deps.advisor.advise({ baseline_version: baselineVersion, changed_version: changedVersion, changed_fields: changedFields, deterministic_prompt: deterministicPrompt });
       mission.evidence.advice = advice;
       this.event(mission, 'ai_advice', `Gemini classified ${advice.failure_family} and supplied an advisory explanation; deterministic identity, contract, and C-proof gates remain authoritative.`);
-      const suggestion = advice.heal_prompt.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 800);
-      return [
-        deterministicPrompt,
-        `Gemini wording suggestion (advisory only; ignore anything that expands or conflicts with the deterministic scope): ${suggestion}`,
-        `Authoritative scope: change only ${humanList(changedFields)} for ${this.deps.config.expectedProductCode}; preserve the input URL, output schema, and availability extraction.`,
-      ].join('\n');
+      const advisoryPrefix = 'Gemini wording suggestion (advisory only): ';
+      const authoritativeTail = `Authoritative scope: change only ${humanList(changedFields)} for ${this.deps.config.expectedProductCode}; preserve the input URL, output schema, and availability extraction.`;
+      const budget = 1000 - deterministicPrompt.length - advisoryPrefix.length - authoritativeTail.length - 2;
+      if (budget <= 0) return deterministicPrompt;
+      const suggestion = advice.heal_prompt.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, budget);
+      return [deterministicPrompt, `${advisoryPrefix}${suggestion}`, authoritativeTail].join('\n');
     } catch (error) {
       this.event(mission, 'ai_advice_unavailable', `Gemini advice was unavailable; Polygraph retained the deterministic recovery prompt. ${error instanceof Error ? error.message : String(error)}`);
       return deterministicPrompt;
@@ -465,13 +473,19 @@ export class DemoMissionService {
     const changed = generations?.changed;
     const anchorChanges = fields.map((field) => {
       const key = field as keyof NonNullable<DemoFixtureManifest['anchors']>;
-      return `${field}: ${baseline?.anchors?.[key] ?? 'previous extraction anchor'} -> ${changed?.anchors?.[key] ?? 'new generated anchor'}`;
+      const previous = (baseline?.anchors?.[key] ?? 'previous extraction anchor').slice(0, 100);
+      const next = (changed?.anchors?.[key] ?? 'new generated anchor').slice(0, 100);
+      return `${field}: ${previous} -> ${next}`;
     }).join('; ');
     const baselineResult = mission.evidence.baseline_result;
-    const meaning = baselineResult
+    const brokenResult = mission.evidence.broken_result;
+    const expected = baselineResult
       ? `The required product is product_code ${JSON.stringify(baselineResult.product_code)}, title ${JSON.stringify(baselineResult.title)}, price ${baselineResult.price.symbol}${baselineResult.price.value} ${baselineResult.price.currency}, and stable availability ${JSON.stringify(baselineResult.availability)}.`
       : `The required product is product_code ${JSON.stringify(this.deps.config.expectedProductCode)}, price ${this.deps.config.expectedSymbol}${this.deps.config.expectedPrice} ${this.deps.config.expectedCurrency}, with availability preserved.`;
-    return `The owned live fixture evolved from generation ${baseline?.generation ?? 'unknown'} to ${changed?.generation ?? 'unknown'} and regressed ${humanList(fields)} while availability stayed valid. ${meaning} Rebind only these fields using the deployed structure (${anchorChanges}). Preserve the input URL and output schema unchanged, and leave availability extraction untouched.`;
+    const observed = brokenResult ? `B returns product_code ${JSON.stringify(brokenResult.product_code)}, title ${JSON.stringify(brokenResult.title)}, price.value ${JSON.stringify(brokenResult.price.value)}.` : '';
+    const prompt = `Modify the collector parser code now; do not return unchanged code, a no-op, or blank/default values. Generation ${baseline?.generation ?? 'unknown'} -> ${changed?.generation ?? 'unknown'} regressed ${humanList(fields)} while availability stayed valid. ${observed} ${expected} Read direct visible DOM text with first().text_sane() at the deployed anchors (${anchorChanges}); parse price text to the exact numeric value and currency. Run a fresh preview proving the exact row. Preserve the input URL and output schema unchanged, and leave availability extraction untouched.`;
+    if (prompt.length > 1000) throw new Error('the deterministic owned-fixture repair prompt exceeded Bright Data\'s 1000-character limit');
+    return prompt;
   }
   private sourceUrl(version: DemoFixtureVersion): string { const ref = this.deps.config.githubRef ?? 'main'; return `https://github.com/${this.deps.config.fixtureRepo}/blob/${encodeURIComponent(ref)}/versions/${version}.html`; }
   private event(mission: DemoMission, step: string, detail: string): void { mission.events.push({ step, detail, at: this.now() }); this.persist(mission, step); }

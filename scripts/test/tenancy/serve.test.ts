@@ -58,7 +58,8 @@ function createFakeDemoService(): DemoMissionService {
   const brightData: DemoBrightDataClient = {
     async trigger() { return 'job-1'; },
     async pollDataset() { return { rows: [{ product_code: 'Product/Code-123', title: 'Aster QuietWave Wireless Noise-Cancelling Headphones, 40-hour Battery, Midnight Blue', price: { value: 51.77, currency: 'GBP', symbol: '£' }, availability: 'In stock' }], ambiguous: false }; },
-    async refactorTemplate() { return {}; },
+    async refactorTemplateProgress() { return { status: 'done', id: 'heal-old' }; },
+    async refactorTemplate() { return { id: 'heal-1' }; },
     async pollRefactorTemplateProgress() { return { status: 'completed', id: 'heal-1' }; },
     async resumeAutomationJob() {},
   };

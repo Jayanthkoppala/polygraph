@@ -397,6 +397,16 @@ export interface RefactorProgress {
   [key: string]: unknown;
 }
 
+export interface RefactorPollBehavior {
+  stopAtApproval?: boolean;
+  /** Once known, every meaningful result must belong to this operation. */
+  expectedJobId?: string;
+  /** Explicitly fenced older operations that may remain visible briefly. */
+  staleJobIds?: readonly string[];
+  /** Return the first nonblank operation not present in `staleJobIds`. */
+  returnOnFreshJobId?: boolean;
+}
+
 export interface ResumeAutomationJobOptions {
   /** true = approve the proposed diff, false = reject it. */
   message: boolean;
@@ -803,14 +813,35 @@ export class BrightDataClient {
   async pollRefactorTemplateProgress(
     collectorId: string,
     opts: PollOptions = {},
-    behavior: { stopAtApproval?: boolean } = {}
+    behavior: RefactorPollBehavior = {}
   ): Promise<RefactorProgress> {
     const poll = resolvePoll(opts, REFACTOR_POLL_DEFAULTS);
     const stopAtApproval = behavior.stopAtApproval ?? true;
+    const staleJobIds = new Set(behavior.staleJobIds ?? []);
     const start = Date.now();
 
     for (;;) {
       const progress = await this.refactorTemplateProgress(collectorId);
+      const progressId = typeof progress.id === 'string' ? progress.id.trim() : '';
+      if (behavior.expectedJobId) {
+        if (progressId !== behavior.expectedJobId) {
+          if (progressId && !staleJobIds.has(progressId)) {
+            throw new BrightDataError(
+              `refactor_template provider-state collision for ${collectorId}: expected ${behavior.expectedJobId}, received ${progressId}`,
+              undefined,
+              progress
+            );
+          }
+          await this.waitOrTimeout(behavior.expectedJobId, start, poll);
+          continue;
+        }
+      } else if (behavior.returnOnFreshJobId) {
+        if (!progressId || staleJobIds.has(progressId)) {
+          await this.waitOrTimeout(collectorId, start, poll);
+          continue;
+        }
+        return progress;
+      }
       const status = String(progress.status ?? '').toLowerCase();
 
       if (REFACTOR_SUCCESS_STATES.has(status) || (stopAtApproval && isAwaitingApproval(progress))) return progress;
