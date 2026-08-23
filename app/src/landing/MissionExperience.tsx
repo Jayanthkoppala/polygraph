@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { ArrowRight, ArrowSquareOut, GithubLogo, GlobeHemisphereWest } from '@phosphor-icons/react';
+import { ArrowRight, ArrowSquareOut, CircleNotch, GithubLogo, GlobeHemisphereWest } from '@phosphor-icons/react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import CardSwap, { Card } from '@/components/CardSwap';
@@ -213,14 +213,48 @@ function BaselineScene({ mission, request, reducedMotion, onShift }: { mission: 
   const baseline = eventFor(mission, 'baseline_a');
   const facts = missionFacts(mission);
   const ready = mission.status === 'waiting' && Boolean(baseline);
+  const collectingBaseline = !ready && request !== 'shift';
+  const actionState = request === 'shift' ? 'shift' : collectingBaseline ? 'collect' : 'ready';
+  const actionLabel = request === 'shift'
+    ? 'Evolving the live store…'
+    : collectingBaseline
+      ? 'Scraping V1 baseline…'
+      : 'Evolve the live store';
+  const actionBusy = actionState !== 'ready';
   const lead = ready ? 'For this test, we built a live evolving store and connected it to a real Bright Data collector.' : 'For this test, we built a live evolving store. Bright Data is collecting its current healthy generation now.';
+  const actionNote = collectingBaseline
+    ? 'Bright Data is running the unchanged collector against V1 now. This action unlocks only after Polygraph stores the healthy result.'
+    : 'One click publishes a new recorded generation. Polygraph then runs compare, repair, and proof automatically.';
   return (
     <ConversationScene state="state-v1" activeStage={0} reducedMotion={reducedMotion} generation={generationLabel(mission, 'baseline')} visual={<LiveStoreFrame mission={mission} />}>
       <StoryLine>{reducedMotion ? lead : <span className="pg-type-guidance"><span className="pg-visually-hidden">{lead}</span><span aria-hidden="true"><TextType as="span" text={lead} loop={false} typingSpeed={18} /></span></span>}</StoryLine>
       <StoryLine quiet>{ready ? `Generation ${generationLabel(mission, 'baseline')} returned ${facts.productCode}, its full product title, ${facts.price}, and ${facts.availability}. Polygraph saved all four fields as the healthy reference before anything changes.` : 'Once that real result arrives, Polygraph will remember the product code, title, price, and availability before anything changes.'}</StoryLine>
       <ProofSources liveUrl={mission.evidence.liveFixtureUrl} />
-      <ShinyButton className="pg-kickoff-action cursor-target" type="button" onClick={onShift} disabled={!ready || request !== 'idle'} data-testid="shift-v2-btn">{request === 'shift' ? 'Evolving the live store…' : 'Evolve the live store'}<ArrowRight weight="bold" aria-hidden="true" /></ShinyButton>
-      <p className="pg-kickoff-note">One click publishes a new recorded generation. Polygraph then runs compare, repair, and proof automatically.</p>
+      <ShinyButton
+        className="pg-kickoff-action cursor-target"
+        type="button"
+        onClick={onShift}
+        disabled={!ready || request !== 'idle'}
+        aria-busy={actionBusy}
+        data-loading={actionBusy ? 'true' : undefined}
+        data-testid="shift-v2-btn"
+      >
+        <AnimatePresence mode="popLayout" initial={false}>
+          <motion.span
+            key={actionState}
+            className="pg-kickoff-action__state"
+            initial={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.25, filter: 'blur(4px)' }}
+            animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+            exit={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.25, filter: 'blur(4px)' }}
+            transition={reducedMotion ? { duration: 0 } : { type: 'spring', duration: 0.3, bounce: 0 }}
+          >
+            {actionBusy ? <CircleNotch className="pg-kickoff-spinner" weight="bold" aria-hidden="true" /> : null}
+            <span>{actionLabel}</span>
+            {!actionBusy ? <ArrowRight weight="bold" aria-hidden="true" /> : null}
+          </motion.span>
+        </AnimatePresence>
+      </ShinyButton>
+      <p className="pg-kickoff-note" role="status" data-testid="baseline-action-note">{actionNote}</p>
     </ConversationScene>
   );
 }

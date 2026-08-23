@@ -1502,6 +1502,24 @@ body.polygraph-landing-lock .global-chrome {
   animation: pg-conversation-enter 420ms 220ms cubic-bezier(.23, 1, .32, 1) forwards;
 }
 
+.pg-kickoff-action__state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.pg-kickoff-spinner {
+  width: 18px;
+  height: 18px;
+  animation: pg-kickoff-spin 850ms linear infinite;
+}
+
+@keyframes pg-kickoff-spin {
+  to { transform: rotate(360deg); }
+}
+
 .pg-kickoff-note {
   position: absolute;
   top: 60px;
@@ -1515,6 +1533,10 @@ body.polygraph-landing-lock .global-chrome {
   line-height: 1.38;
   opacity: 0;
   animation: pg-conversation-enter 420ms 300ms cubic-bezier(.23, 1, .32, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pg-kickoff-spinner { animation: none; }
 }
 
 .pg-conversation-line {

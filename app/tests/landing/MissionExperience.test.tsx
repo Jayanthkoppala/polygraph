@@ -93,6 +93,19 @@ const baselineMission: MissionState = {
   lastError: null,
 };
 
+const collectingMission: MissionState = {
+  ...baselineMission,
+  status: 'running',
+  events: baselineEvents.filter((item) => item.step !== 'baseline_a'),
+  evidence: {
+    ...evidence,
+    baselineRunId: null,
+    baselineRunUrl: null,
+    runId: null,
+    baselineResult: null,
+  },
+};
+
 const deployMission: MissionState = {
   ...baselineMission,
   status: 'running',
@@ -173,6 +186,31 @@ describe('MissionExperience live mission story', () => {
       await Promise.resolve();
     });
     expect(missionApi.createMission).toHaveBeenCalledOnce();
+  });
+
+  it('shows real baseline collection progress before unlocking the evolve action', async () => {
+    let resolvePoll!: (mission: MissionState) => void;
+    missionApi.createMission.mockResolvedValue(collectingMission);
+    missionApi.getMission.mockReturnValue(new Promise((resolve) => { resolvePoll = resolve; }));
+    renderMission('proof');
+
+    const loadingAction = await screen.findByRole('button', { name: /scraping v1 baseline/i });
+    expect(loadingAction).toBeDisabled();
+    expect(loadingAction).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByTestId('baseline-action-note')).toHaveTextContent(/running the unchanged collector against v1/i);
+    fireEvent.click(loadingAction);
+    expect(missionApi.shiftMission).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(missionApi.getMission).toHaveBeenCalledWith('mission-1'));
+    await act(async () => {
+      resolvePoll(baselineMission);
+      await Promise.resolve();
+    });
+
+    const readyAction = await screen.findByRole('button', { name: /evolve the live store/i });
+    expect(readyAction).toBeEnabled();
+    expect(readyAction).toHaveAttribute('aria-busy', 'false');
+    expect(screen.getByTestId('baseline-action-note')).toHaveTextContent(/one click publishes a new recorded generation/i);
   });
 
   it('renders the complete cinematic story from mission API state and real evidence fields', async () => {
