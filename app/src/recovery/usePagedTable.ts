@@ -27,6 +27,9 @@ export interface PagedTableState<T> {
    * assuming every prior page was exactly `pageSize` long. */
   startIndex: number;
   reset: (collectorId: string | null) => void;
+  /** Re-read the visible page without changing its cursor, size, or loading UI.
+   * Used by the recovery workspace while Bright Data deliveries arrive. */
+  refresh: () => void;
   goNext: () => void;
   goPrev: () => void;
   setPageSize: (size: number) => void;
@@ -56,10 +59,10 @@ export function usePagedTable<T>(
   const token = useRef(0);
 
   const load = useCallback(
-    async (collectorId: string, targetPage: number, size: number, initial: boolean) => {
+    async (collectorId: string, targetPage: number, size: number, mode: 'initial' | 'changing' | 'background') => {
       const myToken = ++token.current;
-      if (initial) setLoading(true);
-      else setChanging(true);
+      if (mode === 'initial') setLoading(true);
+      if (mode === 'changing') setChanging(true);
       try {
         const before = cursors.current[targetPage - 1] ?? null;
         const result = await loader(collectorId, before, size);
@@ -72,15 +75,20 @@ export function usePagedTable<T>(
         setPage(targetPage);
       } catch {
         if (myToken !== token.current) return;
-        setItems([]);
-        setTotal(0);
-        setNextBefore(null);
-        setStartIndex(0);
-        setPage(1);
+        // A transient polling failure must not erase the last accepted rows or
+        // kick an operator back to page one. Selection/page changes still keep
+        // the established empty-state behaviour.
+        if (mode !== 'background') {
+          setItems([]);
+          setTotal(0);
+          setNextBefore(null);
+          setStartIndex(0);
+          setPage(1);
+        }
       } finally {
         if (myToken === token.current) {
-          setLoading(false);
-          setChanging(false);
+          if (mode === 'initial') setLoading(false);
+          if (mode === 'changing') setChanging(false);
         }
       }
     },
@@ -103,22 +111,28 @@ export function usePagedTable<T>(
         setChanging(false);
         return;
       }
-      void load(collectorId, 1, pageSizeState, true);
+      void load(collectorId, 1, pageSizeState, 'initial');
     },
     [load, pageSizeState],
   );
+
+  const refresh = useCallback(() => {
+    const collectorId = collectorRef.current;
+    if (!collectorId) return;
+    void load(collectorId, page, pageSizeState, 'background');
+  }, [load, page, pageSizeState]);
 
   const goNext = useCallback(() => {
     const collectorId = collectorRef.current;
     if (!collectorId || nextBefore == null) return;
     cursors.current[page] = nextBefore;
-    void load(collectorId, page + 1, pageSizeState, false);
+    void load(collectorId, page + 1, pageSizeState, 'changing');
   }, [load, nextBefore, page, pageSizeState]);
 
   const goPrev = useCallback(() => {
     const collectorId = collectorRef.current;
     if (!collectorId || page <= 1) return;
-    void load(collectorId, page - 1, pageSizeState, false);
+    void load(collectorId, page - 1, pageSizeState, 'changing');
   }, [load, page, pageSizeState]);
 
   const setPageSize = useCallback(
@@ -128,7 +142,7 @@ export function usePagedTable<T>(
       cursors.current = [null];
       starts.current = [0];
       if (!collectorId) return;
-      void load(collectorId, 1, size, false);
+      void load(collectorId, 1, size, 'changing');
     },
     [load],
   );
@@ -144,10 +158,11 @@ export function usePagedTable<T>(
       hasNext: nextBefore != null,
       startIndex,
       reset,
+      refresh,
       goNext,
       goPrev,
       setPageSize,
     }),
-    [items, loading, changing, page, pageSizeState, total, nextBefore, startIndex, reset, goNext, goPrev, setPageSize],
+    [items, loading, changing, page, pageSizeState, total, nextBefore, startIndex, reset, refresh, goNext, goPrev, setPageSize],
   );
 }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { RecoveryWorkspace } from '@/recovery/RecoveryWorkspace';
 
@@ -350,5 +350,64 @@ describe('RecoveryWorkspace — pagination', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Waiting collector/ }));
     expect(await screen.findByText('run-waiting-page-1')).toBeInTheDocument();
     expect(screen.queryByText('run-waiting-page-2')).not.toBeInTheDocument();
+  });
+});
+
+describe('RecoveryWorkspace — live delivery polling', () => {
+  it('updates both selected-collector tables after the polling interval without resetting the visible page', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let deliveriesReads = 0;
+    let repairsReads = 0;
+    const liveDelivery = (id: number, runId: string, receivedAt: string) => ({
+      id,
+      received_at: receivedAt,
+      source: 'webhook',
+      provider_run_id: runId,
+      row_count: 5,
+      verdict: 'PASS',
+      cause: null,
+      is_baseline: false,
+      preview: [],
+    });
+    mockApi({
+      'GET /api/recovery/collectors': () => ({ collectors: [baseCollectors()[0]] }),
+      'GET /api/recovery/deliveries': () => {
+        deliveriesReads += 1;
+        return deliveriesReads === 1
+          ? { items: [liveDelivery(1, 'run-before-poll', '2026-08-22T10:00:00.000Z')], next_before: null, total: 1 }
+          : { items: [liveDelivery(2, 'run-from-webhook', '2026-08-22T10:05:00.000Z')], next_before: null, total: 2 };
+      },
+      'GET /api/recovery/repairs': () => {
+        repairsReads += 1;
+        return repairsReads === 1
+          ? emptyRepairs()
+          : {
+              items: [{
+                id: 'receipt-from-webhook', collector_id: 'c_waiting', collector_name: 'Waiting collector',
+                detected_at: '2026-08-22T10:01:00.000Z', verified_at: '2026-08-22T10:05:00.000Z',
+                fields_restored: ['price'], template_before: 'v1', template_after: 'v2',
+                receipt_sha256: 'aabbccddeeff0011', status: 'VERIFIED',
+              }],
+              next_before: null,
+              total: 1,
+            };
+      },
+    });
+    render(<MemoryRouter><RecoveryWorkspace /></MemoryRouter>);
+
+    expect(await screen.findByText('run-before-poll')).toBeInTheDocument();
+    expect(screen.getAllByText('Page 1')).toHaveLength(2);
+    expect(screen.getByText('No verified repairs for this collector yet.')).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+
+    expect(await screen.findByText('run-from-webhook')).toBeInTheDocument();
+    expect(screen.queryByText('run-before-poll')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Page 1')).toHaveLength(2);
+    expect(screen.getByText('price')).toBeInTheDocument();
+    expect(screen.queryByText('Loading deliveries…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Loading repairs…')).not.toBeInTheDocument();
   });
 });

@@ -95,6 +95,17 @@ export function RecoveryWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
+  useEffect(() => {
+    if (!selectedId) return;
+    // Bright Data pushes completed runs asynchronously. Keep the operator on
+    // their current cursor while periodically asking for newer rows.
+    const id = window.setInterval(() => {
+      deliveriesPager.refresh();
+      repairsPager.refresh();
+    }, POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [selectedId, deliveriesPager.refresh, repairsPager.refresh]);
+
   const handleSelect = useCallback((id: string) => setSelectedId(id), []);
 
   const handleToggleAutoHeal = useCallback((collector: RecoveryCollector, enabled: boolean) => {
