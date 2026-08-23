@@ -40,6 +40,8 @@ bash "$here/remote.sh" "$vm" exec "docker build -t ${image} ~/${release_dir}"
 
 echo "==> checking ~/${env_file} exists on ${vm}"
 bash "$here/remote.sh" "$vm" exec "test -f ~/${env_file} || { echo 'missing ~/${env_file} — see deploy/README.md' >&2; exit 1; }"
+echo "==> checking automatic recovery is enabled on ${vm}"
+bash "$here/remote.sh" "$vm" exec "grep -qx 'POLYGRAPH_AUTO_RECOVERY=1' ~/${env_file} || { echo 'missing POLYGRAPH_AUTO_RECOVERY=1 in ~/${env_file} — refusing a ledger-only deployment' >&2; exit 1; }"
 
 echo "==> swapping container (previous kept as polygraph-pre-${sha} for rollback)"
 bash "$here/remote.sh" "$vm" exec "
