@@ -100,6 +100,23 @@ npm run build:all
 POLYGRAPH_MASTER_KEY=<32-byte hex> npm run serve
 ```
 
+### One local product URL
+
+For local hosted-product work, use one command and one URL:
+
+```bash
+POLYGRAPH_MASTER_KEY=<32-byte hex> npm run local
+```
+
+Open **http://127.0.0.1:8080**. This command first checks whether another process
+already owns port 8080, builds the React app, then serves the app and tenant API
+from the same hosted server. It deliberately refuses to start a second copy.
+
+`app/npm run dev` is optional frontend-only work on fixed port 5174; it proxies API
+calls to 8080 and exits when 5174 is already in use. It is not the supported local
+product URL. The legacy `watch`, demo, and fixture commands are separate tools and
+must not be used to judge the hosted product.
+
 Each account connects its own Bright Data key and gets its own collectors, schedule, and
 ledger chain starting from its own genesis hash. See [`deploy/README.md`](deploy/README.md)
 for the environment contract and why exactly one instance may ever run.
