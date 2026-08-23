@@ -41,16 +41,6 @@ export function GlobalChrome({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(PROOF_REQUEST_EVENT, updateProofState);
   }, []);
 
-  useEffect(() => {
-    if (location.pathname !== '/' || location.hash !== '#mission-summary') return;
-    const frame = window.requestAnimationFrame(() => {
-      const overview = document.getElementById('mission-summary');
-      overview?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' });
-      overview?.focus({ preventScroll: true });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [location.hash, location.pathname, reducedMotion]);
-
   function openProof() {
     if (location.pathname === '/live-proof') {
       window.dispatchEvent(new Event(START_PROOF_EVENT));
@@ -60,13 +50,7 @@ export function GlobalChrome({ children }: { children: ReactNode }) {
   }
 
   function showOverview() {
-    if (location.pathname !== '/') {
-      navigate('/#mission-summary');
-      return;
-    }
-    const overview = document.getElementById('mission-summary');
-    overview?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' });
-    overview?.focus({ preventScroll: true });
+    navigate('/how-it-works');
   }
 
   return (
@@ -99,7 +83,7 @@ export function GlobalChrome({ children }: { children: ReactNode }) {
         </button>
         <nav className="poly-nav-links" aria-label="Primary">
           <button type="button" data-proof-action aria-current={location.pathname === '/live-proof' ? 'page' : undefined} disabled={proofPending} onClick={openProof}>Live proof</button>
-          <button type="button" onClick={showOverview}>How it works</button>
+          <button type="button" aria-current={location.pathname === '/how-it-works' ? 'page' : undefined} onClick={showOverview}>How it works</button>
           <Link to="/receipts" aria-current={location.pathname === '/receipts' ? 'page' : undefined}>Receipts</Link>
         </nav>
         <div className="poly-nav-actions">
