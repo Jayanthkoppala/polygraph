@@ -104,27 +104,46 @@ most 20 codes; M016). `GET /api/recovery/deliveries` returns them as
 "Errors" column ("2 · crawl_error", every code in the tooltip). The preview
 stays data rows only.
 
-Grading sees the codes the way a CLI run sees hp_errors — `RunResult.errors`,
-classified by `src/core/classifier.ts` and folded into the cause by
-`deriveCause` — with one tolerance a CLI run gets from its retry loop and a
-webhook cannot: transient codes (`retryable_transient`, e.g. `crawl_error`,
-`timeout`) are left out of grading while they are fewer than the data rows,
-so 58 good rows plus 2 transient failures still PASS. Once error records are
-at least as numerous as data rows they all count, so a majority-error
-delivery never passes and never becomes a baseline. Block codes (`blocked`,
-`detect_block`, `brul`) always count and yield cause `BLOCKED`, which policy
-turns into `HELD/BLOCKED` with no cycle. Terminal/structural codes
-(`dead_page`, `parse_error`, …) always count and yield cause `STRUCTURAL`;
-a delivery made only of them has no data row to measure, so policy treats
-every baseline field as missing (baseline mode) or the delivery as
-structurally empty (bootstrap mode) and the cycle is eligible like any other
-structural incident.
+A customer routinely runs with a few bad inputs — dead URLs, 404s — and those
+arrive as error records beside healthy data rows. That must read as
+**"Healthy · N errors"**, never as a structural break, and must never start a
+paid repair. Repair is warranted only when the data rows themselves regress
+(fields missing, retyped or collapsed against the baseline) or when error
+records *dominate* the delivery with structural codes (the scraper can
+extract nothing for most inputs). Two thresholds in
+`src/tenancy/delivery-partition.ts` encode this, measured as a share of every
+record in the delivery (`errors / (errors + data rows)`):
 
-Policy evidence (`policy_evidence_json`) records `error_summary`
-(`{ count, codes }`, counts only — never a message or an input). When the
-incident carries structural codes, the heal prompt gets one hint line of at
-most 120 characters listing them with counts (`Provider error codes:
-dead_page×58, parse_error×2`); transient codes never reach the prompt.
+| Threshold | Value | Effect |
+| --- | --- | --- |
+| `ERROR_DOMINANCE_SHARE` | 0.5 | At or above it every error record reaches the grader as `RunResult.errors` (classified by `src/core/classifier.ts`, folded into the cause by `deriveCause`), so a majority-error delivery never passes and never becomes a baseline. Below it, error records do not affect the verdict: they are recorded (`error_count`, `error_codes_json`, the Errors column, policy `error_summary`) and the verdict is decided purely by the data rows. |
+| `BLOCK_HOLD_SHARE` | 0.2 | Block / compliance codes (`blocked`, `detect_block`, `brul`, …) below the dominance share still reach the grader when the blocking records are at least 20% of the delivery, yielding cause `BLOCKED` and `HELD/BLOCKED` with no cycle. Fewer are noise: a delivery of 60 healthy rows and 5 `blocked` records passes. |
+
+Worked examples: 60 healthy rows + 1 `dead_page` → `PASS`, baseline refreshed,
+no cycle, `error_count = 1`. 60 healthy + 15 `blocked` (20%) → `HELD/BLOCKED`,
+no cycle. 60 healthy + 5 `blocked` (8%) → `PASS`. 10 healthy rows + 30
+`dead_page` (75%) against a baseline → `STRUCTURAL`, eligible cycle.
+
+Policy applies the same shares. Structural eligibility *from error codes
+alone* requires the dominance share with at least one terminal/structural
+code (`dead_page`, `parse_error`, …), in both modes: against a baseline, every
+required field is then treated as missing for the failed share of inputs
+(the few intact rows do not veto the repair); without a baseline, the error
+records count toward the bootstrap minimum and the delivery counts as
+structurally empty. Below the share, eligibility is decided purely on the
+data-row diagnosis, and a block hold needs the block share.
+
+A `PASS` delivery with fewer than 50% error records refreshes the baseline
+like any healthy delivery; the baseline stores the data rows only, never an
+error record.
+
+Policy evidence (`policy_evidence_json`) always records `error_summary`
+(`{ count, codes }`, counts only — never a message or an input), whatever the
+share. The heal prompt gets one hint line of at most 120 characters listing
+structural codes with counts (`Provider error codes: dead_page×58,
+parse_error×2`) only when those codes contributed to eligibility, i.e. they
+dominated the delivery; transient codes and sub-dominant minorities never
+reach the prompt.
 
 ### Test webhooks never shape the baseline
 

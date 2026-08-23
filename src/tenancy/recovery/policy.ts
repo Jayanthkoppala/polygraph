@@ -22,6 +22,7 @@ import { ANTI_BOT_BLOCK_CODES, classifyErrorCode } from '../../core/classifier.j
 import type { Policy } from '../../core/config.js';
 import type { Cause, Evidence, OutputSchema, RunError } from '../../core/types.js';
 import { composeBootstrapHealPrompt, composeHealPrompt, type GovernorGate } from '../../loop/policy.js';
+import { BLOCK_HOLD_SHARE, ERROR_DOMINANCE_SHARE, errorShare } from '../delivery-partition.js';
 import type { DeliverySource } from '../delivery-store.js';
 
 /** The heal policy the recovery governor applies per tenant+collector.
@@ -282,10 +283,14 @@ function round(n: number): number {
 
 const BLOCK_CODE_PATTERN = /captcha|login|access|forbidden|denied|brul|blocked/i;
 
-function blockingErrorCodes(errors: RunError[] | undefined): string[] {
-  return (errors ?? [])
-    .map((e) => e.error_code)
-    .filter((code) => ANTI_BOT_BLOCK_CODES.has(code) || BLOCK_CODE_PATTERN.test(code));
+/** Block codes that hold the collector: only when the blocking records are at
+ * least `BLOCK_HOLD_SHARE` of the delivery (data rows + error records). A
+ * handful beside a healthy majority is noise, not a blocking target. */
+function blockingErrorCodes(incident: RecoveryEligibilityInput['incident']): string[] {
+  const errors = incident.errors ?? [];
+  const blocking = errors.filter((e) => ANTI_BOT_BLOCK_CODES.has(e.error_code) || BLOCK_CODE_PATTERN.test(e.error_code));
+  if (errorShare(incident.rows.length, errors.length, blocking.length) < BLOCK_HOLD_SHARE) return [];
+  return blocking.map((e) => e.error_code);
 }
 
 /** Codes the classifier calls terminal/structural — the target, input or
@@ -295,6 +300,21 @@ function structuralErrorCodes(errors: RunError[] | undefined): string[] {
   return Array.from(
     new Set((errors ?? []).map((e) => e.error_code).filter((code) => classifyErrorCode(code).class === 'terminal_structural'))
   ).sort();
+}
+
+/**
+ * True when error records dominate the delivery (`ERROR_DOMINANCE_SHARE`)
+ * AND at least one of them is a terminal/structural code: the scraper can
+ * extract nothing for most inputs. This is the only way error codes alone
+ * make an incident structurally eligible; below the share, eligibility is
+ * decided purely on the data rows and the codes are evidence only.
+ */
+function structuralErrorsDominate(incident: RecoveryEligibilityInput['incident']): boolean {
+  const errors = incident.errors ?? [];
+  return (
+    structuralErrorCodes(errors).length > 0 &&
+    errorShare(incident.rows.length, errors.length) >= ERROR_DOMINANCE_SHARE
+  );
 }
 
 function summarizeErrors(errors: RunError[] | undefined): ErrorSummary {
@@ -425,22 +445,24 @@ function evaluateBootstrap(
   }
   if (input.hasActiveCycle) return no('ACTIVE_CYCLE', 'a recovery cycle is already in progress');
 
-  const blockCodes = blockingErrorCodes(incident.errors);
+  const blockCodes = blockingErrorCodes(incident);
   if (incident.cause === 'BLOCKED' || blockCodes.length > 0 || hasBlockEvidence(incident.evidence)) {
     const codes = blockCodes.length > 0 ? ` (${blockCodes.join(', ')})` : '';
     return no('BLOCKED', `target is blocking or restricting access${codes}; not a template fault`);
   }
-  // "Not contradicted": no identity row at all is fine here (the grader
+  // "Not contradicted: no identity row at all is fine here (the grader
   // cannot compare a key that was never extracted), a failed one is not.
   const identity = incident.evidence.find((e) => e.check === 'identity');
   if (incident.cause === 'IDENTITY' || (identity !== undefined && !idOk)) {
     return no('IDENTITY_UNSTABLE', 'rows do not match the requested entity; a repair could not be verified');
   }
-  // A delivery made only of terminal/structural error records has no data
-  // row to measure fill on, but the provider has already said why: every
-  // input failed structurally. That is the "returns nothing" shape too.
+  // A delivery dominated by terminal/structural error records may have few
+  // or no data rows to measure fill on, but the provider has already said
+  // why: most inputs failed structurally. That is the "returns nothing"
+  // shape too. Below the dominance share the codes are evidence only and the
+  // data rows decide.
   const structuralCodes = structuralErrorCodes(incident.errors);
-  const structuralOnly = incident.rows.length === 0 && structuralCodes.length > 0;
+  const structuralOnly = structuralErrorsDominate(incident);
   const recordCount = incident.rows.length + (structuralOnly ? (incident.errors?.length ?? 0) : 0);
   if (recordCount < BOOTSTRAP_MIN_ROWS) {
     return no(
@@ -473,13 +495,13 @@ function evaluateBootstrap(
       entity: input.collectorName?.trim() || 'entity',
       entityKey: input.entityKey ?? 'the entity key',
     }),
-    incident.errors
+    structuralOnly ? incident.errors : undefined
   );
   return {
     eligible: true,
     reason: 'ELIGIBLE',
     detail: structuralOnly
-      ? `bootstrap: no healthy baseline; every record is a structural provider error (${structuralCodes.join(', ')})`
+      ? `bootstrap: no healthy baseline; structural provider errors dominate the delivery (${structuralCodes.join(', ')})`
       : `bootstrap: no healthy baseline; every required field (${required.join(', ')}) is empty against the declared schema`,
     evidence,
   };
@@ -501,7 +523,7 @@ export function evaluateRecoveryEligibility(input: RecoveryEligibilityInput): Re
       : [];
   const regressed = diagnosis.filter((d) => d.regression !== null).map((d) => d.field);
   const retained = diagnosis.filter((d) => d.regression === null).map((d) => d.field);
-  const damaged = diagnosis.filter((d) => d.damaged).map((d) => d.field);
+  let damaged = diagnosis.filter((d) => d.damaged).map((d) => d.field);
 
   const evidence: RecoveryPolicyEvidence = {
     verdict: incident.verdict,
@@ -540,7 +562,7 @@ export function evaluateRecoveryEligibility(input: RecoveryEligibilityInput): Re
   }
   if (input.hasActiveCycle) return no('ACTIVE_CYCLE', 'a recovery cycle is already in progress');
 
-  const blockCodes = blockingErrorCodes(incident.errors);
+  const blockCodes = blockingErrorCodes(incident);
   if (incident.cause === 'BLOCKED' || blockCodes.length > 0 || hasBlockEvidence(incident.evidence)) {
     const codes = blockCodes.length > 0 ? ` (${blockCodes.join(', ')})` : '';
     return no('BLOCKED', `target is blocking or restricting access${codes}; not a template fault`);
@@ -552,7 +574,8 @@ export function evaluateRecoveryEligibility(input: RecoveryEligibilityInput): Re
   // provider's own error records say every input failed structurally, in
   // which case the whole baseline is "missing" and the diagnosis below
   // reports exactly that.
-  if (incident.rows.length === 0 && structuralErrorCodes(incident.errors).length === 0) {
+  const errorsDominate = structuralErrorsDominate(incident);
+  if (incident.rows.length === 0 && !errorsDominate) {
     return no('EMPTY_DELIVERY', 'empty delivery is ambiguous (no rows vs. expired snapshot)');
   }
   if (!input.schema) return no('NO_SCHEMA', 'collector has no declared output schema');
@@ -564,9 +587,28 @@ export function evaluateRecoveryEligibility(input: RecoveryEligibilityInput): Re
   if (incident.verdict === 'PASS' && !typeChanged) return no('HEALTHY', 'delivery passed every check');
 
   const structural =
-    (incident.cause === 'STRUCTURAL' && structuralEvidenceFailed(incident.evidence)) || typeChanged;
+    (incident.cause === 'STRUCTURAL' && structuralEvidenceFailed(incident.evidence)) || typeChanged || errorsDominate;
   if (!structural) {
     return no('NOT_STRUCTURAL', `cause ${incident.cause} is not a structural template fault`);
+  }
+  if (regressed.length === 0 && errorsDominate) {
+    // The few data rows that did arrive are intact, but most inputs
+    // extracted nothing: treat every field the baseline filled as missing
+    // for the share of inputs that failed — the same shape a zero-row
+    // structural delivery diagnoses to — so the heal prompt aims at the
+    // whole contract rather than at nothing.
+    const failed = errorShare(incident.rows.length, incident.errors?.length ?? 0);
+    for (const d of diagnosis) {
+      if (d.baseline_fill === 0) continue;
+      d.regression = 'missing';
+      d.incident_fill = round(d.incident_fill * (1 - failed));
+      d.damaged = false;
+      regressed.push(d.field);
+    }
+    damaged = [];
+    evidence.regressed_fields = regressed;
+    evidence.retained_fields = diagnosis.filter((d) => d.regression === null).map((d) => d.field);
+    evidence.damaged_retained_fields = damaged;
   }
   if (regressed.length === 0) {
     return no('NO_REGRESSED_FIELDS', 'no field is missing, retyped or collapsed relative to the baseline');
@@ -596,13 +638,16 @@ export function evaluateRecoveryEligibility(input: RecoveryEligibilityInput): Re
       date: input.now.slice(0, 10),
       entityKey: input.entityKey ?? 'the entity key',
     }),
-    incident.errors
+    // Codes reach the prompt only when they contributed to eligibility.
+    errorsDominate ? incident.errors : undefined
   );
 
   return {
     eligible: true,
     reason: 'ELIGIBLE',
-    detail: `structural regression in ${regressed.join(', ')}; retained fields intact`,
+    detail: errorsDominate && structuralErrorCodes(incident.errors).length > 0
+      ? `structural provider errors dominate the delivery (${structuralErrorCodes(incident.errors).join(', ')}); regression in ${regressed.join(', ')}`
+      : `structural regression in ${regressed.join(', ')}; retained fields intact`,
     evidence,
   };
 }

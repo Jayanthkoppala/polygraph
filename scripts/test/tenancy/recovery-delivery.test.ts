@@ -375,6 +375,70 @@ describe('recordDeliveredRows — recovery path', () => {
     expect(JSON.parse(stored.rows_json!)).toHaveLength(58);
   });
 
+  it('error records: a few dead inputs beside healthy rows read as "Healthy · 1 error": PASS, baseline refreshed (data rows only), no cycle', async () => {
+    const first = await h.ingest(healthyRows());
+    const r = await h.ingest([...healthyRows(60), ...ERRORS('dead_page', 1)]);
+    expect(r.verdict).toBe('PASS');
+    expect(r.cause).toBe('NONE');
+    expect(r.cycleId).toBeNull();
+    expect(r.state).toBe('READY');
+    expect(r.rowCount).toBe(60);
+    expect(r.errorCount).toBe(1);
+    expect(h.recovery.cycles.listForCollector(h.tenantId, h.collectorId)).toEqual([]);
+    // Baseline moved to this delivery and holds the data rows only.
+    expect(h.state()!.baseline_delivery_id).toBe(r.deliveryId);
+    expect(h.state()!.baseline_delivery_id).not.toBe(first.deliveryId);
+    const stored = h.deliveries.findById(h.tenantId, r.deliveryId!)!;
+    expect(stored.is_baseline).toBe(1);
+    expect(stored.error_count).toBe(1);
+    expect(JSON.parse(stored.error_codes_json!)).toEqual({ dead_page: 1 });
+    const baselineRows = JSON.parse(stored.rows_json!) as Record<string, unknown>[];
+    expect(baselineRows).toHaveLength(60);
+    expect(baselineRows.every((row) => row.error_code === undefined && row.error === undefined)).toBe(true);
+  });
+
+  it('error records: block records at BLOCK_HOLD_SHARE (15 of 75) → HELD/BLOCKED with no cycle', async () => {
+    await h.ingest(healthyRows());
+    const r = await h.ingest([...healthyRows(60), ...ERRORS('blocked', 15)]);
+    expect(r.cause).toBe('BLOCKED');
+    expect(r.verdict).not.toBe('PASS');
+    expect(r.cycleId).toBeNull();
+    expect(r.state).toBe('HELD');
+    expect(r.heldReason).toBe('BLOCKED');
+    expect(h.recovery.cycles.listForCollector(h.tenantId, h.collectorId)).toEqual([]);
+  });
+
+  it('error records: block records below BLOCK_HOLD_SHARE (5 of 65) are noise: PASS, READY', async () => {
+    await h.ingest(healthyRows());
+    const r = await h.ingest([...healthyRows(60), ...ERRORS('blocked', 5)]);
+    expect(r.verdict).toBe('PASS');
+    expect(r.cause).toBe('NONE');
+    expect(r.state).toBe('READY');
+    expect(r.heldReason).toBeNull();
+    expect(r.cycleId).toBeNull();
+    expect(r.errorCount).toBe(5);
+    expect(JSON.parse(h.deliveries.findById(h.tenantId, r.deliveryId!)!.error_codes_json!)).toEqual({ blocked: 5 });
+  });
+
+  it('error records: structural codes dominating the delivery (30 of 40) beside intact rows → STRUCTURAL cycle with a hint', async () => {
+    await h.ingest(healthyRows());
+    const r = await h.ingest([...healthyRows(10), ...ERRORS('dead_page', 30)]);
+    expect(r.cause).toBe('STRUCTURAL');
+    expect(r.verdict).not.toBe('PASS');
+    expect(r.cycleId).toBeTruthy();
+    expect(r.state).toBe('RECOVERING');
+    const cycle = h.recovery.cycles.get(h.tenantId, r.cycleId!)!;
+    expect(cycle.mode).toBe('baseline');
+    const evidence = JSON.parse(cycle.policy_evidence_json) as {
+      error_summary: { count: number; codes: Record<string, number> };
+      heal_prompt: string;
+      regressed_fields: string[];
+    };
+    expect(evidence.error_summary).toEqual({ count: 30, codes: { dead_page: 30 } });
+    expect(evidence.regressed_fields).toEqual(['sku', 'title', 'price']);
+    expect(evidence.heal_prompt).toMatch(/Provider error codes: dead_page×30/);
+  });
+
   it('error records: all `blocked` → cause BLOCKED, not PASS, collector HELD/BLOCKED with no cycle', async () => {
     await h.ingest(healthyRows());
     const r = await h.ingest(ERRORS('blocked', 60));

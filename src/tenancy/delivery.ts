@@ -14,6 +14,9 @@ import type { TenantCollectorRow } from './scope.js';
 import { scopeFor } from './scope.js';
 import { DeliveryStore, deliveryPayloadHash } from './delivery-store.js';
 import {
+  BLOCK_HOLD_SHARE,
+  ERROR_DOMINANCE_SHARE,
+  errorShare,
   partitionDeliveryRows,
   summarizeErrorCodes,
   toRunErrors,
@@ -422,20 +425,30 @@ function errorRecordInput(errors: DeliveryErrorRecord[]): Record<string, unknown
 }
 
 /**
- * Which error records the grader sees. A CLI run retries transient
- * (`retryable_transient`) failures before grading; a webhook delivery cannot,
- * so a FEW transient errors beside a healthy majority of data rows must not
- * fail the contract check (which fails on any error row) and turn a good
- * delivery into a quarantined one. Structural, block, compliance and unknown
- * codes always reach the grader, exactly as hp_errors would. Transient codes
- * reach it too once they are at least as numerous as the data rows: a
- * majority-error delivery is never healthy and must never become a baseline.
+ * Which error records the grader sees (docs/recovery.md, "Error records").
+ * A customer routinely runs with a few bad inputs — dead URLs, 404s — and
+ * those arrive as error records beside healthy data rows. The contract check
+ * fails on ANY error row, so letting them through would turn "Healthy · N
+ * errors" into a structural break and, with auto-heal on, a paid repair.
+ *
+ * - Error records reach the grader only once they dominate the delivery
+ *   (`ERROR_DOMINANCE_SHARE`): then every code counts, exactly as hp_errors
+ *   would for a CLI run, so a majority-error delivery is never healthy and
+ *   never becomes a baseline.
+ * - Below that, block / compliance codes (cause BLOCKED) still reach the
+ *   grader when they are at least `BLOCK_HOLD_SHARE` of the delivery, so a
+ *   real block holds the collector; fewer are noise.
+ * - Everything else below the dominance share is recorded (counts, codes,
+ *   policy evidence) and does not affect the verdict, which is then decided
+ *   purely by the data rows.
  */
 function gradingErrors(rows: Record<string, unknown>[], errors: DeliveryErrorRecord[]): RunError[] {
-  const majorityErrors = errors.length >= rows.length;
-  return toRunErrors(
-    errors.filter((e) => majorityErrors || causeForErrorCode(e.error_code) !== 'NONE')
-  );
+  if (errorShare(rows.length, errors.length) >= ERROR_DOMINANCE_SHARE) return toRunErrors(errors);
+  const blocking = errors.filter((e) => causeForErrorCode(e.error_code) === 'BLOCKED');
+  if (blocking.length > 0 && errorShare(rows.length, errors.length, blocking.length) >= BLOCK_HOLD_SHARE) {
+    return toRunErrors(blocking);
+  }
+  return [];
 }
 
 /**

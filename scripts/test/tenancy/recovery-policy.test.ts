@@ -104,16 +104,27 @@ describe('evaluateRecoveryEligibility (D7)', () => {
     expect(result.reason).toBe('EMPTY_DELIVERY');
   });
 
-  it('BLOCKED / captcha / login / compliance evidence is never eligible', () => {
+  it('BLOCKED / captcha / login / compliance evidence is never eligible once block records reach BLOCK_HOLD_SHARE', () => {
+    // 5 data rows + 15 block records = 75% of the delivery.
+    const blockErrors = (code: string) => Array.from({ length: 15 }, () => ({ input: null, error_code: code, message: '' }));
     for (const code of ['blocked', 'detect_block', 'captcha_timeout', 'brul', 'login_required']) {
       const result = evaluateRecoveryEligibility(
-        baseInput({ incident: { ...baseInput().incident, errors: [{ input: null, error_code: code, message: '' }] } })
+        baseInput({ incident: { ...baseInput().incident, errors: blockErrors(code) } })
       );
       expect(result.eligible, code).toBe(false);
       expect(result.reason, code).toBe('BLOCKED');
     }
     const byCause = evaluateRecoveryEligibility(baseInput({ incident: { ...baseInput().incident, cause: 'BLOCKED' } }));
     expect(byCause.reason).toBe('BLOCKED');
+  });
+
+  it('a few block records beside a healthy majority are noise: eligibility is decided on the data rows', () => {
+    // 5 broken data rows + 1 `blocked` record (17%, under BLOCK_HOLD_SHARE): the structural regression still wins.
+    const result = evaluateRecoveryEligibility(
+      baseInput({ incident: { ...baseInput().incident, errors: [{ input: null, error_code: 'blocked', message: '' }] } })
+    );
+    expect(result.eligible).toBe(true);
+    expect(result.evidence.error_summary).toEqual({ count: 1, codes: { blocked: 1 } });
   });
 
   it('identity instability is never eligible', () => {
@@ -370,6 +381,42 @@ describe('error records as policy evidence', () => {
     expect(hint).toMatch(/^Provider error codes: /);
   });
 
+  it('a minority of structural error records beside healthy data rows is evidence only, never eligibility', () => {
+    // 60 healthy rows + 10 dead_page (14%): graded PASS on the data rows → HEALTHY, codes recorded.
+    const healthy = evaluateRecoveryEligibility(
+      baseInput({ baselineRows: healthyRows(60), incident: { rows: healthyRows(60), errors: errs('dead_page', 10), verdict: 'PASS', cause: 'NONE', evidence: [
+        { check: 'contract', ok: true, detail: '' },
+        { check: 'coherence', ok: true, detail: '' },
+        { check: 'identity', ok: true, detail: '' },
+      ] } })
+    );
+    expect(healthy).toMatchObject({ eligible: false, reason: 'HEALTHY' });
+    expect(healthy.evidence.error_summary).toEqual({ count: 10, codes: { dead_page: 10 } });
+    // The same minority beside a real data-row regression: eligible on the
+    // rows, but the codes did not contribute, so no hint reaches the prompt.
+    const regressed = evaluateRecoveryEligibility(
+      baseInput({
+        baselineRows: healthyRows(60),
+        incident: { ...baseInput().incident, rows: healthyRows(60).map(({ price: _p, ...row }) => row), errors: errs('dead_page', 10) },
+      })
+    );
+    expect(regressed.eligible).toBe(true);
+    expect(regressed.evidence.regressed_fields).toEqual(['price']);
+    expect(regressed.evidence.heal_prompt).not.toMatch(/Provider error codes/);
+  });
+
+  it('structural error records dominating a delivery with a few intact rows are eligible with every required field regressed and a hint', () => {
+    // 10 healthy rows + 30 dead_page = 75% errors.
+    const result = evaluateRecoveryEligibility(
+      baseInput({ incident: { rows: healthyRows(10), errors: errs('dead_page', 30), verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL', evidence: structuralEvidence() } })
+    );
+    expect(result.eligible).toBe(true);
+    expect(result.evidence.regressed_fields).toEqual(['sku', 'title', 'price']);
+    expect(result.evidence.damaged_retained_fields).toEqual([]);
+    expect(result.evidence.heal_prompt).toMatch(/\nProvider error codes: dead_page×30$/);
+    expect(result.detail).toMatch(/dominate/);
+  });
+
   it('a baseline incident made only of structural error records is eligible with every baseline field regressed', () => {
     const result = evaluateRecoveryEligibility(
       baseInput({ incident: { rows: [], errors: errs('dead_page', 4), verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL', evidence: structuralEvidence() } })
@@ -403,5 +450,18 @@ describe('error records as policy evidence', () => {
     expect(ok.evidence.mode).toBe('bootstrap');
     expect(ok.evidence.heal_prompt).toMatch(/Provider error codes: dead_page×5/);
     expect(bootstrap(errs('timeout', 9))).toMatchObject({ eligible: false, reason: 'NO_BASELINE' });
+  });
+
+  it('bootstrap: a structural minority beside filled rows is not structurally empty and gets no hint', () => {
+    const result = evaluateRecoveryEligibility(
+      baseInput({
+        hasBaseline: false,
+        baselineRows: undefined,
+        collectorName: 'Shop',
+        incident: { rows: healthyRows(20), errors: errs('dead_page', 4), verdict: 'FAILED_STRUCTURAL', cause: 'STRUCTURAL', evidence: structuralEvidence() },
+      })
+    );
+    expect(result).toMatchObject({ eligible: false, reason: 'NO_BASELINE' });
+    expect(result.detail).toMatch(/partially filled/);
   });
 });

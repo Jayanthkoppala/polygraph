@@ -35,6 +35,30 @@ export const ERROR_CODES_MAX = 20;
 /** Used when a record carries an `error` message but no `error_code`. */
 export const UNCODED_ERROR = 'error';
 
+/**
+ * Error records dominate a delivery once they are at least this share of
+ * every record (`errors / (errors + data rows)`). Below it, a customer's
+ * routine bad inputs (dead URLs, 404s) are recorded — counts, codes, policy
+ * evidence, the Errors column — but never change the verdict and never
+ * start a repair; "Healthy · N errors". At or above it the error codes reach
+ * the grader and, when they are structural, policy may open a cycle.
+ */
+export const ERROR_DOMINANCE_SHARE = 0.5;
+
+/**
+ * Block / compliance records (`blocked`, `detect_block`, `brul`, …) hold the
+ * collector once they are at least this share of the delivery. Fewer than
+ * that is noise beside a healthy majority, not a target that is blocking us.
+ */
+export const BLOCK_HOLD_SHARE = 0.2;
+
+/** `count / (dataRows + errors)`; 0 for an empty delivery. `count` defaults
+ * to every error record, or pass a subset (e.g. only the blocking ones). */
+export function errorShare(dataRows: number, errors: number, count = errors): number {
+  const total = dataRows + errors;
+  return total === 0 ? 0 : count / total;
+}
+
 function nonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
 }
