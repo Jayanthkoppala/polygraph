@@ -140,13 +140,21 @@ export function fetchDemoRepairReceipts(n = 100): Promise<{ receipts: RepairRece
 }
 
 /** Public demo receipts are always visible. A signed-in workspace also sees
- * its tenant-scoped receipts; anonymous 401s and disabled-demo 503s are
- * expected source absences, not page failures. */
+ * its tenant-scoped receipts. Session presence is non-sensitive and prevents
+ * anonymous viewers from intentionally generating a protected-endpoint 401;
+ * the customer receipt endpoint itself remains session-gated. */
 export async function fetchVisibleRepairReceipts(n = 100): Promise<{ receipts: RepairReceipt[] }> {
-  const [demo, customer] = await Promise.allSettled([
+  const [demo, sessionPresence] = await Promise.allSettled([
     fetchDemoRepairReceipts(n),
-    fetchRepairReceipts(n),
+    getJson<{ authenticated: boolean }>('/api/auth/status'),
   ]);
+  const shouldFetchCustomer = sessionPresence.status === 'rejected' || sessionPresence.value.authenticated;
+  const customer: PromiseSettledResult<{ receipts: RepairReceipt[] }> = shouldFetchCustomer
+    ? await fetchRepairReceipts(n).then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason: unknown) => ({ status: 'rejected' as const, reason }),
+      )
+    : { status: 'fulfilled', value: { receipts: [] } };
   const demoExpectedAbsent = demo.status === 'rejected' && demo.reason instanceof ApiError && [404, 503].includes(demo.reason.status);
   const customerExpectedAbsent = customer.status === 'rejected' && customer.reason instanceof ApiError && customer.reason.status === 401;
   if (demo.status === 'rejected' && !demoExpectedAbsent && customer.status === 'rejected') throw demo.reason;

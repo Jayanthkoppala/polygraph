@@ -208,6 +208,23 @@ describe('tenancy/serve — auth required', () => {
     expect(res.status).toBe(401);
   });
 
+  it('reports session presence without exposing protected tenant data', async () => {
+    const anonymous = await fetch(`${base}/api/auth/status`);
+    expect(anonymous.status).toBe(200);
+    expect(anonymous.headers.get('cache-control')).toBe('no-store');
+    expect(await anonymous.json()).toEqual({ authenticated: false });
+
+    const { token } = await signup(base, 'Session Status Tenant');
+    const cookie = await sessionCookieFor(base, token);
+    const authenticated = await fetch(`${base}/api/auth/status`, { headers: { cookie } });
+    expect(authenticated.status).toBe(200);
+    expect(authenticated.headers.get('cache-control')).toBe('no-store');
+    expect(await authenticated.json()).toEqual({ authenticated: true });
+
+    const stillProtected = await fetch(`${base}/api/receipts`);
+    expect(stillProtected.status).toBe(401);
+  });
+
   it('POST /api/ack without a session cookie returns 401 (never even reaches CSRF/body parsing)', async () => {
     const res = await fetch(`${base}/api/ack`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ ledger_id: 1 }) });
     expect(res.status).toBe(401);

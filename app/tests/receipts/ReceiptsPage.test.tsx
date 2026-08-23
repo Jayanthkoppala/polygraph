@@ -10,14 +10,10 @@ afterEach(() => {
 
 describe('ReceiptsPage', () => {
   it('renders only the broken repair data returned by the receipt API', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input).split('?')[0];
-      if (path === '/api/receipts') return {
-        ok: false,
-        status: 401,
-        statusText: 'Unauthorized',
-        json: async () => ({ error: 'authentication required' }),
-      };
+      if (path === '/api/auth/status') return { ok: true, status: 200, statusText: 'OK', json: async () => ({ authenticated: false }) };
+      if (path === '/api/receipts') throw new Error('anonymous page must not request protected customer receipts');
       return {
         ok: true,
         status: 200,
@@ -45,7 +41,8 @@ describe('ReceiptsPage', () => {
         }],
         }),
       };
-    }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
 
     render(<MemoryRouter><ReceiptsPage /></MemoryRouter>);
 
@@ -57,6 +54,7 @@ describe('ReceiptsPage', () => {
     expect(screen.getByText('price')).toBeInTheDocument();
     expect(screen.getByText('title')).toBeInTheDocument();
     expect(screen.getByText(/live mission evidence/i)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith('/api/receipts'))).toBe(false);
   });
 
   it('shows ten newest receipts per page and pages through the remainder', async () => {
@@ -82,12 +80,8 @@ describe('ReceiptsPage', () => {
     }));
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input).split('?')[0];
-      if (path === '/api/receipts') return {
-        ok: false,
-        status: 401,
-        statusText: 'Unauthorized',
-        json: async () => ({ error: 'authentication required' }),
-      };
+      if (path === '/api/auth/status') return { ok: true, status: 200, statusText: 'OK', json: async () => ({ authenticated: false }) };
+      if (path === '/api/receipts') throw new Error('anonymous page must not request protected customer receipts');
       return { ok: true, status: 200, statusText: 'OK', json: async () => ({ receipts }) };
     }));
 
@@ -102,5 +96,59 @@ describe('ReceiptsPage', () => {
     expect(screen.getByText('Collector 02')).toBeInTheDocument();
     expect(screen.getByText('11–12 of 12 receipts · 10 per page')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /next receipts page/i })).toBeDisabled();
+  });
+
+  it('merges tenant receipts only when the browser has a valid session', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input).split('?')[0];
+      if (path === '/api/auth/status') return { ok: true, status: 200, statusText: 'OK', json: async () => ({ authenticated: true }) };
+      const source = path === '/api/receipts' ? 'customer' : 'demo';
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ receipts: [{
+          id: `${source}-receipt`, source, collector: `${source}-collector`, collector_name: `${source} collector`,
+          incident_run_id: 'run-b', heal_job_id: 'heal-1', detected_at: '2026-08-22T10:00:00.000Z',
+          repair_started_at: '2026-08-22T10:01:00.000Z', completed_at: '2026-08-22T10:03:00.000Z',
+          status: 'verified', cause: 'STRUCTURAL', incident_verdict: 'FAILED_STRUCTURAL', changed_fields: ['price'],
+          change_summary: 'price moved', repair_prompt: 'Restore price.', proof_run_id: 'run-c', terminal_ledger_id: null, event_hash: null,
+        }] }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<MemoryRouter><ReceiptsPage /></MemoryRouter>);
+
+    expect(await screen.findByText('demo collector')).toBeInTheDocument();
+    expect(screen.getByText('customer collector')).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith('/api/receipts?n=100', expect.anything());
+  });
+
+  it('keeps customer receipts visible when the session-presence endpoint is unavailable', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input).split('?')[0];
+      if (path === '/api/auth/status') throw new Error('older server has no session-presence route');
+      const source = path === '/api/receipts' ? 'customer' : 'demo';
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ receipts: [{
+          id: `${source}-compat`, source, collector: `${source}-compat`, collector_name: `${source} compatibility collector`,
+          incident_run_id: 'run-b', heal_job_id: 'heal-1', detected_at: '2026-08-22T10:00:00.000Z',
+          repair_started_at: '2026-08-22T10:01:00.000Z', completed_at: '2026-08-22T10:03:00.000Z',
+          status: 'verified', cause: 'STRUCTURAL', incident_verdict: 'FAILED_STRUCTURAL', changed_fields: ['price'],
+          change_summary: 'price moved', repair_prompt: 'Restore price.', proof_run_id: 'run-c', terminal_ledger_id: null, event_hash: null,
+        }] }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<MemoryRouter><ReceiptsPage /></MemoryRouter>);
+
+    expect(await screen.findByText('demo compatibility collector')).toBeInTheDocument();
+    expect(screen.getByText('customer compatibility collector')).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith('/api/receipts?n=100', expect.anything());
   });
 });

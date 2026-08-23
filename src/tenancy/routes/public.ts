@@ -1,7 +1,7 @@
 import { sendJson, parseLimit } from '../../http/server.js';
 import { Ledger } from '../../store/ledger.js';
 import { BrightDataClient } from '../../brightdata/client.js';
-import { exchangeTokenForSession } from '../auth.js';
+import { exchangeTokenForSession, resolveSession } from '../auth.js';
 import { createTenant } from '../tenants.js';
 import { checkAndIncrementRateLimit, hourlyWindowKey } from '../rate-limit.js';
 import { tryHandleDemoMissionRequest } from '../../demo/server.js';
@@ -24,6 +24,15 @@ export async function handlePublicRoutes(ctx: RouteContext): Promise<boolean> {
   }
 
   if (await tryHandleDemoMissionRequest(req, res, deps.demoService, deps.demoConfig)) return true;
+
+  // Public, non-sensitive session presence lets shared pages avoid probing a
+  // protected tenant endpoint just to learn whether customer data can be
+  // requested. The protected endpoint remains the authority for the data.
+  if (method === 'GET' && path === '/api/auth/status') {
+    res.setHeader('Cache-Control', 'no-store');
+    sendJson(res, 200, { authenticated: resolveSession(deps.writer, req) !== null });
+    return true;
+  }
 
   // ---- Bright Data push delivery (public capability URL) ----------------
 
