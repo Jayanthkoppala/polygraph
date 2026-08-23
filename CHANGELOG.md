@@ -9,7 +9,7 @@ All notable changes to Polygraph. Dates are IST.
 - `npm run setup` installs server and app dependencies; `npm run local`
   installs app dependencies itself and defaults `POLYGRAPH_PUBLIC_ORIGIN` to
   the address it prints.
-- README rewritten against the code; white-background How-it-works board;
+- README cut to a front door (~140 lines); CLI, scripts and env moved to `docs/cli.md`; white-background How-it-works board;
   scenario illustrations; production-canary evidence committed.
 
 ## 0.1.0 — 2026-08-23
