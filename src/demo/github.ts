@@ -23,15 +23,50 @@ export class GithubFixtureClient implements DemoGithubClient {
       await this.sleep(intervalMs);
     }
   }
+  private async readDeployedMarker(expectedGeneration?: string, expectedMissionId?: string): Promise<Record<string, unknown>> {
+    const expectsDeployment = expectedGeneration !== undefined || expectedMissionId !== undefined;
+    const intervalMs = this.options.config.pollIntervalMs ?? 1_000;
+    const deadlineMs = this.options.config.pollDeadlineMs ?? 300_000;
+    const started = Date.now();
+    let attempt = 0;
+    let lastObserved = 'no readable marker';
+    for (;;) {
+      attempt++;
+      const markerUrl = new URL('version.json', this.options.config.fixtureUrl.endsWith('/') ? this.options.config.fixtureUrl : `${this.options.config.fixtureUrl}/`);
+      if (expectedGeneration) markerUrl.searchParams.set('generation', expectedGeneration);
+      if (expectedMissionId) markerUrl.searchParams.set('mission', expectedMissionId);
+      markerUrl.searchParams.set('nonce', `${Date.now()}-${attempt}`);
+      try {
+        const response = await this.fetchImpl(markerUrl, { cache: 'no-store', headers: { accept: 'application/json' } } as unknown as RequestInit);
+        if (!response.ok) {
+          if (!expectsDeployment) throw new Error(`fixture version manifest failed: HTTP ${response.status}`);
+          lastObserved = `HTTP ${response.status}`;
+        } else {
+          const marker = await response.json() as Record<string, unknown>;
+          const generation = String(marker.generation ?? '');
+          if (!/^\d+$/.test(generation)) {
+            if (!expectsDeployment) throw new Error('fixture version manifest did not contain a numeric generation');
+            lastObserved = 'a marker without a numeric generation';
+          } else {
+            const generationMatches = expectedGeneration === undefined || generation === expectedGeneration;
+            const missionMatches = expectedMissionId === undefined || marker.mission_id === expectedMissionId;
+            if (generationMatches && missionMatches) return marker;
+            lastObserved = `generation ${generation}, mission ${String(marker.mission_id ?? 'missing')}`;
+          }
+        }
+      } catch (error) {
+        if (!expectsDeployment) throw error;
+        lastObserved = error instanceof Error ? error.message : String(error);
+      }
+      if (Date.now() - started >= deadlineMs) {
+        throw new Error(`fixture version manifest did not confirm generation ${expectedGeneration ?? 'any'} for mission ${expectedMissionId ?? 'any'} before the polling deadline; last observed ${lastObserved}`);
+      }
+      await this.sleep(intervalMs);
+    }
+  }
   async readCurrentManifest(expectedGeneration?: string, expectedMissionId?: string): Promise<DemoFixtureManifest> {
-    const markerUrl = new URL('version.json', this.options.config.fixtureUrl.endsWith('/') ? this.options.config.fixtureUrl : `${this.options.config.fixtureUrl}/`);
-    if (expectedGeneration) markerUrl.searchParams.set('generation', expectedGeneration);
-    if (expectedMissionId) markerUrl.searchParams.set('mission', expectedMissionId);
-    const response = await this.fetchImpl(markerUrl, { cache: 'no-store', headers: { accept: 'application/json' } } as unknown as RequestInit);
-    if (!response.ok) throw new Error(`fixture version manifest failed: HTTP ${response.status}`);
-    const marker = await response.json() as Record<string, unknown>;
+    const marker = await this.readDeployedMarker(expectedGeneration, expectedMissionId);
     const generation = String(marker.generation ?? '');
-    if (!/^\d+$/.test(generation)) throw new Error('fixture version manifest did not contain a numeric generation');
     const rawAnchors = marker.anchors;
     const anchors = rawAnchors && typeof rawAnchors === 'object' && !Array.isArray(rawAnchors)
       ? Object.fromEntries(Object.entries(rawAnchors as Record<string, unknown>).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))

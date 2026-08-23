@@ -67,6 +67,49 @@ describe('GithubFixtureClient', () => {
     expect(String((fetchImpl.mock.calls[0] as unknown as [string | URL])[0])).toContain('version.json?generation=45&mission=mission-10');
   });
 
+  it('retries a stale deployed manifest until the expected generation and mission are both live', async () => {
+    const stale = { schema_version: 3, version: 'evolving', generation: 45, parent_generation: 44, seed: 'old-seed', mission_id: 'old-mission' };
+    const exact = { schema_version: 3, version: 'evolving', generation: 46, parent_generation: 45, seed: 'pg_46_seed', mission_id: 'mission-11' };
+    let markerReads = 0;
+    const fetchImpl = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.startsWith(config.fixtureUrl)) return new Response(JSON.stringify(++markerReads === 1 ? stale : exact), { status: 200, headers: { 'content-type': 'application/json' } });
+      return new Response(null, { status: 503 });
+    });
+    const sleep = vi.fn(async () => undefined);
+    const client = new GithubFixtureClient({ config: { ...config, pollDeadlineMs: 1_000 }, fetchImpl: fetchImpl as unknown as typeof fetch, sleep });
+
+    await expect(client.readCurrentManifest('46', 'mission-11')).resolves.toMatchObject({ generation: '46', parent_generation: '45', seed: 'pg_46_seed', mission_id: 'mission-11' });
+    const markerUrls = fetchImpl.mock.calls.map((call) => String(call[0])).filter((url) => url.startsWith(config.fixtureUrl));
+    expect(markerUrls).toHaveLength(2);
+    expect(markerUrls[0]).toContain('generation=46&mission=mission-11');
+    expect(markerUrls[0]).not.toBe(markerUrls[1]);
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  it('times out with a clear contract error when the expected deployed manifest never appears', async () => {
+    const stale = { schema_version: 3, version: 'evolving', generation: 46, parent_generation: 45, seed: 'old-seed', mission_id: 'other-mission' };
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(stale), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const client = new GithubFixtureClient({ config, fetchImpl: fetchImpl as unknown as typeof fetch, sleep: async () => undefined });
+
+    await expect(client.readCurrentManifest('46', 'mission-11')).rejects.toThrow(/did not confirm generation 46 for mission mission-11.*polling deadline/i);
+  });
+
+  it('reads the baseline manifest once when no expected deployment tuple is supplied', async () => {
+    const marker = { schema_version: 3, version: 'evolving', generation: 46, parent_generation: 45, seed: 'pg_46_seed', mission_id: 'mission-11' };
+    let markerReads = 0;
+    const fetchImpl = vi.fn(async (input: string | URL) => {
+      if (String(input).startsWith(config.fixtureUrl)) { markerReads++; return new Response(JSON.stringify(marker), { status: 200, headers: { 'content-type': 'application/json' } }); }
+      return new Response(null, { status: 503 });
+    });
+    const sleep = vi.fn(async () => undefined);
+    const client = new GithubFixtureClient({ config, fetchImpl: fetchImpl as unknown as typeof fetch, sleep });
+
+    await expect(client.readCurrentManifest()).resolves.toMatchObject({ generation: '46', mission_id: 'mission-11' });
+    expect(markerReads).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it('refuses to attach a branch head whose committed marker differs from the deployed marker', async () => {
     const marker = { version: 'evolving', generation: 46, parent_generation: 45, seed: 'pg_46_seed', mission_id: 'mission-11', anchors: { product_code: '[data-code]' } };
     const fetchImpl = vi.fn(async (input: string | URL) => {
