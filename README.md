@@ -4,18 +4,27 @@
 
 **Your scraper says 200 OK. Polygraph says whether it's telling the truth — and fixes it when it isn't.**
 
-[![Live](https://img.shields.io/badge/live-35.193.31.253.sslip.io-0100ff?style=for-the-badge)](https://35.193.31.253.sslip.io)
+[![Watch the demo](https://img.shields.io/badge/▶_watch_the_2:44_demo-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://youtu.be/RCm3qeIegj0)
+[![Live](https://img.shields.io/badge/try_it_live-35.193.31.253.sslip.io-0100ff?style=for-the-badge)](https://35.193.31.253.sslip.io)
 [![CI](https://img.shields.io/github/actions/workflow/status/Jayanthkoppala/polygraph/ci.yml?branch=main&style=for-the-badge&label=ci)](https://github.com/Jayanthkoppala/polygraph/actions/workflows/ci.yml)
 [![Node](https://img.shields.io/badge/Node-22-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Bright Data](https://img.shields.io/badge/Bright_Data-Scraper_Studio-b45309?style=for-the-badge)](https://brightdata.com)
 [![License](https://img.shields.io/badge/license-MIT-000000?style=for-the-badge)](LICENSE)
 
+<a href="https://youtu.be/RCm3qeIegj0">
+  <img src="docs/video-poster.jpg" alt="Watch the 2:44 walkthrough: a scraper breaks, heals, and proves itself on a real Bright Data collector" width="960">
+</a>
+
+**[▶ Watch the 2 min 44 s walkthrough](https://youtu.be/RCm3qeIegj0)**  ·  **[Try it live, no signup](https://35.193.31.253.sslip.io/live-proof)**
+
+<br>
+
 <a href="https://35.193.31.253.sslip.io/how-it-works">
   <img src="docs/how-it-works.svg" alt="How Polygraph works: a Bright Data collector delivers by webhook, Polygraph checks every delivery, sends a repair prompt to Bright Data Self-Healing, gates the candidate, publishes it, and only a fresh production run counts as recovery. Every step lands in a hash-chained ledger and a repair receipt." width="960">
 </a>
 
-<sub><a href="https://35.193.31.253.sslip.io/how-it-works">Interactive version</a> · <a href="https://35.193.31.253.sslip.io/app">Open the product</a> · <a href="docs/evidence/production-canary-2026-08-23.md">Production evidence</a></sub>
+<sub><a href="https://35.193.31.253.sslip.io/how-it-works">Interactive version</a> · <a href="https://35.193.31.253.sslip.io/app">Open the product</a> · <a href="https://35.193.31.253.sslip.io/receipts">Live receipts</a> · <a href="docs/evidence/production-canary-2026-08-23.md">Production evidence</a></sub>
 
 </div>
 
@@ -46,6 +55,10 @@ Self-Healing with no human in the loop — then refuses to believe the repair un
 production run passes the same checks. Every step is written to an append-only, hash-chained
 ledger and summarised as a **repair receipt** with a timestamped timeline.
 
+> **See it for yourself.** Press *Start proof* at **[35.193.31.253.sslip.io/live-proof](https://35.193.31.253.sslip.io/live-proof)** —
+> no signup, no key — and watch a real Bright Data collector break and repair itself against a live store
+> we host. Or [**watch the 2:44 walkthrough**](https://youtu.be/RCm3qeIegj0) first.
+
 ## How it works
 
 1. **Baseline.** The collector's declared schema sets the contract; the first healthy
@@ -75,7 +88,12 @@ Detected → verified: **16 min 22 s**, nobody involved.
 [`auto_save` experiment, 13/13](docs/evidence/autosave-proof-2026-08-23.md) ·
 [what we got wrong first](docs/FINDING-heal-promotion.md)
 
+Every repair since then is public at **[35.193.31.253.sslip.io/receipts](https://35.193.31.253.sslip.io/receipts)** — and the whole loop is on film: [**▶ 2:44 walkthrough**](https://youtu.be/RCm3qeIegj0).
+
 ## Run it
+
+**Nothing to install:** the hosted instance is at **[35.193.31.253.sslip.io](https://35.193.31.253.sslip.io)** — [live proof](https://35.193.31.253.sslip.io/live-proof),
+[how it works](https://35.193.31.253.sslip.io/how-it-works), [receipts](https://35.193.31.253.sslip.io/receipts). To run your own:
 
 Node 22. `better-sqlite3` is native — `npm rebuild better-sqlite3` after switching Node.
 
@@ -127,6 +145,8 @@ deploy/  docs/             VM contract; reference, evidence, findings
 | Gemini advisor in the hosted loop | Not wired (demo only) |
 | Staging VM | Blocked on GCP billing |
 | npm publish, peer corroboration, drift detection | Not yet |
+
+Watch: [**2:44 walkthrough**](https://youtu.be/RCm3qeIegj0) · Try: [**live instance**](https://35.193.31.253.sslip.io) · Proof: [**receipts**](https://35.193.31.253.sslip.io/receipts)
 
 Details and the honest gaps: [`CHANGELOG.md`](CHANGELOG.md) · [`SECURITY.md`](SECURITY.md) ·
 [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`docs/AI-ASSISTANCE.md`](docs/AI-ASSISTANCE.md)
